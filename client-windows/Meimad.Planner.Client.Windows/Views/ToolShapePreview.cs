@@ -9,7 +9,8 @@ namespace Meimad.Planner.Client.Windows.Views;
 /// <summary>
 /// A flat schematic of one prepared tool: the holder at the top on the spindle gauge line, the
 /// components below it and the cutter at the bottom, with the measured length and diameter as
-/// dimension lines. Unspecified dimensions are drawn dashed. The drawing is always left-to-right.
+/// dimension lines. With a spindle adaptor the pull stud and the taper stand above the gauge line.
+/// Unspecified dimensions are drawn dashed. The drawing is always left-to-right.
 /// </summary>
 internal sealed class ToolShapePreview : FrameworkElement
 {
@@ -58,13 +59,14 @@ internal sealed class ToolShapePreview : FrameworkElement
         var drawingTop = margin + 14;
         var availableHeight = ActualHeight - drawingTop - margin;
         var availableWidth = ActualWidth - margin * 2 - labelColumn - dimensionColumn;
-        var scale = Math.Min(availableHeight / Math.Max(geometry.TotalLength, 1), availableWidth / Math.Max(geometry.MaximumDiameter, 1));
+        var scale = Math.Min(availableHeight / Math.Max(geometry.TotalLength + geometry.AboveGaugeLength, 1), availableWidth / Math.Max(geometry.MaximumDiameter, 1));
         var centerX = margin + labelColumn + availableWidth / 2;
         var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
 
-        // Spindle gauge line.
+        // Spindle gauge line; the pull stud and the taper stand above it.
+        drawingTop += geometry.AboveGaugeLength * scale;
         context.DrawLine(GaugePen, new Point(margin, drawingTop), new Point(ActualWidth - margin, drawingTop));
-        DrawText(context, Localize("Gauge line"), new Point(margin, drawingTop - 14), 10, TextBrush, dpi);
+        DrawText(context, Localize("Gauge line"), new Point(ActualWidth - margin - dimensionColumn + 12, drawingTop - 14), 10, TextBrush, dpi);
 
         foreach (var segment in geometry.Segments)
         {
@@ -75,7 +77,7 @@ internal sealed class ToolShapePreview : FrameworkElement
             var pen = segment.IsDefault ? DefaultPen : OutlinePen;
             var brush = segment.Kind switch
             {
-                "HOLDER" => HolderBrush,
+                "HOLDER" or "TAPER" => HolderBrush,
                 "CUTTER" or "BALL" or "POINT" or "CONE" or "DISC" or "INSERT" or "SPHERE" or "BLADE" or "DOVETAIL" => CutterBrush,
                 _ => BodyBrush
             };
@@ -103,6 +105,22 @@ internal sealed class ToolShapePreview : FrameworkElement
                     var bladeWidth = Math.Max(width, 2);
                     var bladeLeft = centerX + Math.Max(2, geometry.MaximumDiameter * scale * 0.5) - bladeWidth;
                     context.DrawRectangle(brush, pen, new Rect(bladeLeft, top, bladeWidth, height));
+                    break;
+                }
+                case "TAPER":
+                {
+                    // Small end at the top (toward the pull stud), gauge diameter at the gauge line.
+                    var topWidth = Math.Max(segment.TopDiameter * scale, 2);
+                    var taper = new StreamGeometry();
+                    using (var figure = taper.Open())
+                    {
+                        figure.BeginFigure(new Point(centerX - topWidth / 2, top), true, true);
+                        figure.LineTo(new Point(centerX + topWidth / 2, top), true, false);
+                        figure.LineTo(new Point(left + width, top + height), true, false);
+                        figure.LineTo(new Point(left, top + height), true, false);
+                    }
+                    taper.Freeze();
+                    context.DrawGeometry(brush, pen, taper);
                     break;
                 }
                 case "GAP":

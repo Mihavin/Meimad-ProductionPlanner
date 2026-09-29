@@ -718,6 +718,15 @@ Actors recorded on planning rows (`released_by`, `user_id`, `confirmed_by_user_i
 
 Planner sources: Work Orders linked through `kitaron_sync_links` (`production_batch`, `wo:<NUMBER>`), `batch_operations.actual_start/actual_end`, the first `QC_PASS` in `production_run_workflow_events` of a Production Run with an output for the operation at or after its start, `production_run_outputs.produced_quantity`, and `production_batches.planned_quantity`.
 
+## Spindle adaptors and pull studs (schema v91)
+
+- `spindle_adaptors`: `id`, `name` (unique, case-insensitive), `taper_length`, `gauge_diameter`, `small_end_diameter`, `tool_changer_diameter` (TCD), `tool_changer_length` (TCL), `notes`, `is_active`, `version`, `updated_at`, `updated_by`. Millimetres.
+- `pull_studs`: `id`, `name` (unique), `thread`, `angle`, `overall_length`, `exposed_length` (above the taper's small end), `knob_diameter`, `neck_diameter`, `pilot_diameter`, `notes`, `is_active`, `version`, `updated_at`, `updated_by`.
+- `machine_spindle_interfaces`: `machine_id` (primary key), `spindle_adaptor_id`, `pull_stud_id`, `version`, `updated_at`, `updated_by`. This is the Machine's default.
+- `tool_preparation_tools.spindle_adaptor_id` and `.pull_stud_id` (nullable): a saved tool's override, part of the immutable version and of its content hash.
+- Seeded with BT40 and HAAS BT40 45° M16. Entries used by a Machine or a saved tool cannot be deleted (restricting foreign keys).
+- The tool shape dimension `outsideHolderLength` (OHL) is stored in `shape_json` like the other dimensions.
+
 ## Setup restart for a newer G-code release (schema v90)
 
 - `production_run_workflow_events.event_type` admits `SETUP_RESTARTED`. The table is rebuilt with its columns, indexes and triggers unchanged.

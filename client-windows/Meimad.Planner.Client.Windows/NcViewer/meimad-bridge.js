@@ -158,6 +158,7 @@
       editCopy: () => invoke("meimadEditCopy"),
       release: (text, options) => invoke("meimadRelease", text, options),
       chooseToolTable: () => invoke("meimadChooseToolTable"),
+      toolAssemblies: () => invoke("meimadToolAssemblies"),
       releaseSubprograms: (text) => invoke("meimadReleaseSubprograms", text),
       releaseSubprogramNote: (text, paths) => invoke("meimadReleaseSubprogramNote", text, paths),
       chooseSubprograms: () => invoke("meimadChooseSubprograms"),

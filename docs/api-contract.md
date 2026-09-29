@@ -2681,6 +2681,28 @@ Windows Setup exposes these master-data routes in **Resource Types & Skills**, w
 
 `GET /api/v1/cases` also accepts `workOrders=with|without`, `release=pending|released`, `orders=active|none`, `operations=with|without`, `materialOrders=verified|toVerify`, and `supplyFrom`, `supplyTo`, `startFrom`, `startTo` (`yyyy-MM-dd`, inclusive). All given filters must match; an unknown token returns 400 `invalid_case_filter`.
 
+### Spindle adaptors and pull studs (schema v91)
+
+Owner decisions 2026-09-29: the Tool Room draws a milling tool with its spindle side. A Setup library holds spindle adaptors and pull studs; every Machine has a default, and a Tool Room tool may override it.
+
+- `GET /api/v1/spindle-library` (read) returns:
+  - `adaptors: [ { spindleAdaptorId, name, taperLength, gaugeDiameter, smallEndDiameter, toolChangerDiameter, toolChangerLength, notes, isActive, version, updatedAt, updatedBy } ]`;
+  - `pullStuds: [ { pullStudId, name, thread, angle, overallLength, exposedLength, knobDiameter, neckDiameter, pilotDiameter, notes, isActive, version, … } ]`;
+  - `machines: [ { machineId, spindleAdaptorId, pullStudId, version } ]`.
+- Creating and changing entries needs the Setup permission:
+  - `POST /api/v1/spindle-adaptors` and `PUT /api/v1/spindle-adaptors/{id}` take `{ expectedVersion, name, taperLength, gaugeDiameter, smallEndDiameter?, toolChangerDiameter, toolChangerLength, notes?, isActive? }`. Without `smallEndDiameter`, a 7:24 steep taper is assumed (`gauge − taperLength × 7/24`).
+  - `POST /api/v1/pull-studs` and `PUT /api/v1/pull-studs/{id}` take `{ expectedVersion, name, thread?, angle?, overallLength?, exposedLength, knobDiameter, neckDiameter?, pilotDiameter?, notes?, isActive? }`.
+  - `DELETE …/{id}?version=` removes an entry.
+  - `PUT /api/v1/machines/{machineId}/spindle-interface` takes `{ spindleAdaptorId?, pullStudId?, expectedVersion }` (0 before the first save).
+- Errors:
+  - a duplicate name, a stale version or deleting an entry a Machine or a saved tool uses returns `409` (`spindle_interface_name_taken`, `spindle_interface_version_conflict`, `spindle_interface_in_use`); an entry in use can be made inactive instead;
+  - invalid sizes return `422`, and unknown ids return `404` / `422`.
+- Seeded entries: `bt40` (BT40: taper 65.4, Ø44.45 → Ø25.375, TCD 63, TCL 25) and `haas-bt40-45-m16` (HAAS BT40 45° M16: 27.94 above the taper, knob Ø14.96, neck Ø9.96, collar Ø16.99, overall 59.94).
+- Tool Room (`/api/v1/batch-operations/{id}/tool-preparation`):
+  - each tool gains `spindleAdaptorId` and `pullStudId`, the override (null = the Machine's default); turning tools carry none. Unknown ids return `422 tool_preparation_spindle_adaptor_unknown` / `tool_preparation_pull_stud_unknown`;
+  - the response adds `machineSpindleAdaptorId`, `machinePullStudId`, `spindleAdaptors` and `pullStuds`;
+  - the shape dimension `outsideHolderLength` (OHL, mm) is accepted.
+
 ### Report email sign-in and test email (schema v89)
 
 Owner decision 2026-09-28: the Server signs in to the mail server with a mailbox user name and password, for example a Gmail account with an App Password.

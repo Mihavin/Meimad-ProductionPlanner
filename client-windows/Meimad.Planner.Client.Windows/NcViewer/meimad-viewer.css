@@ -243,3 +243,11 @@ body.meimad-read-only .CodeMirror-cursor {
   color: var(--app-fg-muted, #8b949e);
   margin: 4px 0;
 }
+
+/* Tool Room: measured tools, shown as the Tool Room has them (meimad-tool-assembly.js). */
+.meimad-tool-room { margin-top: 14px; }
+.meimad-tool-room h3 { margin: 0 0 4px; font-size: 13px; }
+.meimad-tool-room-note { margin: 0 0 6px; font-size: 12px; opacity: 0.8; }
+.meimad-tool-room-table td { padding: 3px 6px; white-space: nowrap; }
+.meimad-tool-room-table td:nth-child(7) { white-space: normal; }
+.meimad-tool-room-unused td { opacity: 0.5; }

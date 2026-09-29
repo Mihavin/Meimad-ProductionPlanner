@@ -95,12 +95,15 @@ internal sealed record ToolPreparationToolRequest(
     string? Notes,
     IReadOnlyList<ToolPreparationComponentRequest>? Components,
     string? Hand = null,
-    string? CatalogToolId = null)
+    string? CatalogToolId = null,
+    string? SpindleAdaptorId = null,
+    string? PullStudId = null)
 {
     internal ToolPreparationTool ToDomain() => new(
         0, ToolIdentifier ?? string.Empty, OffsetNumber, MeasuredLength, MeasuredDiameter,
         ShapeType ?? ToolShapeTypes.Other, Shape ?? [], Notes,
-        (Components ?? []).Select(component => component.ToDomain()).ToArray(), Hand, CatalogToolId);
+        (Components ?? []).Select(component => component.ToDomain()).ToArray(), Hand, CatalogToolId,
+        SpindleAdaptorId, PullStudId);
 }
 
 internal sealed record ToolPreparationRequest(
@@ -138,7 +141,9 @@ internal sealed record ToolPreparationToolResponse(
     string? Notes,
     IReadOnlyList<ToolPreparationComponentResponse> Components,
     string? Hand,
-    string? CatalogToolId);
+    string? CatalogToolId,
+    string? SpindleAdaptorId,
+    string? PullStudId);
 
 internal sealed record ToolPreparationResponse(
     string BatchOperationId,
@@ -158,7 +163,11 @@ internal sealed record ToolPreparationResponse(
     string? Comment,
     string? ContentHash,
     string? SavedForToolTableReleaseId,
-    IReadOnlyList<ToolPreparationToolResponse> Tools)
+    IReadOnlyList<ToolPreparationToolResponse> Tools,
+    string? MachineSpindleAdaptorId,
+    string? MachinePullStudId,
+    IReadOnlyList<SpindleAdaptor> SpindleAdaptors,
+    IReadOnlyList<PullStud> PullStuds)
 {
     internal static ToolPreparationResponse FromDomain(ToolPreparationView view)
     {
@@ -175,13 +184,15 @@ internal sealed record ToolPreparationResponse(
                 (measured?.Components ?? []).Select(component => new ToolPreparationComponentResponse(
                     component.Sequence, component.ComponentType, component.Name, component.CatalogNumber,
                     component.Length, component.Diameter, component.Notes)).ToArray(),
-                measured?.Hand, measured?.CatalogToolId);
+                measured?.Hand, measured?.CatalogToolId, measured?.SpindleAdaptorId, measured?.PullStudId);
         }).ToArray();
+        var machine = view.Spindle?.Machines.FirstOrDefault(value => value.MachineId == view.MachineId);
         return new ToolPreparationResponse(
             view.BatchOperationId, view.MachineId, view.MachineNumber, view.MachineName, view.ProcessType,
             view.NcDialect, view.ToolDiameterOffsetKind, view.ToolTableReleaseId, view.ToolTableRevision,
             view.ToolTableFileName, view.Current?.VersionNumber ?? 0, view.Current?.ToolPreparationId,
             view.Current?.SavedAt, view.Current?.SavedBy, view.Current?.Comment, view.Current?.ContentHash,
-            view.Current?.ToolTableReleaseId, tools);
+            view.Current?.ToolTableReleaseId, tools, machine?.SpindleAdaptorId, machine?.PullStudId,
+            view.Spindle?.Adaptors ?? [], view.Spindle?.PullStuds ?? []);
     }
 }

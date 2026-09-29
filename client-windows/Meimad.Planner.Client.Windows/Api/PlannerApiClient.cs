@@ -362,6 +362,30 @@ internal interface IPlannerApiClient : IDisposable
         string batchOperationId, ToolPreparationUpdate update, string clientId, string userId,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    /// <summary>The Setup library of spindle adaptors and pull studs with every Machine's default (schema v91).</summary>
+    Task<PlannerSpindleLibrary> GetSpindleLibraryAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    /// <summary>Creates (null id) or replaces a spindle adaptor; needs the Setup permission.</summary>
+    Task<PlannerSpindleAdaptor> SaveSpindleAdaptorAsync(
+        string? spindleAdaptorId, SpindleAdaptorSave value, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Creates (null id) or replaces a pull stud; needs the Setup permission.</summary>
+    Task<PlannerPullStud> SavePullStudAsync(
+        string? pullStudId, PullStudSave value, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Deletes an unused spindle adaptor ("spindle-adaptors") or pull stud ("pull-studs").</summary>
+    Task DeleteSpindleLibraryEntryAsync(
+        string collection, string id, int version, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Sets a Machine's default spindle adaptor and pull stud.</summary>
+    Task<PlannerMachineSpindleInterface> SaveMachineSpindleInterfaceAsync(
+        string machineId, string? spindleAdaptorId, string? pullStudId, int expectedVersion, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     /// <summary>The tool catalog; `query` matches internal codes, names, descriptions and external ids.</summary>
     Task<IReadOnlyList<PlannerCatalogTool>> ListCatalogToolsAsync(
         string? query, string? toolType, bool includeInactive,
@@ -2188,6 +2212,56 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Content = JsonContent.Create(update, options: JsonOptions);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<PlannerToolPreparation>(response, cancellationToken);
+    }
+
+    public async Task<PlannerSpindleLibrary> GetSpindleLibraryAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/spindle-library", cancellationToken);
+        return await ReadSuccessAsync<PlannerSpindleLibrary>(response, cancellationToken);
+    }
+
+    public Task<PlannerSpindleAdaptor> SaveSpindleAdaptorAsync(
+        string? spindleAdaptorId, SpindleAdaptorSave value, string clientId, string userId,
+        CancellationToken cancellationToken = default) =>
+        SendSpindleAsync<PlannerSpindleAdaptor>(
+            spindleAdaptorId is null ? HttpMethod.Post : HttpMethod.Put,
+            spindleAdaptorId is null ? "api/v1/spindle-adaptors" : $"api/v1/spindle-adaptors/{Uri.EscapeDataString(spindleAdaptorId)}",
+            value, clientId, userId, cancellationToken);
+
+    public Task<PlannerPullStud> SavePullStudAsync(
+        string? pullStudId, PullStudSave value, string clientId, string userId,
+        CancellationToken cancellationToken = default) =>
+        SendSpindleAsync<PlannerPullStud>(
+            pullStudId is null ? HttpMethod.Post : HttpMethod.Put,
+            pullStudId is null ? "api/v1/pull-studs" : $"api/v1/pull-studs/{Uri.EscapeDataString(pullStudId)}",
+            value, clientId, userId, cancellationToken);
+
+    public async Task DeleteSpindleLibraryEntryAsync(
+        string collection, string id, int version, string clientId, string userId,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Delete,
+            $"api/v1/{collection}/{Uri.EscapeDataString(id)}?version={version.ToString(CultureInfo.InvariantCulture)}", clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+    }
+
+    public Task<PlannerMachineSpindleInterface> SaveMachineSpindleInterfaceAsync(
+        string machineId, string? spindleAdaptorId, string? pullStudId, int expectedVersion, string clientId, string userId,
+        CancellationToken cancellationToken = default) =>
+        SendSpindleAsync<PlannerMachineSpindleInterface>(HttpMethod.Put,
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/spindle-interface",
+            new { spindleAdaptorId, pullStudId, expectedVersion }, clientId, userId, cancellationToken);
+
+    private async Task<T> SendSpindleAsync<T>(
+        HttpMethod method, string path, object value, string clientId, string userId, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(method, path, clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        request.Content = JsonContent.Create(value, value.GetType(), options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<T>(response, cancellationToken);
     }
 
     public async Task<IReadOnlyList<PlannerCatalogTool>> ListCatalogToolsAsync(

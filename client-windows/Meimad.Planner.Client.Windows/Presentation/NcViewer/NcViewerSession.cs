@@ -246,6 +246,18 @@ internal sealed class NcViewerSession : IDisposable
             case "meimadChooseToolTable":
                 var toolTableFile = ui.ChooseToolTableFile(request.ReleaseContext?.ToolTableFilePath is { } known ? Path.GetDirectoryName(known) : null);
                 return toolTableFile is null ? new { canceled = true, path = (string?)null } : new { canceled = false, path = (string?)toolTableFile };
+            case "meimadToolAssemblies":
+                // The Tool Room's measured tools of the opened Operation, drawn and listed as the Tool Room has them.
+                return new
+                {
+                    source = operationToolTable?.Source,
+                    tools = (operationToolTable?.Assemblies ?? []).Select(tool => new
+                    {
+                        tool.Number, tool.Identifier, tool.Description, tool.OffsetNumber, tool.MeasuredLength,
+                        tool.MeasuredDiameter, tool.ShapeType, tool.Hand, tool.Notes, tool.Components, tool.ComponentsText,
+                        tool.Segments, tool.TotalLength, tool.MaximumDiameter, tool.AboveGaugeLength
+                    }).ToArray()
+                };
             case "meimadStock":
                 return await StockStateAsync();
             case "meimadStockSave":

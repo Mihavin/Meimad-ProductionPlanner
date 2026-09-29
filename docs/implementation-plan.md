@@ -1237,3 +1237,49 @@ Nothing is stored. Windows **Setup → Employees / Resources** now has inner tab
 - Operations produced by combined multi-output runs.
 - The Timeline does not yet add a new setup phase for an operation back in setup.
 - A cycle that was running on the Machine at the moment of the refresh is not counted.
+
+## Measured tools in the NC viewer (2026-09-29)
+
+**Owner decision (2026-09-29):** "After the measurement of the tools in Tool Room Tool Table, the tool table in NC viewer should be exact same as Tool Room Tool table. The tool in NC Viewer should show it exact as measured, include holder and components. If tools are not measured yet - keep as it now."
+
+**Implemented (client only, no Server or schema change):**
+- `NcViewerOperationToolTable.From` adds an `NcViewerToolAssembly` for every tool of a saved Tool Room version with a measured length or diameter. It holds the Tool Room row (identifier, offset, measured values, type, hand, notes, components in assembly order) and the segments of the Tool Room's own drawing (`ToolShapeBuilder`).
+- The session answers `meimadToolAssemblies`.
+- The page script `meimad-tool-assembly.js`:
+  - adds the *Tool Room: measured tools* section under the viewer's tool table;
+  - follows the wrapper's tool-pose hook: it finds the active T number (the playing segment, else the segment ending at the tip), hides the vendored cutter group and draws the assembly at the same position and orientation (inch programs scaled).
+- Unmeasured tools keep the vendored drawing. The vendored files are unchanged. he/ru texts are included.
+
+**Tests:**
+- `NcViewerOperationToolTableTests.Measured_tools_carry_the_tool_room_assembly_and_unmeasured_tools_keep_the_viewer_tool`.
+- A Node smoke run of the page script against the vendored three.js (the assembly replaces the cutter for a measured tool and the vendored cutter returns for an unmeasured one).
+- The WebView2 page itself still needs a check on a workstation.
+
+**Not covered:**
+- Turning tools are listed but not drawn as assemblies.
+- A release opened from the Case workspace has no Work Order operation, so no measurements.
+
+## Spindle side of milling tools in the Tool Room (2026-09-29, schema v91)
+
+**Owner request (2026-09-29):** the holder definition in the Tool Room tool table should show the BT40 adaptor with the pull stud (selectable from a library) relative to the gauge line; the holder is a cylinder of a defined diameter whose length is calculated from the measured tool length (HL = measured length − OHL − TCL; example: pull stud HAAS 40 45° M16, BT-40 adaptor, gauge line, tool-changer feature Ø63 × 25, holder Ø40 × HL, flat mill D10 CL22 SD10 OL80 OHL50). **Decisions:** the library lives on the Server and is edited in Setup; the adaptor and pull stud are a Machine default, with a per-tool override in the Tool Room.
+
+**Implemented:**
+- Migration v91:
+  - `spindle_adaptors`, `pull_studs` (seeded with BT40 and HAAS BT40 45° M16 from Haas/Shars data) and `machine_spindle_interfaces`;
+  - per-tool `spindle_adaptor_id` / `pull_stud_id` on `tool_preparation_tools`;
+  - the shape key `outsideHolderLength`.
+- Endpoints `GET /api/v1/spindle-library`, create/replace/delete for adaptors and pull studs, and `PUT /api/v1/machines/{id}/spindle-interface`. The tool preparation read carries the library and the Machine default.
+- Client:
+  - `ToolShapeBuilder` draws the pull stud (knob, neck, collar), the `TAPER` and the flange, and a holder cylinder whose HL is driven by the measured length and OHL; the tool shows OHL;
+  - the Tool Room preview draws above the gauge line;
+  - the Tool Room has per-tool adaptor and pull-stud pickers and shows the calculated HL;
+  - the Setup tab *Spindle Adaptors & Pull Studs* holds the library and the Machine defaults (lathes are not listed);
+  - the NC viewer assemblies include the spindle side (`TAPER` drawn as a truncated cone);
+  - he/ru texts.
+
+**Tests:** `SpindleInterfaceApiTests` (library, versions, permissions, Machine default, per-tool override, entries in use); client `ToolSpindleGeometryTests` (the owner's example: HL = 45 and the tip at the measured 120 mm; undriven holder; turning unchanged; override and NC viewer assembly) and `SpindleLibraryViewModelTests`. Migration version tests move to 91.
+
+**Not covered:**
+- Collets are listed but not drawn in spindle mode (the formula has no collet term).
+- Other extensions are subtracted from HL.
+- Seeded dimensions should be checked against the actual tooling.

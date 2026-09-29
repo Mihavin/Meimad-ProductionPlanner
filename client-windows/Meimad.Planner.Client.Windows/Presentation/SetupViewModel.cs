@@ -301,6 +301,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     /// <summary>Setup → Employees → Workload: planned load per employee and the printable report.</summary>
     public EmployeeWorkloadViewModel Workload { get; } = new();
+    public SpindleLibraryViewModel SpindleLibrary { get; } = new();
 
     public NetworkFolderViewModel NetworkFolder { get; } = new();
 
@@ -909,6 +910,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         KitaronStations.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         KitaronPush.AttachSession(newApiClient, nextIsEditor);
         Workload.AttachSession(newApiClient);
+        SpindleLibrary.AttachSession(newApiClient, newClientId, LocalUserName, nextIsEditor);
         NetworkFolder.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         if (!apiChanged
             && string.Equals(clientId, newClientId, StringComparison.Ordinal)

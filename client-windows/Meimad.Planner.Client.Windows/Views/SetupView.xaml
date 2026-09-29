@@ -443,6 +443,120 @@
                 </Grid>
             </TabItem>
 
+            <TabItem Header="Spindle Adaptors &amp; Pull Studs" ToolTip="The spindle adaptors and pull studs the Tool Room draws above the gauge line, and each Machine's default">
+                <Grid Margin="8" DataContext="{Binding SpindleLibrary}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="10" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="10" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <DockPanel Margin="0,0,0,6">
+                        <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}" />
+                        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" />
+                    </DockPanel>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="3*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="2*" /></Grid.ColumnDefinitions>
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="SPINDLE ADAPTORS" FontWeight="Bold" Margin="0,0,0,4" />
+                            <DataGrid ItemsSource="{Binding Adaptors}" SelectedItem="{Binding SelectedAdaptor}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
+                                    <DataGridTextColumn Header="Taper length" Binding="{Binding TaperLength}" Width="85" />
+                                    <DataGridTextColumn Header="Gauge D" Binding="{Binding GaugeDiameter}" Width="70" />
+                                    <DataGridTextColumn Header="Small end D" Binding="{Binding SmallEndDiameter}" Width="80" />
+                                    <DataGridTextColumn Header="Flange D" Binding="{Binding ToolChangerDiameter}" Width="55" />
+                                    <DataGridTextColumn Header="Flange L" Binding="{Binding ToolChangerLength}" Width="55" />
+                                    <DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="55" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+                        <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+                            <StackPanel IsEnabled="{Binding CanEdit}">
+                                <TextBlock Text="Name" /><TextBox Text="{Binding AdaptorName, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4" />
+                                <UniformGrid Columns="2">
+                                    <StackPanel Margin="0,0,6,4"><TextBlock Text="Taper length (above the gauge line)" /><TextBox Text="{Binding TaperLength, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Margin="0,0,0,4"><TextBlock Text="Gauge diameter" /><TextBox Text="{Binding GaugeDiameter, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Margin="0,0,6,4"><TextBlock Text="Small end diameter (empty: 7:24 taper)" /><TextBox Text="{Binding SmallEndDiameter, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Margin="0,0,0,4"><TextBlock Text="Tool changer diameter (TCD)" /><TextBox Text="{Binding ToolChangerDiameter, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Margin="0,0,6,4"><TextBlock Text="Tool changer length (TCL)" /><TextBox Text="{Binding ToolChangerLength, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <CheckBox Content="Active" IsChecked="{Binding AdaptorActive}" VerticalAlignment="Bottom" Margin="0,0,0,8" />
+                                </UniformGrid>
+                                <TextBlock Text="Notes" /><TextBox Text="{Binding AdaptorNotes, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6" />
+                                <WrapPanel>
+                                    <Button Content="New" Command="{Binding NewAdaptorCommand}" Margin="0,0,6,0" />
+                                    <Button Content="Save adaptor" Command="{Binding SaveAdaptorCommand}" Margin="0,0,6,0" />
+                                    <Button Content="Delete" Command="{Binding DeleteAdaptorCommand}" ToolTip="Only an adaptor no Machine or saved tool uses can be deleted; make it inactive instead" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+
+                    <Grid Grid.Row="3">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="3*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="2*" /></Grid.ColumnDefinitions>
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="PULL STUDS" FontWeight="Bold" Margin="0,0,0,4" />
+                            <DataGrid ItemsSource="{Binding PullStuds}" SelectedItem="{Binding SelectedPullStud}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
+                                    <DataGridTextColumn Header="Thread" Binding="{Binding Thread}" Width="70" />
+                                    <DataGridTextColumn Header="Angle" Binding="{Binding Angle}" Width="50" />
+                                    <DataGridTextColumn Header="Above taper" Binding="{Binding ExposedLength}" Width="80" />
+                                    <DataGridTextColumn Header="Knob D" Binding="{Binding KnobDiameter}" Width="60" />
+                                    <DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="55" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+                        <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+                            <StackPanel IsEnabled="{Binding CanEdit}">
+                                <TextBlock Text="Name" /><TextBox Text="{Binding StudName, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4" />
+                                <UniformGrid Columns="2">
+                                    <StackPanel Margin="0,0,6,4"><TextBlock Text="Thread" /><TextBox Text="{Binding StudThread, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Margin="0,0,0,4"><TextBlock Text="Angle (degrees)" /><TextBox Text="{Binding StudAngle, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Margin="0,0,6,4"><TextBlock Text="Length above the taper" /><TextBox Text="{Binding StudExposedLength, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Margin="0,0,0,4"><TextBlock Text="Overall length" /><TextBox Text="{Binding StudOverallLength, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Margin="0,0,6,4"><TextBlock Text="Knob diameter" /><TextBox Text="{Binding StudKnobDiameter, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Margin="0,0,0,4"><TextBlock Text="Neck diameter" /><TextBox Text="{Binding StudNeckDiameter, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Margin="0,0,6,4"><TextBlock Text="Collar diameter" /><TextBox Text="{Binding StudPilotDiameter, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <CheckBox Content="Active" IsChecked="{Binding StudActive}" VerticalAlignment="Bottom" Margin="0,0,0,8" />
+                                </UniformGrid>
+                                <TextBlock Text="Notes" /><TextBox Text="{Binding StudNotes, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6" />
+                                <WrapPanel>
+                                    <Button Content="New" Command="{Binding NewPullStudCommand}" Margin="0,0,6,0" />
+                                    <Button Content="Save pull stud" Command="{Binding SavePullStudCommand}" Margin="0,0,6,0" />
+                                    <Button Content="Delete" Command="{Binding DeletePullStudCommand}" ToolTip="Only a pull stud no Machine or saved tool uses can be deleted; make it inactive instead" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+
+                    <DockPanel Grid.Row="5">
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                            <Button DockPanel.Dock="Right" Content="Save Machine defaults" Command="{Binding SaveMachinesCommand}" />
+                            <TextBlock Text="MACHINE DEFAULTS (every tool on the Machine uses them unless the Tool Room picks another)" FontWeight="Bold" VerticalAlignment="Center" TextWrapping="Wrap" />
+                        </DockPanel>
+                        <DataGrid ItemsSource="{Binding Machines}" AutoGenerateColumns="False" CanUserAddRows="False" IsEnabled="{Binding CanEdit}">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Machine" Binding="{Binding MachineText}" IsReadOnly="True" Width="*" />
+                                <DataGridTemplateColumn Header="Spindle adaptor" Width="200">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate><ComboBox ItemsSource="{Binding Adaptors}" SelectedItem="{Binding Adaptor, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="Name" /></DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Pull stud" Width="220">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate><ComboBox ItemsSource="{Binding PullStuds}" SelectedItem="{Binding PullStud, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="Name" /></DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </Grid>
+            </TabItem>
+
             <TabItem Header="Machine Availability">
                 <Grid Margin="8">
                     <Grid.ColumnDefinitions>

@@ -106,6 +106,39 @@ internal sealed class ToolPreparationComponentViewModel : ToolPreparationObserva
     }
 }
 
+/// <summary>A spindle adaptor or pull stud a tool can use; a null id is the Machine's default.</summary>
+internal sealed record ToolSpindleChoice(string? Id, string Name);
+
+/// <summary>The Setup library of spindle adaptors and pull studs and the Machine's defaults (schema v91).</summary>
+internal sealed record ToolSpindleContext(
+    IReadOnlyList<PlannerSpindleAdaptor> Adaptors,
+    IReadOnlyList<PlannerPullStud> PullStuds,
+    string? MachineAdaptorId,
+    string? MachinePullStudId)
+{
+    internal static ToolSpindleContext From(PlannerToolPreparation data) =>
+        new(data.SpindleAdaptors ?? [], data.PullStuds ?? [], data.MachineSpindleAdaptorId, data.MachinePullStudId);
+
+    internal IReadOnlyList<ToolSpindleChoice> AdaptorChoices(string? current)
+    {
+        var machine = Adaptors.FirstOrDefault(value => value.SpindleAdaptorId == MachineAdaptorId)?.Name;
+        return [new(null, machine is null ? "Machine default (none)" : $"Machine default ({machine})"),
+            .. Adaptors.Where(value => value.IsActive || value.SpindleAdaptorId == current).Select(value => new ToolSpindleChoice(value.SpindleAdaptorId, value.Name))];
+    }
+
+    internal IReadOnlyList<ToolSpindleChoice> PullStudChoices(string? current)
+    {
+        var machine = PullStuds.FirstOrDefault(value => value.PullStudId == MachinePullStudId)?.Name;
+        return [new(null, machine is null ? "Machine default (none)" : $"Machine default ({machine})"),
+            .. PullStuds.Where(value => value.IsActive || value.PullStudId == current).Select(value => new ToolSpindleChoice(value.PullStudId, value.Name))];
+    }
+
+    /// <summary>The adaptor and pull stud a tool is drawn with: its own choice, else the Machine's default.</summary>
+    internal ToolSpindleShape? Resolve(string? adaptorId, string? pullStudId) => ToolSpindleShape.From(
+        Adaptors.FirstOrDefault(value => value.SpindleAdaptorId == (adaptorId ?? MachineAdaptorId)),
+        PullStuds.FirstOrDefault(value => value.PullStudId == (pullStudId ?? MachinePullStudId)));
+}
+
 /// <summary>One released tool row with its measurements, type, hand, dimensions, catalog link and components.</summary>
 internal sealed class ToolPreparationToolViewModel : ToolPreparationObservable
 {
@@ -120,10 +153,18 @@ internal sealed class ToolPreparationToolViewModel : ToolPreparationObservable
     private string catalogToolText;
     private string notes;
     private ToolPreparationComponentViewModel? selectedComponent;
+    private readonly ToolSpindleContext spindle;
+    private ToolSpindleChoice adaptorChoice;
+    private ToolSpindleChoice pullStudChoice;
 
-    internal ToolPreparationToolViewModel(PlannerToolPreparationTool tool, Action changed)
+    internal ToolPreparationToolViewModel(PlannerToolPreparationTool tool, Action changed, ToolSpindleContext? spindle = null)
     {
         this.changed = changed;
+        this.spindle = spindle ?? new ToolSpindleContext([], [], null, null);
+        AdaptorChoices = this.spindle.AdaptorChoices(tool.SpindleAdaptorId);
+        PullStudChoices = this.spindle.PullStudChoices(tool.PullStudId);
+        adaptorChoice = AdaptorChoices.FirstOrDefault(choice => choice.Id == tool.SpindleAdaptorId) ?? AdaptorChoices[0];
+        pullStudChoice = PullStudChoices.FirstOrDefault(choice => choice.Id == tool.PullStudId) ?? PullStudChoices[0];
         dimensions = new ToolDimensionSet(Changed);
         RowNumber = tool.RowNumber;
         ToolIdentifier = tool.ToolIdentifier;
@@ -206,6 +247,34 @@ internal sealed class ToolPreparationToolViewModel : ToolPreparationObservable
 
     public ToolPreparationComponentViewModel? SelectedComponent { get => selectedComponent; set => Set(ref selectedComponent, value); }
 
+    /// <summary>A milling or hole-making tool sits in a spindle taper; turning tools do not.</summary>
+    public bool HasSpindle => shape.Family != "TURNING";
+
+    public IReadOnlyList<ToolSpindleChoice> AdaptorChoices { get; }
+    public IReadOnlyList<ToolSpindleChoice> PullStudChoices { get; }
+
+    public ToolSpindleChoice AdaptorChoice
+    {
+        get => adaptorChoice;
+        set { if (Set(ref adaptorChoice, value ?? AdaptorChoices[0])) Changed(); }
+    }
+
+    public ToolSpindleChoice PullStudChoice
+    {
+        get => pullStudChoice;
+        set { if (Set(ref pullStudChoice, value ?? PullStudChoices[0])) Changed(); }
+    }
+
+    /// <summary>The holder length the drawing uses: HL = measured length − OHL − TCL (shown when it can be calculated).</summary>
+    public string HolderLengthText
+    {
+        get
+        {
+            var segment = Geometry.Segments.FirstOrDefault(value => value.Label.EndsWith("(HL)", StringComparison.Ordinal));
+            return segment is null ? string.Empty : $"HL = {Text(segment.Height)} mm (measured length − OHL − TCL)";
+        }
+    }
+
     /// <summary>Length, diameter and an offset number are what the Production Package needs.</summary>
     public bool IsComplete =>
         TryParseNumber(MeasuredLengthText) is not null && TryParseNumber(MeasuredDiameterText) is not null && OffsetNumber() is not null;
@@ -218,7 +287,8 @@ internal sealed class ToolPreparationToolViewModel : ToolPreparationObservable
         dimensions.Preview(),
         Components.Select(component => component.ToShape()).ToArray(),
         TryParseNumber(MeasuredLengthText),
-        TryParseNumber(MeasuredDiameterText));
+        TryParseNumber(MeasuredDiameterText),
+        HasSpindle ? spindle.Resolve(AdaptorChoice.Id, PullStudChoice.Id) : null);
 
     /// <summary>Takes the type, hand and dimensions of a catalog tool and remembers the link.</summary>
     internal void ApplyCatalogTool(PlannerCatalogTool tool)
@@ -286,12 +356,16 @@ internal sealed class ToolPreparationToolViewModel : ToolPreparationObservable
             string.IsNullOrWhiteSpace(Notes) ? null : Notes.Trim(),
             Components.Select((component, index) => component.ToUpdate(index + 1, ToolIdentifier)).ToArray(),
             HasHand ? Hand.Id : null,
-            catalogToolId);
+            catalogToolId,
+            HasSpindle ? AdaptorChoice.Id : null,
+            HasSpindle ? PullStudChoice.Id : null);
     }
 
     internal void Changed()
     {
         Raise(nameof(Geometry));
+        Raise(nameof(HolderLengthText));
+        Raise(nameof(HasSpindle));
         Raise(nameof(IsComplete));
         Raise(nameof(CompletionText));
         Raise(nameof(ComponentCount));
@@ -465,7 +539,7 @@ internal sealed class ToolPreparationViewModel : ToolPreparationObservable
         Tools.Clear();
         foreach (var tool in value.Tools.OrderBy(tool => tool.RowNumber))
         {
-            Tools.Add(new ToolPreparationToolViewModel(tool, MarkDirty));
+            Tools.Add(new ToolPreparationToolViewModel(tool, MarkDirty, ToolSpindleContext.From(value)));
         }
         SelectedTool = Tools.FirstOrDefault(tool => tool.ToolIdentifier == selectedIdentifier) ?? Tools.FirstOrDefault();
         foreach (var name in new[] { nameof(Title), nameof(ToolTableText), nameof(OffsetKindText), nameof(MeasurementHint), nameof(Version),

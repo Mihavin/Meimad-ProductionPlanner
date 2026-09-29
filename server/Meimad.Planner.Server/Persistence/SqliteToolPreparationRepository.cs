@@ -44,10 +44,11 @@ internal sealed class SqliteToolPreparationRepository(SqliteDatabase database) :
 
         var released = await ReadReleasedToolsAsync(connection, transaction, readiness.ActiveToolTableReleaseId, cancellationToken);
         var current = await ReadLatestAsync(connection, transaction, batchOperationId, readiness.MachineId, cancellationToken);
+        var spindle = await SqliteSpindleInterfaceRepository.ReadAsync(connection, transaction, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new ToolPreparationView(
             batchOperationId, readiness.MachineId, machineNumber, machineName, processType, ncDialect, offsetKind,
-            readiness.ActiveToolTableReleaseId, toolTableRevision, toolTableFileName, released, current);
+            readiness.ActiveToolTableReleaseId, toolTableRevision, toolTableFileName, released, current, spindle);
     }
 
     public async Task<ToolPreparation> SaveAsync(
@@ -93,21 +94,36 @@ internal sealed class SqliteToolPreparationRepository(SqliteDatabase database) :
                 "tool_preparation_catalog_tool_unknown",
                 $"Catalog tool '{unknownCatalogTool}' does not exist.", "catalogToolId");
 
+        // A per-tool spindle adaptor or pull stud must be an entry of the Setup library.
+        var unknownAdaptor = await SqliteSpindleInterfaceRepository.FirstUnknownAsync(
+            connection, transaction, "spindle_adaptors", preparation.Tools.Select(tool => tool.SpindleAdaptorId).OfType<string>(), cancellationToken);
+        if (unknownAdaptor is not null)
+            throw new ToolPreparationValidationException(
+                "tool_preparation_spindle_adaptor_unknown", $"Spindle adaptor '{unknownAdaptor}' does not exist.", "spindleAdaptorId");
+        var unknownStud = await SqliteSpindleInterfaceRepository.FirstUnknownAsync(
+            connection, transaction, "pull_studs", preparation.Tools.Select(tool => tool.PullStudId).OfType<string>(), cancellationToken);
+        if (unknownStud is not null)
+            throw new ToolPreparationValidationException(
+                "tool_preparation_pull_stud_unknown", $"Pull stud '{unknownStud}' does not exist.", "pullStudId");
+
         foreach (var tool in preparation.Tools)
         {
             var toolId = Guid.NewGuid().ToString("N");
             await ExecuteAsync(connection, transaction, """
                 INSERT INTO tool_preparation_tools (
                     id, tool_preparation_id, row_number, tool_identifier, offset_number,
-                    measured_length, measured_diameter, shape_type, shape_json, notes, hand, catalog_tool_id)
-                VALUES ($id, $preparationId, $row, $identifier, $offset, $length, $diameter, $shape, $shapeJson, $notes, $hand, $catalogToolId);
+                    measured_length, measured_diameter, shape_type, shape_json, notes, hand, catalog_tool_id,
+                    spindle_adaptor_id, pull_stud_id)
+                VALUES ($id, $preparationId, $row, $identifier, $offset, $length, $diameter, $shape, $shapeJson, $notes, $hand, $catalogToolId,
+                        $adaptorId, $pullStudId);
                 """, cancellationToken,
                 ("$id", toolId), ("$preparationId", preparation.ToolPreparationId),
                 ("$row", tool.RowNumber), ("$identifier", tool.ToolIdentifier),
                 ("$offset", Db(tool.OffsetNumber)), ("$length", Db(tool.MeasuredLength)),
                 ("$diameter", Db(tool.MeasuredDiameter)), ("$shape", tool.ShapeType),
                 ("$shapeJson", JsonSerializer.Serialize(tool.Shape)), ("$notes", Db(tool.Notes)),
-                ("$hand", Db(tool.Hand)), ("$catalogToolId", Db(tool.CatalogToolId)));
+                ("$hand", Db(tool.Hand)), ("$catalogToolId", Db(tool.CatalogToolId)),
+                ("$adaptorId", Db(tool.SpindleAdaptorId)), ("$pullStudId", Db(tool.PullStudId)));
             foreach (var component in tool.Components)
             {
                 await ExecuteAsync(connection, transaction, """
@@ -197,7 +213,7 @@ internal sealed class SqliteToolPreparationRepository(SqliteDatabase database) :
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, row_number, tool_identifier, offset_number, measured_length, measured_diameter,
-                   shape_type, shape_json, notes, hand, catalog_tool_id
+                   shape_type, shape_json, notes, hand, catalog_tool_id, spindle_adaptor_id, pull_stud_id
             FROM tool_preparation_tools
             WHERE tool_preparation_id = $preparationId
             ORDER BY row_number;
@@ -216,7 +232,9 @@ internal sealed class SqliteToolPreparationRepository(SqliteDatabase database) :
                 toolReader.IsDBNull(8) ? null : toolReader.GetString(8),
                 components.TryGetValue(toolReader.GetString(0), out var list) ? list : [],
                 toolReader.IsDBNull(9) ? null : toolReader.GetString(9),
-                toolReader.IsDBNull(10) ? null : toolReader.GetString(10)));
+                toolReader.IsDBNull(10) ? null : toolReader.GetString(10),
+                toolReader.IsDBNull(11) ? null : toolReader.GetString(11),
+                toolReader.IsDBNull(12) ? null : toolReader.GetString(12)));
         }
         return tools;
     }

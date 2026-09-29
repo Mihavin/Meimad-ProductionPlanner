@@ -2423,7 +2423,9 @@ internal sealed record PlannerToolPreparationTool(
     string? Notes,
     IReadOnlyList<PlannerToolPreparationComponent> Components,
     string? Hand = null,
-    string? CatalogToolId = null);
+    string? CatalogToolId = null,
+    string? SpindleAdaptorId = null,
+    string? PullStudId = null);
 
 /// <summary>
 /// The Tool Room's tool preparation of one Batch Operation on its assigned Machine: the released
@@ -2447,7 +2449,64 @@ internal sealed record PlannerToolPreparation(
     string? Comment,
     string? ContentHash,
     string? SavedForToolTableReleaseId,
-    IReadOnlyList<PlannerToolPreparationTool> Tools);
+    IReadOnlyList<PlannerToolPreparationTool> Tools,
+    string? MachineSpindleAdaptorId = null,
+    string? MachinePullStudId = null,
+    IReadOnlyList<PlannerSpindleAdaptor>? SpindleAdaptors = null,
+    IReadOnlyList<PlannerPullStud>? PullStuds = null)
+{
+    /// <summary>The adaptor a tool is drawn with: its own override, else the Machine's default.</summary>
+    internal PlannerSpindleAdaptor? AdaptorFor(PlannerToolPreparationTool tool) =>
+        (SpindleAdaptors ?? []).FirstOrDefault(value => value.SpindleAdaptorId == (tool.SpindleAdaptorId ?? MachineSpindleAdaptorId));
+
+    /// <summary>The pull stud a tool is drawn with: its own override, else the Machine's default.</summary>
+    internal PlannerPullStud? PullStudFor(PlannerToolPreparationTool tool) =>
+        (PullStuds ?? []).FirstOrDefault(value => value.PullStudId == (tool.PullStudId ?? MachinePullStudId));
+}
+
+/// <summary>A spindle adaptor of the Setup library (schema v91), millimetres.</summary>
+internal sealed record PlannerSpindleAdaptor(
+    string SpindleAdaptorId,
+    string Name,
+    double TaperLength,
+    double GaugeDiameter,
+    double SmallEndDiameter,
+    double ToolChangerDiameter,
+    double ToolChangerLength,
+    string? Notes,
+    bool IsActive,
+    int Version);
+
+/// <summary>A pull stud of the Setup library; <c>ExposedLength</c> is the part above the taper end.</summary>
+internal sealed record PlannerPullStud(
+    string PullStudId,
+    string Name,
+    string? Thread,
+    double? Angle,
+    double? OverallLength,
+    double ExposedLength,
+    double KnobDiameter,
+    double? NeckDiameter,
+    double? PilotDiameter,
+    string? Notes,
+    bool IsActive,
+    int Version);
+
+internal sealed record PlannerMachineSpindleInterface(string MachineId, string? SpindleAdaptorId, string? PullStudId, int Version);
+
+/// <summary>GET /api/v1/spindle-library.</summary>
+internal sealed record PlannerSpindleLibrary(
+    IReadOnlyList<PlannerSpindleAdaptor> Adaptors,
+    IReadOnlyList<PlannerPullStud> PullStuds,
+    IReadOnlyList<PlannerMachineSpindleInterface> Machines);
+
+internal sealed record SpindleAdaptorSave(
+    int ExpectedVersion, string Name, double TaperLength, double GaugeDiameter, double? SmallEndDiameter,
+    double ToolChangerDiameter, double ToolChangerLength, string? Notes, bool IsActive);
+
+internal sealed record PullStudSave(
+    int ExpectedVersion, string Name, string? Thread, double? Angle, double? OverallLength, double ExposedLength,
+    double KnobDiameter, double? NeckDiameter, double? PilotDiameter, string? Notes, bool IsActive);
 
 internal sealed record ToolPreparationComponentUpdate(
     int Sequence,
@@ -2468,7 +2527,9 @@ internal sealed record ToolPreparationToolUpdate(
     string? Notes,
     IReadOnlyList<ToolPreparationComponentUpdate> Components,
     string? Hand = null,
-    string? CatalogToolId = null);
+    string? CatalogToolId = null,
+    string? SpindleAdaptorId = null,
+    string? PullStudId = null);
 
 /// <summary>Saves the next tool preparation version; the Server rejects a stale version or Tool Table release.</summary>
 internal sealed record ToolPreparationUpdate(

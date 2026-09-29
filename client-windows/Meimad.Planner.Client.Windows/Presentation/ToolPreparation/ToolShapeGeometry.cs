@@ -1,7 +1,11 @@
+using Meimad.Planner.Client.Windows.Api;
+
 namespace Meimad.Planner.Client.Windows.Presentation.ToolPreparation;
 
 /// <summary>
-/// One stacked segment of the tool drawing, from the spindle gauge line downwards. Kinds:
+/// One stacked segment of the tool drawing, from the spindle gauge line downwards (a negative
+/// <see cref="Top"/> lies above the gauge line: the pull stud and the adaptor taper). Kinds:
+/// TAPER (spindle adaptor taper, <see cref="TopDiameter"/> at its small upper end),
 /// HOLDER (taper with flange), CYLINDER, CUTTER (fluted cylinder), BALL (hemisphere tip),
 /// POINT (drill point), CONE (chamfer, engraver, threading insert), DISC (face, slot and T-slot
 /// cutters), INSERT (turning and boring inserts), BLADE (grooving and parting), DOVETAIL (widening
@@ -16,23 +20,59 @@ internal sealed record ToolShapeSegment(
     string Label,
     double TipAngle = 0,
     double CornerRadius = 0,
-    bool IsDefault = false);
+    bool IsDefault = false,
+    double TopDiameter = 0);
 
-/// <summary>The drawing of one prepared tool in millimetres, plus its measured values for the dimension lines.</summary>
+/// <summary>
+/// The drawing of one prepared tool in millimetres, plus its measured values for the dimension lines.
+/// <see cref="TotalLength"/> runs from the gauge line to the tip; <see cref="AboveGaugeLength"/> is
+/// the pull stud and taper above the gauge line.
+/// </summary>
 internal sealed record ToolShapeGeometry(
     IReadOnlyList<ToolShapeSegment> Segments,
     double TotalLength,
     double MaximumDiameter,
     double? MeasuredLength,
-    double? MeasuredDiameter);
+    double? MeasuredDiameter,
+    double AboveGaugeLength = 0);
 
 internal sealed record ToolShapeComponent(string ComponentType, string Name, double? Length, double? Diameter);
+
+/// <summary>
+/// The spindle side of a milling tool (schema v91): the adaptor's taper above the gauge line and its
+/// tool-changer flange (TCD × TCL) below it, and the pull stud on top of the taper. Millimetres.
+/// </summary>
+internal sealed record ToolSpindleShape(
+    string AdaptorName,
+    double TaperLength,
+    double GaugeDiameter,
+    double SmallEndDiameter,
+    double ToolChangerDiameter,
+    double ToolChangerLength,
+    string? PullStudName = null,
+    double? PullStudExposedLength = null,
+    double? KnobDiameter = null,
+    double? NeckDiameter = null,
+    double? PilotDiameter = null)
+{
+    internal static ToolSpindleShape? From(PlannerSpindleAdaptor? adaptor, PlannerPullStud? pullStud) => adaptor is null
+        ? null
+        : new ToolSpindleShape(
+            adaptor.Name, adaptor.TaperLength, adaptor.GaugeDiameter, adaptor.SmallEndDiameter,
+            adaptor.ToolChangerDiameter, adaptor.ToolChangerLength,
+            pullStud?.Name, pullStud?.ExposedLength, pullStud?.KnobDiameter, pullStud?.NeckDiameter, pullStud?.PilotDiameter);
+}
 
 /// <summary>
 /// Builds the schematic from the assembled components (holder, extension, collet, shank, ...) and
 /// the cutter shape and dimensions. Without components only the cutter hangs from the gauge line.
 /// Missing dimensions get typical defaults that are marked, so the picture is always drawable and
 /// the Tool Room sees what is still unspecified.
+/// With a spindle adaptor (owner decisions 2026-09-29) a milling tool is drawn as it sits in the
+/// spindle: the pull stud and the taper above the gauge line, the tool-changer flange (TCD × TCL)
+/// below it, then the holder as a cylinder of its diameter HD whose length follows from the
+/// measured length: HL = measured length − OHL − TCL (− extensions). The tool shows only its
+/// outside-holder length OHL.
 /// </summary>
 internal static class ToolShapeBuilder
 {
@@ -47,10 +87,21 @@ internal static class ToolShapeBuilder
         IReadOnlyDictionary<string, double> shape,
         IReadOnlyList<ToolShapeComponent> components,
         double? measuredLength,
-        double? measuredDiameter)
+        double? measuredDiameter,
+        ToolSpindleShape? spindle = null)
     {
         var segments = new List<ToolShapeSegment>();
         var top = 0.0;
+        var above = 0.0;
+        var outsideHolder = Positive(Value(shape, "outsideHolderLength"));
+        if (spindle is not null && !IsTurning(shapeType))
+        {
+            above = AddSpindle(segments, spindle);
+            top = AddHolder(segments, spindle, components, outsideHolder, measuredLength);
+            components = components
+                .Where(component => component.ComponentType.ToUpperInvariant() is not ("HOLDER" or "COLLET" or "SHANK"))
+                .ToArray();
+        }
         foreach (var component in components)
         {
             var componentType = component.ComponentType.ToUpperInvariant();
@@ -70,7 +121,8 @@ internal static class ToolShapeBuilder
         var shankDiameter = Positive(Value(shape, "shankDiameter")) ?? cuttingDiameter;
         var fluteLength = Positive(Value(shape, "fluteLength")) ?? Math.Round(cuttingDiameter * 2.2, 1);
         var overallLength = Positive(Value(shape, "overallLength")) ?? Math.Round(fluteLength + Math.Max(cuttingDiameter * 2.5, 20), 1);
-        var shankLength = Math.Max(0, overallLength - fluteLength);
+        // Only the part outside the holder (OHL) is seen; without it, the whole shank.
+        var shankLength = outsideHolder is { } visible ? Math.Max(0, visible - fluteLength) : Math.Max(0, overallLength - fluteLength);
         var cornerRadius = Math.Max(0, Value(shape, "cornerRadius") ?? 0);
         var pointAngle = Positive(Value(shape, "pointAngle")) ?? 118;
         var taperAngle = Positive(Value(shape, "taperAngle")) ?? 45;
@@ -336,8 +388,62 @@ internal static class ToolShapeBuilder
         }
 
         var maximum = segments.Count == 0 ? 0 : segments.Max(segment => segment.Diameter);
-        return new ToolShapeGeometry(segments, top, maximum, measuredLength, measuredDiameter);
+        return new ToolShapeGeometry(segments, top, maximum, measuredLength, measuredDiameter, above);
     }
+
+    /// <summary>Pull stud and taper above the gauge line; returns their height.</summary>
+    private static double AddSpindle(List<ToolShapeSegment> segments, ToolSpindleShape spindle)
+    {
+        var taper = spindle.TaperLength;
+        var above = taper;
+        if (spindle.PullStudExposedLength is { } exposed && exposed > 0)
+        {
+            var knob = Positive(spindle.KnobDiameter) ?? Math.Max(1, spindle.SmallEndDiameter * 0.6);
+            var neck = Positive(spindle.NeckDiameter) ?? knob * 0.65;
+            var pilot = Positive(spindle.PilotDiameter) ?? knob * 1.1;
+            var knobHeight = Math.Min(exposed * 0.3, knob * 0.6);
+            var pilotHeight = Math.Min(exposed * 0.25, 4);
+            var neckHeight = Math.Max(0, exposed - knobHeight - pilotHeight);
+            var stud = -(taper + exposed);
+            var name = string.IsNullOrWhiteSpace(spindle.PullStudName) ? "Pull stud" : $"Pull stud {spindle.PullStudName}";
+            segments.Add(new ToolShapeSegment("CYLINDER", stud, knobHeight, knob, name, IsDefault: spindle.KnobDiameter is null));
+            segments.Add(new ToolShapeSegment("CYLINDER", stud + knobHeight, neckHeight, neck, "Neck", IsDefault: spindle.NeckDiameter is null));
+            segments.Add(new ToolShapeSegment("CYLINDER", stud + knobHeight + neckHeight, pilotHeight, pilot, "Collar", IsDefault: spindle.PilotDiameter is null));
+            above += exposed;
+        }
+        segments.Add(new ToolShapeSegment("TAPER", -taper, taper, spindle.GaugeDiameter, $"{spindle.AdaptorName} taper",
+            TopDiameter: spindle.SmallEndDiameter));
+        segments.Add(new ToolShapeSegment("CYLINDER", 0, spindle.ToolChangerLength, spindle.ToolChangerDiameter, "Tool changer flange"));
+        return above;
+    }
+
+    /// <summary>
+    /// The holder below the flange: its diameter HD from the HOLDER component, its length HL driven by
+    /// the measured length (HL = L − OHL − TCL − extensions); returns the height reached.
+    /// </summary>
+    private static double AddHolder(
+        List<ToolShapeSegment> segments, ToolSpindleShape spindle, IReadOnlyList<ToolShapeComponent> components,
+        double? outsideHolder, double? measuredLength)
+    {
+        var holder = components.FirstOrDefault(component => component.ComponentType.Equals("HOLDER", StringComparison.OrdinalIgnoreCase));
+        var extensions = components
+            .Where(component => component.ComponentType.ToUpperInvariant() is not ("HOLDER" or "COLLET" or "SHANK" or "CUTTER" or "INSERT"))
+            .Sum(component => Positive(component.Length) ?? DefaultCylinderLength);
+        var diameter = Positive(holder?.Diameter);
+        var driven = measuredLength is { } measured && outsideHolder is { } ohl
+            ? measured - ohl - spindle.ToolChangerLength - extensions
+            : (double?)null;
+        var length = driven is > 0 ? Math.Round(driven.Value, 3) : Positive(holder?.Length) ?? DefaultHolderLength;
+        var top = spindle.ToolChangerLength;
+        var label = holder is null || holder.Name.Length == 0 ? "Holder" : holder.Name;
+        segments.Add(new ToolShapeSegment("CYLINDER", top, length, diameter ?? Math.Round(spindle.ToolChangerDiameter * 0.6, 1),
+            driven is > 0 ? $"{label} (HL)" : label, IsDefault: diameter is null || driven is not > 0));
+        return top + length;
+    }
+
+    private static bool IsTurning(string shapeType) => shapeType.ToUpperInvariant() is
+        "TURNING_TOOL" or "BORING_BAR" or "EXTERNAL_GROOVING" or "INTERNAL_GROOVING" or "FACE_GROOVING"
+        or "PARTING" or "EXTERNAL_THREADING" or "INTERNAL_THREADING";
 
     /// <summary>Axial height of a drill point of the given included angle.</summary>
     internal static double PointHeight(double diameter, double pointAngle)

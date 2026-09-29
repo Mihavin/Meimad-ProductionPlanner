@@ -27,7 +27,7 @@ internal static class ToolPreparationCatalog
         "cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "cornerRadius",
         "pointAngle", "taperAngle", "neckDiameter", "neckLength", "tipDiameter",
         "cuttingWidth", "maxDepth", "minBoreDiameter", "shankWidth", "shankHeight",
-        "leadAngle", "insertEdgeLength", "pitch", "fluteCount"
+        "leadAngle", "insertEdgeLength", "pitch", "fluteCount", "outsideHolderLength"
     ];
 
     internal static readonly IReadOnlyDictionary<string, string> DimensionLabels = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -50,30 +50,31 @@ internal static class ToolPreparationCatalog
         ["leadAngle"] = "Lead angle (degrees)",
         ["insertEdgeLength"] = "Insert edge length",
         ["pitch"] = "Pitch",
-        ["fluteCount"] = "Number of flutes"
+        ["fluteCount"] = "Number of flutes",
+        ["outsideHolderLength"] = "Outside holder length (OHL)"
     };
 
     internal static readonly IReadOnlyList<ToolShapeOption> Shapes =
     [
-        new("END_MILL", "Flat end mill", "MILLING", MillBody),
-        new("BALL_END_MILL", "Ball end mill", "MILLING", MillBody),
-        new("BULL_NOSE_END_MILL", "Bull-nose end mill", "MILLING", [.. MillBody, "cornerRadius"]),
-        new("CHAMFER_MILL", "Chamfer mill", "MILLING", [.. MillBody, "taperAngle", "tipDiameter"]),
-        new("FACE_MILL", "Face mill", "MILLING", ["cuttingDiameter", "overallLength", "shankDiameter", "cornerRadius", "leadAngle", "fluteCount"]),
-        new("SLOT_MILL", "Slot / disc cutter", "MILLING", ["cuttingDiameter", "cuttingWidth", "overallLength", "shankDiameter", "cornerRadius", "fluteCount"]),
-        new("T_SLOT_MILL", "T-slot cutter", "MILLING", ["cuttingDiameter", "cuttingWidth", "neckDiameter", "neckLength", "overallLength", "shankDiameter", "cornerRadius"]),
-        new("THREAD_MILL", "Thread mill", "MILLING", ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "pitch", "neckDiameter", "neckLength", "fluteCount"]),
-        new("DOVETAIL_MILL", "Dovetail cutter", "MILLING", ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "taperAngle", "neckDiameter"]),
-        new("LOLLIPOP_MILL", "Lollipop (undercut) mill", "MILLING", ["cuttingDiameter", "neckDiameter", "neckLength", "overallLength", "shankDiameter"]),
-        new("ENGRAVER", "Engraver", "MILLING", ["cuttingDiameter", "tipDiameter", "taperAngle", "fluteLength", "overallLength", "shankDiameter"]),
-        new("DRILL", "Drill", "HOLE_MAKING", ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "pointAngle"]),
-        new("SPOT_DRILL", "Spot drill", "HOLE_MAKING", ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "pointAngle"]),
-        new("CENTER_DRILL", "Center drill", "HOLE_MAKING", ["cuttingDiameter", "tipDiameter", "fluteLength", "overallLength", "shankDiameter", "pointAngle"]),
-        new("TAP", "Tap", "HOLE_MAKING", ["cuttingDiameter", "pitch", "fluteLength", "overallLength", "shankDiameter"]),
-        new("REAMER", "Reamer", "HOLE_MAKING", ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter"]),
-        new("BORING_HEAD", "Boring head", "HOLE_MAKING", ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "cornerRadius"]),
-        new("COUNTERSINK", "Countersink", "HOLE_MAKING", ["cuttingDiameter", "tipDiameter", "pointAngle", "overallLength", "shankDiameter"]),
-        new("COUNTERBORE", "Counterbore", "HOLE_MAKING", ["cuttingDiameter", "tipDiameter", "fluteLength", "overallLength", "shankDiameter"]),
+        new("END_MILL", "Flat end mill", "MILLING", [.. MillBody, "outsideHolderLength"]),
+        new("BALL_END_MILL", "Ball end mill", "MILLING", [.. MillBody, "outsideHolderLength"]),
+        new("BULL_NOSE_END_MILL", "Bull-nose end mill", "MILLING", [.. MillBody, "cornerRadius", "outsideHolderLength"]),
+        new("CHAMFER_MILL", "Chamfer mill", "MILLING", [.. MillBody, "taperAngle", "tipDiameter", "outsideHolderLength"]),
+        new("FACE_MILL", "Face mill", "MILLING", ["cuttingDiameter", "overallLength", "shankDiameter", "cornerRadius", "leadAngle", "fluteCount", "outsideHolderLength"]),
+        new("SLOT_MILL", "Slot / disc cutter", "MILLING", ["cuttingDiameter", "cuttingWidth", "overallLength", "shankDiameter", "cornerRadius", "fluteCount", "outsideHolderLength"]),
+        new("T_SLOT_MILL", "T-slot cutter", "MILLING", ["cuttingDiameter", "cuttingWidth", "neckDiameter", "neckLength", "overallLength", "shankDiameter", "cornerRadius", "outsideHolderLength"]),
+        new("THREAD_MILL", "Thread mill", "MILLING", ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "pitch", "neckDiameter", "neckLength", "fluteCount", "outsideHolderLength"]),
+        new("DOVETAIL_MILL", "Dovetail cutter", "MILLING", ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "taperAngle", "neckDiameter", "outsideHolderLength"]),
+        new("LOLLIPOP_MILL", "Lollipop (undercut) mill", "MILLING", ["cuttingDiameter", "neckDiameter", "neckLength", "overallLength", "shankDiameter", "outsideHolderLength"]),
+        new("ENGRAVER", "Engraver", "MILLING", ["cuttingDiameter", "tipDiameter", "taperAngle", "fluteLength", "overallLength", "shankDiameter", "outsideHolderLength"]),
+        new("DRILL", "Drill", "HOLE_MAKING", ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "pointAngle", "outsideHolderLength"]),
+        new("SPOT_DRILL", "Spot drill", "HOLE_MAKING", ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "pointAngle", "outsideHolderLength"]),
+        new("CENTER_DRILL", "Center drill", "HOLE_MAKING", ["cuttingDiameter", "tipDiameter", "fluteLength", "overallLength", "shankDiameter", "pointAngle", "outsideHolderLength"]),
+        new("TAP", "Tap", "HOLE_MAKING", ["cuttingDiameter", "pitch", "fluteLength", "overallLength", "shankDiameter", "outsideHolderLength"]),
+        new("REAMER", "Reamer", "HOLE_MAKING", ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "outsideHolderLength"]),
+        new("BORING_HEAD", "Boring head", "HOLE_MAKING", ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "cornerRadius", "outsideHolderLength"]),
+        new("COUNTERSINK", "Countersink", "HOLE_MAKING", ["cuttingDiameter", "tipDiameter", "pointAngle", "overallLength", "shankDiameter", "outsideHolderLength"]),
+        new("COUNTERBORE", "Counterbore", "HOLE_MAKING", ["cuttingDiameter", "tipDiameter", "fluteLength", "overallLength", "shankDiameter", "outsideHolderLength"]),
         new("TURNING_TOOL", "External turning tool", "TURNING", ["cornerRadius", "leadAngle", "insertEdgeLength", .. SquareShank], true),
         new("BORING_BAR", "Boring bar (internal turning)", "TURNING", ["cornerRadius", "leadAngle", "insertEdgeLength", "minBoreDiameter", "shankDiameter", "overallLength"], true),
         new("EXTERNAL_GROOVING", "External grooving tool", "TURNING", ["cuttingWidth", "maxDepth", "cornerRadius", .. SquareShank], true),

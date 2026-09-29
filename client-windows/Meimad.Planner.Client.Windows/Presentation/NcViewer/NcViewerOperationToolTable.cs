@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Meimad.Planner.Client.Windows.Api;
+using Meimad.Planner.Client.Windows.Presentation.ToolPreparation;
 using Meimad.Planner.NcEngine;
 
 namespace Meimad.Planner.Client.Windows.Presentation.NcViewer;
@@ -33,17 +34,23 @@ internal sealed record NcViewerOperationToolTable(
     string Source,
     int Revision,
     int PreparationVersion,
-    IReadOnlyList<NcViewerOperationTool> Tools)
+    IReadOnlyList<NcViewerOperationTool> Tools,
+    IReadOnlyList<NcViewerToolAssembly>? Assemblies = null)
 {
     /// <summary>The Tool Room's table of a Batch Operation: every released row plus its measurements and shape.</summary>
     internal static NcViewerOperationToolTable? From(PlannerToolPreparation? preparation)
     {
         if (preparation is null) return null;
         var tools = new List<NcViewerOperationTool>();
+        var assemblies = new List<NcViewerToolAssembly>();
         foreach (var tool in preparation.Tools)
         {
             var number = ToolNumber(tool.ToolIdentifier) ?? tool.OffsetNumber;
             if (number is null) continue;
+            // A measured tool is shown exactly as the Tool Room has it, holder and components included.
+            if (NcViewerToolAssembly.IsMeasured(preparation, tool))
+                assemblies.Add(NcViewerToolAssembly.From(number.Value, tool,
+                    ToolSpindleShape.From(preparation.AdaptorFor(tool), preparation.PullStudFor(tool))));
             var shape = tool.ShapeType.ToUpperInvariant();
             var shapeKnown = shape != "OTHER";
             var diameter = tool.MeasuredDiameter ?? Value(tool.Shape, "cuttingDiameter");
@@ -60,7 +67,7 @@ internal sealed record NcViewerOperationToolTable(
         {
             source = string.Create(CultureInfo.InvariantCulture, $"{source} + Tool Room v{preparation.Version}");
         }
-        return new NcViewerOperationToolTable(source, preparation.ToolTableRevision, preparation.Version, tools);
+        return new NcViewerOperationToolTable(source, preparation.ToolTableRevision, preparation.Version, tools, assemblies);
     }
 
     /// <summary>The released rows of a tool table alone (no Batch Operation, so no Tool Room measurements).</summary>

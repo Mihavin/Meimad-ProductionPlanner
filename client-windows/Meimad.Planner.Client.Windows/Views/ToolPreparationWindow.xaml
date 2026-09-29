@@ -125,6 +125,24 @@
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
 
+              <StackPanel Visibility="{Binding HasSpindle, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <TextBlock Text="Spindle adaptor and pull stud" FontWeight="SemiBold" Margin="0,6,0,4" />
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="8" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <ComboBox Grid.Column="0" ItemsSource="{Binding AdaptorChoices}" SelectedItem="{Binding AdaptorChoice}" DisplayMemberPath="Name"
+                            AutomationProperties.Name="Spindle adaptor" ToolTip="The adaptor above and at the gauge line (taper and tool-changer flange); the Machine's default unless this tool differs" />
+                  <ComboBox Grid.Column="2" ItemsSource="{Binding PullStudChoices}" SelectedItem="{Binding PullStudChoice}" DisplayMemberPath="Name"
+                            AutomationProperties.Name="Pull stud" ToolTip="The pull stud on top of the taper; the Machine's default unless this tool differs" />
+                </Grid>
+                <TextBlock Text="{Binding HolderLengthText}" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                <TextBlock Text="The holder is drawn as a cylinder of the HOLDER component's diameter; its length follows from the measured length and the outside holder length (OHL)."
+                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
+              </StackPanel>
+
               <DockPanel Margin="0,8,0,4">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                   <Button Content="Add component" Margin="0,0,6,0"

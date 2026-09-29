@@ -118,7 +118,21 @@ In the **Tool Room** tab, right-click an operation and choose **Open Tool Table*
 
 Once every *required* tool has its length, diameter and offset number, the operation's **Tool Offsets** readiness shows READY by itself: no separate confirmation in Production Readiness is needed (a confirmation you record there still counts). The preview draws only the cutter below the gauge line until you describe components; nothing is invented.
 
-**View NC file** opens the program with the operation's released tool table instead of the tool comments in the program: the descriptions come from the released rows, and from the Tool Room or Setup queue, or from a Machine-assigned operation on the Planning Board, the viewer's tool table and the 3D simulation also use the measured diameters and lengths and the cutter shapes you entered here. The status bar names the tool table revision and the Tool Room version (for example `Tool table r2 (tools.mht) + Tool Room v3`). A tool you have not described is read from its released description (type, diameter, nose radius); only a tool the program uses but the table does not list keeps the values read from the program, and the warnings say which.
+**View NC file** opens the program with the operation's released tool table instead of the tool comments in the program: the descriptions come from the released rows, and from the Tool Room or Setup queue, or from a Machine-assigned operation on the Planning Board, the viewer's tool table and the 3D simulation also use the measured diameters and lengths and the cutter shapes you entered here. The status bar names the tool table revision and the Tool Room version (for example `Tool table r2 (tools.mht) + Tool Room v3`). A tool you have not described is read from its released description (type, diameter, nose radius); only a tool the program uses but the table does not list keeps the values read from the program, and the warnings say which. Once the Tool Room has measured a tool, the viewer shows it exactly as measured:
+- The tool table window lists it under **Tool Room: measured tools** with its offset, measured length and diameter, and holder and components.
+- On a mill, the 3D view draws that tool with its holder, extension, collet, shank and cutter at their real sizes.
+
+Tools not measured yet look as before.
+
+**Spindle side of a milling tool.** In the Tool Room tool table, a milling or drilling tool is drawn as it sits in the spindle:
+- above the gauge line, the pull stud and the taper (for example BT40);
+- below it, the tool-changer flange;
+- then the holder, drawn as a cylinder of the holder component's diameter;
+- then the part of the tool that sticks out of the holder.
+
+Enter the tool's **Outside holder length (OHL)** with its other dimensions. The holder length is then calculated as *measured length − OHL − flange length*: for example 120 − 50 − 25 = 45 mm.
+
+The adaptor and pull stud come from the Machine. Set them in **Setup → Spindle Adaptors & Pull Studs**, which also holds the library you can add to. If one tool uses a different adaptor or pull stud, pick it for that tool under **Spindle adaptor and pull stud**.
 
 **Create Production Package** (measured offsets) needs a length, a diameter and an offset number for every *required* tool; the state column shows what is still **Missing**. The package then contains `tool-offsets/tool-offsets.json` and writes the offsets into the Offset Loader (or into a separate `tool-offsets` program when Server Verification is disabled for the Machine). Whether the control expects cutter offsets as radius or diameter values is a Machine setting in **Setup → Machines → Cutter offsets on the control (D values)**; the tool table window states which one applies. Saving a newer version after the package was created makes the package stale: create it again. A **Manual / Dummy Tool Offsets** package ignores the measurements; the setupist enters the offsets on the control.
 

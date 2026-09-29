@@ -166,6 +166,43 @@ public sealed class NcViewerOperationToolTableTests
     }
 
     [Fact]
+    public void Measured_tools_carry_the_tool_room_assembly_and_unmeasured_tools_keep_the_viewer_tool()
+    {
+        var table = NcViewerOperationToolTable.From(Preparation() with
+        {
+            Tools =
+            [
+                new(1, "T1", "Bull nose D12.5", true, "1", 11, 101.25, 12.5, "BULL_NOSE_END_MILL",
+                    new Dictionary<string, double> { ["cuttingDiameter"] = 12.5, ["fluteLength"] = 25, ["overallLength"] = 75 }, "Check runout",
+                    [
+                        new(2, "COLLET", "ER32 collet", null, 30, 32, null),
+                        new(1, "HOLDER", "BT40 ER32", "BT40-ER32-070", 70, 63, null)
+                    ]),
+                new(2, "T2", "Ball D8", true, "2", 2, null, null, "BALL_END_MILL",
+                    new Dictionary<string, double> { ["cuttingDiameter"] = 8 }, null, [])
+            ]
+        })!;
+
+        // Only the measured tool gets an assembly; T2 keeps the viewer's own tool.
+        var assembly = Assert.Single(table.Assemblies!);
+        Assert.Equal(1, assembly.Number);
+        Assert.Equal(11, assembly.OffsetNumber);
+        Assert.Equal((101.25, 12.5), (assembly.MeasuredLength!.Value, assembly.MeasuredDiameter!.Value));
+        Assert.Equal("Check runout", assembly.Notes);
+        // The components in their assembly order, as the Tool Room lists them.
+        Assert.Equal(["HOLDER", "COLLET"], assembly.Components.Select(component => component.ComponentType));
+        Assert.Equal("BT40 ER32 BT40-ER32-070 L70 D63 / ER32 collet L30 D32", assembly.ComponentsText);
+        // The drawing is the Tool Room's: holder and collet from the gauge line, then shank and cutter.
+        Assert.Equal(["HOLDER", "CYLINDER", "CYLINDER", "CUTTER"], assembly.Segments.Select(segment => segment.Kind));
+        Assert.Equal((0, 70, 63), (assembly.Segments[0].Top, assembly.Segments[0].Height, assembly.Segments[0].Diameter));
+        Assert.Equal(70 + 30 + 50 + 25, assembly.TotalLength);
+        Assert.Equal(12.5, assembly.Segments[^1].Diameter);
+
+        // Not measured yet (never saved): no assemblies at all.
+        Assert.Empty(NcViewerOperationToolTable.From(Preparation() with { Version = 0 })!.Assemblies!);
+    }
+
+    [Fact]
     public void Nothing_is_applied_without_a_table_or_without_released_rows()
     {
         Assert.Null(NcViewerOperationToolTable.From(null));

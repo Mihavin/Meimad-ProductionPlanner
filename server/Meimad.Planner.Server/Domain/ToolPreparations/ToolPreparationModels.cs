@@ -113,6 +113,8 @@ internal static class ToolComponentTypes
 /// taperAngle, neckDiameter, neckLength, tipDiameter, cuttingWidth, pitch, fluteCount. Turning:
 /// cornerRadius (nose radius), leadAngle, insertEdgeLength, cuttingWidth, maxDepth,
 /// minBoreDiameter, shankWidth, shankHeight, shankDiameter (round bars), overallLength, pitch.
+/// outsideHolderLength (OHL) is how far the tool sticks out of its holder; with a measured length it
+/// drives the holder length of the Tool Room drawing (schema v91).
 /// </summary>
 internal static class ToolShapeDimensions
 {
@@ -121,7 +123,7 @@ internal static class ToolShapeDimensions
         "cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "cornerRadius",
         "pointAngle", "taperAngle", "neckDiameter", "neckLength", "tipDiameter",
         "cuttingWidth", "maxDepth", "minBoreDiameter", "shankWidth", "shankHeight",
-        "leadAngle", "insertEdgeLength", "pitch", "fluteCount"
+        "leadAngle", "insertEdgeLength", "pitch", "fluteCount", "outsideHolderLength"
     ];
 
     internal static readonly IReadOnlySet<string> Angles = new HashSet<string>(["pointAngle", "taperAngle", "leadAngle"], StringComparer.Ordinal);
@@ -161,6 +163,8 @@ internal sealed record ToolPreparationComponent(
 
 /// <param name="Hand">Holder hand of a turning tool (<see cref="ToolHands"/>), null for other tools.</param>
 /// <param name="CatalogToolId">The tool catalog entry this prepared tool is, when the Tool Room picked one.</param>
+/// <param name="SpindleAdaptorId">This tool's spindle adaptor when it differs from the Machine's default (schema v91).</param>
+/// <param name="PullStudId">This tool's pull stud when it differs from the Machine's default.</param>
 internal sealed record ToolPreparationTool(
     int RowNumber,
     string ToolIdentifier,
@@ -172,7 +176,9 @@ internal sealed record ToolPreparationTool(
     string? Notes,
     IReadOnlyList<ToolPreparationComponent> Components,
     string? Hand = null,
-    string? CatalogToolId = null)
+    string? CatalogToolId = null,
+    string? SpindleAdaptorId = null,
+    string? PullStudId = null)
 {
     /// <summary>The offset register: the explicit number, else the digits of the tool identifier (T12 → 12).</summary>
     internal int? EffectiveOffsetNumber => OffsetNumber ?? ParseToolNumber(ToolIdentifier);
@@ -229,7 +235,8 @@ internal sealed record ToolPreparationView(
     int ToolTableRevision,
     string ToolTableFileName,
     IReadOnlyList<ToolPreparationReleasedTool> ReleasedTools,
-    ToolPreparation? Current);
+    ToolPreparation? Current,
+    SpindleLibrary? Spindle = null);
 
 internal sealed class ToolPreparationValidationException(string code, string message, string? field = null)
     : Exception(message)
@@ -282,9 +289,13 @@ internal static class ToolPreparationValidator
             var notes = Text(tool.Notes, 1000, identifier, "notes");
             var catalogToolId = Text(tool.CatalogToolId, 64, identifier, "catalogToolId");
             var components = Components(tool.Components, identifier);
+            // A turning tool sits in the turret, not in a spindle taper: it has no adaptor or pull stud.
+            var turning = ToolShapeTypes.IsTurning(shapeType);
             tools.Add(new ToolPreparationTool(
                 releasedTool.RowNumber, releasedTool.ToolIdentifier, tool.OffsetNumber, length, diameter,
-                shapeType!, shape, notes, components, hand, catalogToolId));
+                shapeType!, shape, notes, components, hand, catalogToolId,
+                turning ? null : Text(tool.SpindleAdaptorId, 64, identifier, "spindleAdaptorId"),
+                turning ? null : Text(tool.PullStudId, 64, identifier, "pullStudId")));
         }
 
         return tools.OrderBy(tool => tool.RowNumber).ToArray();
@@ -317,7 +328,9 @@ internal static class ToolPreparationValidator
                 tool.Notes,
                 Components = tool.Components.OrderBy(component => component.Sequence),
                 tool.Hand,
-                tool.CatalogToolId
+                tool.CatalogToolId,
+                tool.SpindleAdaptorId,
+                tool.PullStudId
             }), new JsonSerializerOptions(JsonSerializerDefaults.Web) { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
         return Convert.ToHexStringLower(SHA256.HashData(canonical));
     }
