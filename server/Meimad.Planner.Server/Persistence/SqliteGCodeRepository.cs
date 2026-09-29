@@ -13,7 +13,13 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
 {
     private readonly SqliteDatabase database;
 
-    public SqliteGCodeRepository(SqliteDatabase database) => this.database = database;
+    private readonly Configuration.SetupEstimationOptions setupEstimation;
+
+    public SqliteGCodeRepository(SqliteDatabase database, Configuration.SetupEstimationOptions? setupEstimation = null)
+    {
+        this.database = database;
+        this.setupEstimation = setupEstimation ?? new Configuration.SetupEstimationOptions();
+    }
 
     public async Task<OperationGCodeCatalog?> ReadCatalogAsync(
         string caseId,
@@ -33,6 +39,7 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         var hooks = await ReadVerificationHooksAsync(connection, caseOperationId, cancellationToken);
         var releases = await ReadReleasesAsync(
             connection, caseOperationId, nc.Analyses, nc.Estimates, headers, hooks, cancellationToken);
+        releases = await WithMachineTimesAsync(connection, caseOperationId, releases, cancellationToken);
         var active = processes.FirstOrDefault(value => value.IsActive);
         var postprocessors = await ReadPostprocessorStatusesAsync(
             connection,
@@ -40,6 +47,60 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             releases,
             cancellationToken);
         return new OperationGCodeCatalog(caseOperationId, active, processes, postprocessors, releases);
+    }
+
+    /// <summary>
+    /// Names the Machine of every NC cycle estimate and adds its setup estimate: the release's tool
+    /// table's required tools at the configured loading time per tool, the Operation's setup time
+    /// as the fixture setup, and one first piece at the first-piece factor.
+    /// </summary>
+    private async Task<IReadOnlyList<GCodeRelease>> WithMachineTimesAsync(
+        SqliteConnection connection, string caseOperationId, IReadOnlyList<GCodeRelease> releases, CancellationToken token)
+    {
+        if (releases.All(release => (release.MachineCycleEstimates ?? []).Count == 0)) return releases;
+        var machines = new Dictionary<string, (string Number, string Name)>(StringComparer.Ordinal);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT id, number, name FROM machines;";
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token)) machines[reader.GetString(0)] = (reader.GetString(1), reader.GetString(2));
+        }
+        var toolCounts = new Dictionary<string, int?>(StringComparer.Ordinal);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT id, required_tool_count FROM tool_table_releases WHERE case_operation_id = $operationId;";
+            command.Parameters.AddWithValue("$operationId", caseOperationId);
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token)) toolCounts[reader.GetString(0)] = reader.IsDBNull(1) ? null : reader.GetInt32(1);
+        }
+        double? fixtureSeconds;
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT setup_seconds FROM case_operations WHERE id = $operationId;";
+            command.Parameters.AddWithValue("$operationId", caseOperationId);
+            var value = await command.ExecuteScalarAsync(token);
+            fixtureSeconds = value is null or DBNull ? null : Convert.ToDouble(value, CultureInfo.InvariantCulture);
+        }
+
+        return releases.Select(release => release with
+        {
+            MachineCycleEstimates = (release.MachineCycleEstimates ?? []).Select(estimate =>
+            {
+                var machine = machines.GetValueOrDefault(estimate.MachineId);
+                var setup = Domain.Timeline.SetupOccupancyEstimator.Evaluate(new Domain.Timeline.SetupOccupancyInput(
+                    1, toolCounts.GetValueOrDefault(release.ToolTableReleaseId), fixtureSeconds, null,
+                    estimate.EstimatedCycleSeconds, null,
+                    setupEstimation.DefaultToolLoadTimePerToolSeconds, setupEstimation.DefaultFirstPieceFactor));
+                return estimate with
+                {
+                    MachineNumber = machine.Number,
+                    MachineName = machine.Name,
+                    Setup = new NcSetupEstimate(
+                        toolCounts.GetValueOrDefault(release.ToolTableReleaseId), setup.ToolLoadingSeconds,
+                        setup.FixtureSetupSeconds, setup.FirstPieceProveOutSeconds, setup.TotalSetupSeconds, setup.Warnings)
+                };
+            }).ToArray()
+        }).ToArray();
     }
 
     public async Task<GCodeRelease> PublishAsync(

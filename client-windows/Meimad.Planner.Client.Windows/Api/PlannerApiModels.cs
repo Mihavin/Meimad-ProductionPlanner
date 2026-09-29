@@ -1227,7 +1227,7 @@ internal sealed record PlannerGCodeRelease(
                 : string.Join(
                     Environment.NewLine,
                     calculated.Select(value =>
-                        $"{value.MachineId}: {CycleDuration(value.EstimatedCycleSeconds)} / part"));
+                        $"{value.MachineLabel}: {CycleDuration(value.EstimatedCycleSeconds)} / part"));
         }
     }
     public string NcCalculatedTimeDetail
@@ -1242,7 +1242,7 @@ internal sealed record PlannerGCodeRelease(
             }
             foreach (var estimate in MachineCycleEstimates ?? [])
             {
-                lines.AddRange(estimate.Warnings.Select(value => $"{estimate.MachineId}: {value}"));
+                lines.AddRange(estimate.Warnings.Select(value => $"{estimate.MachineLabel}: {value}"));
             }
 
             return lines.Count == 0
@@ -1296,7 +1296,19 @@ internal sealed record PlannerNcMachineCycleEstimate(
     double? EstimatedCycleSeconds,
     IReadOnlyList<string> Warnings,
     string Confidence,
-    DateTimeOffset CalculatedAt);
+    DateTimeOffset CalculatedAt,
+    string? MachineNumber = null,
+    string? MachineName = null,
+    int? RequiredToolCount = null,
+    double? ToolLoadingSeconds = null,
+    double? FixtureSetupSeconds = null,
+    double? FirstPieceSeconds = null,
+    double? EstimatedSetupSeconds = null,
+    IReadOnlyList<string>? SetupWarnings = null)
+{
+    /// <summary>The Machine by its number (the id when the Server did not name it).</summary>
+    public string MachineLabel => MachineNumber ?? MachineId;
+}
 
 internal sealed record PlannerPostprocessorReleaseStatus(
     string PostprocessorId,
@@ -1312,6 +1324,29 @@ internal sealed record PlannerPostprocessorReleaseStatus(
         "stale" => "Stale — regenerate for active process",
         _ => "Missing — release required"
     };
+
+    /// <summary>The current release's NC cycle time per part on each Machine it can run on.</summary>
+    public string NcCycleText => MachineTimes(estimate => estimate.EstimatedCycleSeconds, "/ part");
+
+    /// <summary>
+    /// The current release's setup estimate on each Machine: required tools × loading time, the
+    /// Operation's setup (fixture) time and the first piece at the first-piece factor.
+    /// </summary>
+    public string SetupEstimateText => MachineTimes(estimate => estimate.EstimatedSetupSeconds, string.Empty,
+        estimate => estimate.FixtureSetupSeconds is null ? "fixture time missing" : null);
+
+    private string MachineTimes(
+        Func<PlannerNcMachineCycleEstimate, double?> seconds, string suffix, Func<PlannerNcMachineCycleEstimate, string?>? missing = null)
+    {
+        if (CurrentRelease is null) return string.Empty;
+        var estimates = (CurrentRelease.MachineCycleEstimates ?? [])
+            .OrderBy(estimate => estimate.MachineLabel, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (estimates.Length == 0) return CurrentRelease.NcAnalysis is null ? "Estimate unavailable" : "No Machine timing";
+        return string.Join("  ·  ", estimates.Select(estimate => seconds(estimate) is { } value && double.IsFinite(value) && value >= 0
+            ? $"{estimate.MachineLabel}: {Formatting.DurationText.Format((long)Math.Ceiling(value))}{(suffix.Length == 0 ? string.Empty : " " + suffix)}"
+            : $"{estimate.MachineLabel}: {missing?.Invoke(estimate) ?? "unavailable"}"));
+    }
 }
 
 internal sealed record PlannerGCodeCatalog(

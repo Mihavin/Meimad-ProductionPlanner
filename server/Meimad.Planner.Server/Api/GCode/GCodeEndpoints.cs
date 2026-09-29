@@ -387,7 +387,15 @@ internal sealed record NcMachineCycleEstimateResponse(
     double? MachineToolChangeTimeSeconds, double MachineTimeFactor,
     double? RawCycleSeconds, double? EstimatedCycleSeconds,
     IReadOnlyList<string> Warnings, string Confidence, DateTimeOffset CalculatedAt,
-    string EstimateBasis)
+    string EstimateBasis,
+    string? MachineNumber = null,
+    string? MachineName = null,
+    int? RequiredToolCount = null,
+    double? ToolLoadingSeconds = null,
+    double? FixtureSetupSeconds = null,
+    double? FirstPieceSeconds = null,
+    double? EstimatedSetupSeconds = null,
+    IReadOnlyList<string>? SetupWarnings = null)
 {
     internal static NcMachineCycleEstimateResponse FromDomain(NcMachineCycleEstimate value) => new(
         value.MachineId, value.ParserVersion, value.RawFeedSeconds,
@@ -396,7 +404,10 @@ internal sealed record NcMachineCycleEstimateResponse(
         value.MachineRapidRateMillimetersPerMinute,
         value.MachineToolChangeTimeSeconds, value.MachineTimeFactor,
         value.RawCycleSeconds, value.EstimatedCycleSeconds, value.Warnings,
-        value.Confidence, value.CalculatedAt, "NC_PROGRAM_EXECUTION_CYCLE");
+        value.Confidence, value.CalculatedAt, "NC_PROGRAM_EXECUTION_CYCLE",
+        value.MachineNumber, value.MachineName, value.Setup?.RequiredToolCount, value.Setup?.ToolLoadingSeconds,
+        value.Setup?.FixtureSetupSeconds, value.Setup?.FirstPieceSeconds, value.Setup?.TotalSetupSeconds,
+        value.Setup?.Warnings ?? []);
 }
 
 internal sealed record PostprocessorReleaseStatusResponse(

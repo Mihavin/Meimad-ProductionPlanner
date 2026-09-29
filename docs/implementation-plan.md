@@ -1302,3 +1302,14 @@ The JIS B6339 PA and PB and DIN 69872 studs are left out: they are for DIN 69871
 Open points:
 - For JIS 40P and Mazak, the knob diameter is taken as the catalog's D1 and the neck is not published (drawn dashed).
 - Check all entries against the studs in use.
+
+## NC time in the postprocessor status (2026-09-29)
+
+**Owner request:** "If the Gcode added to operation, show the NC time in postprocessor status (Cycle and Setup estimation)."
+
+**Implemented (no schema change):**
+- The G-code catalog names the Machine of every NC cycle estimate (`machineNumber`, `machineName`).
+- Each estimate carries a setup estimate calculated with the Planning Board's `SetupOccupancyEstimator` for one piece: the required tools of the release's tool table × the tool loading time, the Case Operation's setup time as the fixture setup, and the first piece at the first-piece factor.
+- The Windows postprocessor status gains *NC cycle time* and *Setup estimate* columns for the current release, per Machine number. The other release details show Machine numbers instead of ids.
+
+**Tests:** `GCodeReleaseApiTests.Released_nc_is_analyzed_once_and_evaluated_per_machine_without_overwriting_manual_cycle` extended (the catalog's setup estimate equals the Planning Board's 172.5 s); client `PostprocessorStatusTimeTests`.

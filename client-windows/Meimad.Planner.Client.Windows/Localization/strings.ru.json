@@ -4606,5 +4606,9 @@
   "Machine default (none)": "По умолчанию станка (нет)",
   "Machine default ({machine})": "По умолчанию станка ({machine})",
   "Flange D": "D фланца",
-  "Flange L": "L фланца"
+  "Flange L": "L фланца",
+  "NC cycle time": "Время цикла NC",
+  "Setup estimate": "Оценка наладки",
+  "No Machine timing": "Нет данных времени станка",
+  "fixture time missing": "нет времени оснастки"
 }

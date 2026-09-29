@@ -460,6 +460,8 @@
                                             <DataGridTextColumn Header="Current file" Binding="{Binding CurrentRelease.OriginalFileName}" Width="180"/>
                                             <DataGridTextColumn Header="Post revision" Binding="{Binding CurrentRelease.PostSpecificRevision}" Width="90"/>
                                             <DataGridTextColumn Header="Released by" Binding="{Binding CurrentRelease.ReleasedBy}" Width="120"/>
+                                            <DataGridTextColumn Header="NC cycle time" Binding="{Binding NcCycleText}" Width="200"/>
+                                            <DataGridTextColumn Header="Setup estimate" Binding="{Binding SetupEstimateText}" Width="200"/>
                                         </DataGrid.Columns>
                                     </DataGrid>
 

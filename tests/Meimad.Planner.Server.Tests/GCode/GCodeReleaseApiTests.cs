@@ -590,6 +590,7 @@ public sealed class GCodeReleaseApiTests
                     UPDATE batch_operations
                     SET setup_seconds = 0, cycle_seconds = 300
                     WHERE id = 'batch-op-1';
+                    UPDATE case_operations SET setup_seconds = 0 WHERE id = 'case-op-1';
                     INSERT INTO machines (
                         id, number, name, machine_type, working_calendar_id, status,
                         is_active, execution_mode, usable_tool_positions,
@@ -633,6 +634,20 @@ public sealed class GCodeReleaseApiTests
                 Assert.Equal(2d, analysis.GetProperty("dwellSeconds").GetDouble(), 6);
                 Assert.StartsWith("nc-engine/", analysis.GetProperty("parserVersion").GetString());
                 Assert.Equal(2, item.GetProperty("machineCycleEstimates").GetArrayLength());
+                // Each estimate names its Machine and carries the setup estimate the Planning Board
+                // uses: 1 required tool × 60 s + the Operation's setup time + 1.5 × the cycle.
+                var byMachine = item.GetProperty("machineCycleEstimates").EnumerateArray()
+                    .ToDictionary(value => value.GetProperty("machineId").GetString()!);
+                Assert.Equal("CNC 2", byMachine["machine-2"].GetProperty("machineName").GetString());
+                Assert.Equal("M-2", byMachine["machine-2"].GetProperty("machineNumber").GetString());
+                Assert.Equal(1, byMachine["machine-1"].GetProperty("requiredToolCount").GetInt32());
+                Assert.Equal(172.5d, byMachine["machine-1"].GetProperty("estimatedSetupSeconds").GetDouble(), 6);
+                var cycleTwo = byMachine["machine-2"].GetProperty("estimatedCycleSeconds").GetDouble();
+                Assert.Equal(60 + cycleTwo * 1.5, byMachine["machine-2"].GetProperty("estimatedSetupSeconds").GetDouble(), 6);
+                // The postprocessor status shows the current release with the same estimates.
+                var status = catalog.RootElement.GetProperty("postprocessors").EnumerateArray()
+                    .Single(value => value.GetProperty("postprocessorId").GetString() == "post-a");
+                Assert.Equal(2, status.GetProperty("currentRelease").GetProperty("machineCycleEstimates").GetArrayLength());
             }
 
             var machineOne = await BoardOperationAsync(client, "machine-1");

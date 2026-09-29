@@ -4606,5 +4606,9 @@
   "Machine default (none)": "ברירת מחדל של המכונה (ללא)",
   "Machine default ({machine})": "ברירת מחדל של המכונה ({machine})",
   "Flange D": "קוטר אוגן",
-  "Flange L": "אורך אוגן"
+  "Flange L": "אורך אוגן",
+  "NC cycle time": "זמן מחזור NC",
+  "Setup estimate": "הערכת זמן כיוון",
+  "No Machine timing": "אין נתוני זמן של מכונה",
+  "fixture time missing": "חסר זמן התקן"
 }

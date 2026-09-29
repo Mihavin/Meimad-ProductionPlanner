@@ -185,7 +185,24 @@ internal sealed record NcMachineCycleEstimate(
     double? EstimatedCycleSeconds,
     IReadOnlyList<string> Warnings,
     string Confidence,
-    DateTimeOffset CalculatedAt);
+    DateTimeOffset CalculatedAt,
+    string? MachineNumber = null,
+    string? MachineName = null,
+    NcSetupEstimate? Setup = null);
+
+/// <summary>
+/// The setup a release needs on one Machine, estimated like the Planning Board does it (the NC
+/// time is shown in the postprocessor status, owner request 2026-09-29): loading the released
+/// tool table's required tools, the Operation's fixture setup time and the first piece at the
+/// first-piece factor. <see cref="TotalSetupSeconds"/> is null while a part of it is unknown.
+/// </summary>
+internal sealed record NcSetupEstimate(
+    int? RequiredToolCount,
+    double ToolLoadingSeconds,
+    double? FixtureSetupSeconds,
+    double? FirstPieceSeconds,
+    double? TotalSetupSeconds,
+    IReadOnlyList<string> Warnings);
 
 internal sealed record PostprocessorReleaseStatus(
     string PostprocessorId,
