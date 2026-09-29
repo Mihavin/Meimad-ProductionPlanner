@@ -73,6 +73,7 @@ Setup contains the factory master data:
 - Machines and reusable Machine Types
 - Postprocessors and compatibility requirements
 - Working Calendars, breaks, holidays, and exceptions
+- **12h shift rotations**: in **Calendars**, choose **12h shift rotation (employees)** when you create the Calendar. Write one shift per line, for example `day | Day | 07:00-19:00` and `night | Night | 19:00-07:00` (a shift that ends earlier than it starts ends the next morning; add breaks after a fourth `|`). If the crews repeat a fixed cycle, write it as the **Repeating pattern**, for example `day day night night - - - -`, with its **Pattern start date**, and one crew per line such as `A | Crew A | 0` and `B | Crew B | 2` (crew B starts the pattern two days later). Leave the pattern and crews empty when the shifts are decided week by week. Assign the Calendar to the employees under **Employees** and pick each one's **Shift crew**.
 - Machine availability, maintenance, and breakdown/restore records
 - Employees/resources, roles, machine skills, photos, and availability
 - **Employees / Resources → Workload**: choose a period and press **Calculate** to see each active employee's planned load from the Timeline: working time, the setup, QA, load/unload and station-step hours booked on them, and the load percentage with a level (Low, Normal, High, Fully booked, Overbooked, No working time). Select an employee to see the load per day and the work booked on them. **Print report** opens the same report as a page in the browser; print it or save it as PDF. Only time from now on counts, and the figures change whenever the plan changes.
@@ -82,6 +83,10 @@ Setup contains the factory master data:
 - **Kitaron Stations**: what each Kitaron route station becomes when the connector imports the route master. Every station the synchronization has seen is listed with a suggested role; choose **Machine operation** (with the required Machine Type), **Workstation step** (with its Workstation type and default minutes per part/batch), **External resource step** (with the External Resource whose lead time applies) or **Ignore**. Undecided stations import nothing, so decide the machining stations first, then the inspection, deburring and packing stations once their Workstation types exist under Resource Types & Skills. Saving a decision makes the Server synchronize Kitaron at once, and the operation lists follow within about a minute: operations and steps that the decisions no longer produce are removed, and new ones are added. An operation that a Production Batch, a G-code release or a pin still uses stays, and the synchronization result on the Server's Kitaron page names it.
 
 Changes need the Setup permission. Keep machine IDs stable, because employee skills, operation requirements, and historical records use them.
+
+### Shift Roster
+
+The **Shift Roster** tab shows one week, Sunday to Saturday, for every active employee on a 12h shift rotation. Each day shows the shift the employee starts that day, or Off, a closure or an absence (vacation, sick day...). An absence removes the whole shift that starts that day, including a night shift's hours after midnight. To change a day, pick **Day**, **Night**, **Off** or **Pattern** (the crew's normal day) in its list; changed days are marked with `*` and a blue border until you press **Save**. **Repeat last week** fills this week with last week's shifts, for you to check and save. **Discard** forgets unsaved changes. Saving needs the Plan machines permission. If someone else changed one of your days after you opened the week, nothing is saved: the roster reloads and tells you who changed it and when. The Timeline plans setup, QC and loading work only inside the shifts shown here.
 
 ### NC viewer
 

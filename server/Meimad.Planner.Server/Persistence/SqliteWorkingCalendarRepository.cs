@@ -82,6 +82,7 @@ internal sealed class SqliteWorkingCalendarRepository : IWorkingCalendarReposito
         await EnsureNameAvailableAsync(
             connection, transaction, calendar.Name, calendar.WorkingCalendarId, cancellationToken);
         await EnsureUsageChangesAreSafeAsync(connection, transaction, calendar, cancellationToken);
+        await EnsureRotationChangesAreSafeAsync(connection, transaction, calendar, cancellationToken);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -175,6 +176,10 @@ internal sealed class SqliteWorkingCalendarRepository : IWorkingCalendarReposito
             throw new WorkingCalendarUsageInUseException(
                 workingCalendarId,
                 "Only a Calendar with setup_worker usage can be selected as the Setup Calendar.");
+        if (calendar.IsRotation)
+            throw new WorkingCalendarUsageInUseException(
+                workingCalendarId,
+                "A shift rotation Calendar belongs to employees and cannot be the Setup Calendar; select a weekly Calendar.");
         await using var update = connection.CreateCommand();
         update.Transaction = transaction;
         update.CommandText = """
@@ -236,6 +241,10 @@ internal sealed class SqliteWorkingCalendarRepository : IWorkingCalendarReposito
         await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
         var calendar = await ReadByIdAsync(connection, transaction, workingCalendarId, cancellationToken)
             ?? throw new WorkingCalendarNotFoundException(workingCalendarId);
+        if (calendar.IsRotation)
+            throw new WorkingCalendarUsageInUseException(
+                workingCalendarId,
+                "A shift rotation Calendar belongs to employees and cannot be the Israel Master Calendar; select a weekly Calendar.");
         await using var update = connection.CreateCommand();
         update.Transaction = transaction;
         update.CommandText = "INSERT INTO application_settings (key, value) VALUES ('master_calendar_id', $id) ON CONFLICT(key) DO UPDATE SET value = excluded.value;";
@@ -275,7 +284,15 @@ internal sealed class SqliteWorkingCalendarRepository : IWorkingCalendarReposito
         return await reader.ReadAsync(cancellationToken) ? ReadCalendar(reader) : null;
     }
 
-    private static WorkingCalendar ReadCalendar(SqliteDataReader reader)
+    private static WorkingCalendar ReadCalendar(SqliteDataReader reader) => Parse(
+        reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt32(4),
+        DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal),
+        DateTimeOffset.Parse(reader.GetString(6), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal));
+
+    /// <summary>A stored Calendar; <c>calendar_json</c> holds either a weekly schedule or a shift rotation.</summary>
+    internal static WorkingCalendar Parse(
+        string id, string name, string timeZoneId, string calendarJson, int version,
+        DateTimeOffset createdAt, DateTimeOffset updatedAt)
     {
         IReadOnlyList<string> workdays = [];
         string? startsAt = null;
@@ -286,10 +303,33 @@ internal sealed class SqliteWorkingCalendarRepository : IWorkingCalendarReposito
         IReadOnlyList<string> usages = WorkingCalendarUsage.All;
         var kind = "explicit";
         var useIsraeliHolidays = false;
+        ShiftRotation? rotation = null;
         try
         {
-            using var json = JsonDocument.Parse(reader.GetString(3));
-            if (json.RootElement.TryGetProperty("weeklySchedule", out var weekly))
+            using var json = JsonDocument.Parse(calendarJson);
+            if (json.RootElement.TryGetProperty("rotation", out var rotationElement)
+                && rotationElement.ValueKind == JsonValueKind.Object)
+            {
+                var document = rotationElement.Deserialize<RotationDocument>(JsonOptions)
+                    ?? throw new JsonException("The rotation is empty.");
+                rotation = new ShiftRotation(
+                    document.AnchorDate,
+                    (document.Shifts ?? []).Select(shift => new RotationShift(
+                        shift.Code, shift.Name, shift.StartsAtLocal, shift.EndsAtLocal, shift.BreakWindows ?? [])).ToArray(),
+                    document.Pattern ?? [],
+                    document.Crews ?? []);
+                exceptions = (document.Exceptions ?? []).Select(exception => exception with
+                {
+                    Windows = exception.Windows ?? [], BreakWindows = exception.BreakWindows ?? []
+                }).ToArray();
+                if (json.RootElement.TryGetProperty("usages", out var rotationUsages) && rotationUsages.ValueKind == JsonValueKind.Array)
+                    usages = rotationUsages.EnumerateArray().Select(value => value.GetString()!).ToArray();
+                if (json.RootElement.TryGetProperty("useIsraeliHolidays", out var rotationHolidays)
+                    && rotationHolidays.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    useIsraeliHolidays = rotationHolidays.GetBoolean();
+                kind = WorkingCalendarScheduleKind.Rotation;
+            }
+            else if (json.RootElement.TryGetProperty("weeklySchedule", out var weekly))
             {
                 workdays = weekly.GetProperty("workdays")
                     .EnumerateArray().Select(value => value.GetString()!).ToArray();
@@ -320,18 +360,27 @@ internal sealed class SqliteWorkingCalendarRepository : IWorkingCalendarReposito
                 kind = "weekly";
             }
         }
-        catch (Exception exception) when (exception is JsonException or InvalidOperationException or KeyNotFoundException)
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException or KeyNotFoundException or NotSupportedException)
         {
             kind = "invalid";
         }
 
         return new WorkingCalendar(
-            reader.GetString(0), reader.GetString(1), reader.GetString(2),
-            workdays, startsAt, endsAt, windows, breakWindows, exceptions, usages, kind, reader.GetInt32(4),
-            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal),
-            DateTimeOffset.Parse(reader.GetString(6), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal),
-            useIsraeliHolidays);
+            id, name, timeZoneId,
+            workdays, startsAt, endsAt, windows, breakWindows, exceptions, usages, kind, version,
+            createdAt, updatedAt, useIsraeliHolidays, rotation);
     }
+
+    private sealed record RotationDocument(
+        string? AnchorDate,
+        IReadOnlyList<RotationShiftDocument>? Shifts,
+        IReadOnlyList<string>? Pattern,
+        IReadOnlyList<RotationCrew>? Crews,
+        IReadOnlyList<WorkingCalendarException>? Exceptions);
+
+    private sealed record RotationShiftDocument(
+        string Code, string Name, string StartsAtLocal, string EndsAtLocal,
+        IReadOnlyList<WorkingCalendarWindow>? BreakWindows);
 
     private static async Task EnsureNameAvailableAsync(
         SqliteConnection connection,
@@ -408,6 +457,58 @@ internal sealed class SqliteWorkingCalendarRepository : IWorkingCalendarReposito
         }
     }
 
+    /// <summary>
+    /// A rotation cannot drop a crew an employee follows, or a shift the Shift Roster still uses from
+    /// yesterday on; the planner moves those employees or entries first.
+    /// </summary>
+    private static async Task EnsureRotationChangesAreSafeAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        WorkingCalendar calendar,
+        CancellationToken cancellationToken)
+    {
+        var crews = calendar.Rotation?.Crews.Select(crew => crew.Code).ToArray() ?? [];
+        await using (var crew = connection.CreateCommand())
+        {
+            crew.Transaction = transaction;
+            crew.CommandText = """
+                SELECT name, shift_crew_code FROM employee_resources
+                WHERE assigned_calendar_id = $id AND shift_crew_code IS NOT NULL
+                ORDER BY employee_number;
+                """;
+            crew.Parameters.AddWithValue("$id", calendar.WorkingCalendarId);
+            await using var reader = await crew.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (!crews.Contains(reader.GetString(1), StringComparer.OrdinalIgnoreCase))
+                    throw new WorkingCalendarUsageInUseException(
+                        calendar.WorkingCalendarId,
+                        $"Crew '{reader.GetString(1)}' cannot be removed while {reader.GetString(0)} follows it. Move the employee to another crew first.");
+            }
+        }
+
+        var shifts = calendar.Rotation?.Shifts.Select(shift => shift.Code).Append(RotationShiftCode.Off).ToArray() ?? [];
+        await using var roster = connection.CreateCommand();
+        roster.Transaction = transaction;
+        roster.CommandText = """
+            SELECT DISTINCT employee_shift_roster_entries.shift_code
+            FROM employee_shift_roster_entries
+            JOIN employee_resources ON employee_resources.id = employee_shift_roster_entries.resource_id
+            WHERE employee_resources.assigned_calendar_id = $id AND employee_shift_roster_entries.roster_date >= $from;
+            """;
+        roster.Parameters.AddWithValue("$id", calendar.WorkingCalendarId);
+        roster.Parameters.AddWithValue("$from", calendar.UpdatedAt.UtcDateTime.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        await using var rosterReader = await roster.ExecuteReaderAsync(cancellationToken);
+        while (await rosterReader.ReadAsync(cancellationToken))
+        {
+            var code = rosterReader.GetString(0);
+            if (!shifts.Contains(code, StringComparer.Ordinal))
+                throw new WorkingCalendarUsageInUseException(
+                    calendar.WorkingCalendarId,
+                    $"Shift '{code}' cannot be removed while the Shift Roster uses it. Change those roster days first.");
+        }
+    }
+
     private static async Task EnsureEditAuthorityAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -422,8 +523,21 @@ internal sealed class SqliteWorkingCalendarRepository : IWorkingCalendarReposito
     private static string FormatInstant(DateTimeOffset value) =>
         value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
 
-    private static string SerializeCalendar(WorkingCalendar calendar) =>
-        JsonSerializer.Serialize(new
+    private static string SerializeCalendar(WorkingCalendar calendar) => calendar.Rotation is { } rotation
+        ? JsonSerializer.Serialize(new
+        {
+            rotation = new
+            {
+                anchorDate = rotation.AnchorDate,
+                shifts = rotation.Shifts,
+                pattern = rotation.Pattern,
+                crews = rotation.Crews,
+                exceptions = calendar.Exceptions
+            },
+            usages = calendar.Usages,
+            useIsraeliHolidays = calendar.UseIsraeliHolidays
+        }, JsonOptions)
+        : JsonSerializer.Serialize(new
         {
             weeklySchedule = new
             {

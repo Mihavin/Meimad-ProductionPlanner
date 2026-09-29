@@ -13,7 +13,7 @@ internal sealed record CreateEmployeeResourceCommand(
     IReadOnlyList<string?>? Skills, string? AssignedCalendarId, string? PhotoPath, string? Notes,
     string? Email, bool IsActive, bool RespectMasterCalendar = true,
     double ToolLoadSecondsPerTool = 60, double? FixtureAssemblySeconds = null,
-    double FirstPartRunningSpeedPercent = 66.6666666667);
+    double FirstPartRunningSpeedPercent = 66.6666666667, string? ShiftCrewCode = null);
 
 internal sealed record UpdateEmployeeResourceCommand(
     AdminField<string?> EmployeeNumber, AdminField<string?> FirstName, AdminField<string?> LastName,
@@ -23,7 +23,8 @@ internal sealed record UpdateEmployeeResourceCommand(
     AdminField<bool?> RespectMasterCalendar = default,
     AdminField<double?> ToolLoadSecondsPerTool = default,
     AdminField<double?> FixtureAssemblySeconds = default,
-    AdminField<double?> FirstPartRunningSpeedPercent = default);
+    AdminField<double?> FirstPartRunningSpeedPercent = default,
+    AdminField<string?> ShiftCrewCode = default);
 
 internal sealed record CreateEmployeeCalendarExceptionCommand(
     DateOnly? Date, string? ExceptionType, bool IsFullDay,

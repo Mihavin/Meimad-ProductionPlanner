@@ -44,6 +44,18 @@ internal static class WorkingCalendarValidator
             }
         }
 
+        var kind = values.ScheduleKind?.Trim().ToLowerInvariant() ?? WorkingCalendarScheduleKind.Weekly;
+        if (kind is not (WorkingCalendarScheduleKind.Weekly or WorkingCalendarScheduleKind.Rotation))
+        {
+            issues.Add(new("scheduleKind", "invalid_schedule_kind", "scheduleKind must be weekly or rotation."));
+            throw new WorkingCalendarValidationException(issues);
+        }
+
+        if (kind == WorkingCalendarScheduleKind.Rotation)
+            return ValidateRotation(values, name, timeZoneId, issues);
+
+        if (values.Rotation is not null)
+            issues.Add(new("rotation", "rotation_requires_rotation_kind", "rotation is used only by a Calendar whose scheduleKind is rotation."));
         var workdays = NormalizeWorkdays(values.Workdays, issues);
         var windows = NormalizeWindows(values, issues);
         var breakWindows = NormalizeWindowList(values.BreakWindows, "breakWindows", false, issues);
@@ -64,6 +76,174 @@ internal static class WorkingCalendarValidator
             breakWindows,
             exceptions,
             usages);
+    }
+
+    private static ValidatedWorkingCalendarValues ValidateRotation(
+        WorkingCalendarValues values,
+        string? name,
+        string? timeZoneId,
+        List<WorkingCalendarValidationIssue> issues)
+    {
+        // The rotation's shifts replace the weekly workdays, windows and breaks.
+        if (values.Workdays is { Count: > 0 })
+            issues.Add(new("workdays", "not_used_by_rotation", "A rotation Calendar has no workdays; its pattern and Shift Roster decide the working days."));
+        if (values.Windows is { Count: > 0 } || values.ShiftStartsAtLocal is not null || values.ShiftEndsAtLocal is not null)
+            issues.Add(new("windows", "not_used_by_rotation", "A rotation Calendar has no weekly windows; define its shifts instead."));
+        if (values.BreakWindows is { Count: > 0 })
+            issues.Add(new("breakWindows", "not_used_by_rotation", "A rotation Calendar has no weekly breaks; define each shift's breaks instead."));
+
+        var exceptions = NormalizeExceptions(values.Exceptions, issues);
+        for (var index = 0; index < exceptions.Count; index++)
+        {
+            if (exceptions[index].Windows.Count > 0 || exceptions[index].BreakWindows.Count > 0)
+                issues.Add(new($"exceptions[{index}].windows", "rotation_exception_windows_unsupported",
+                    "An exception of a rotation Calendar is a closure: no shift starts on that date. Use the Shift Roster to change a single employee's shift."));
+        }
+
+        var usages = values.Usages is null ? WorkingCalendarUsage.Workers : NormalizeUsages(values.Usages, issues);
+        if (usages.Contains(WorkingCalendarUsage.Machine, StringComparer.Ordinal))
+            issues.Add(new("usages", "rotation_machine_usage", "A rotation Calendar is an employee calendar and cannot have machine usage."));
+
+        var rotation = NormalizeRotation(values.Rotation, issues);
+        if (issues.Count > 0) throw new WorkingCalendarValidationException(issues);
+        return new ValidatedWorkingCalendarValues(
+            name!, timeZoneId!, [], [], [], exceptions, usages,
+            WorkingCalendarScheduleKind.Rotation, rotation);
+    }
+
+    private const int MaximumShifts = 10;
+    private const int MaximumPatternDays = 366;
+    private const int MaximumCrews = 20;
+    private const int CodeMaximum = 20;
+    private const int ShiftNameMaximum = 100;
+
+    private static ShiftRotation? NormalizeRotation(
+        ShiftRotationValues? values,
+        ICollection<WorkingCalendarValidationIssue> issues)
+    {
+        if (values is null)
+        {
+            issues.Add(new("rotation", "required", "A rotation Calendar requires its rotation: shifts, pattern and crews."));
+            return null;
+        }
+
+        var shifts = new List<RotationShift>();
+        var shiftCodes = new HashSet<string>(StringComparer.Ordinal);
+        if (values.Shifts is null || values.Shifts.Count == 0)
+            issues.Add(new("rotation.shifts", "required", "A rotation requires at least one shift."));
+        else if (values.Shifts.Count > MaximumShifts)
+            issues.Add(new("rotation.shifts", "too_many", $"A rotation may define at most {MaximumShifts} shifts."));
+        else
+        {
+            for (var index = 0; index < values.Shifts.Count; index++)
+            {
+                var field = $"rotation.shifts[{index}]";
+                var shift = values.Shifts[index];
+                var code = NormalizeShiftCode(shift?.Code, $"{field}.code", issues);
+                if (code is not null && !shiftCodes.Add(code))
+                    issues.Add(new($"{field}.code", "duplicate_code", $"Shift code '{code}' is used more than once."));
+                var shiftName = shift?.Name?.Trim();
+                if (string.IsNullOrEmpty(shiftName)) shiftName = code;
+                if (shiftName?.Length > ShiftNameMaximum)
+                    issues.Add(new($"{field}.name", "too_long", $"A shift name must contain at most {ShiftNameMaximum} characters."));
+                var start = ParseTime(shift?.StartsAtLocal, $"{field}.startsAtLocal", false, issues);
+                var end = ParseTime(shift?.EndsAtLocal, $"{field}.endsAtLocal", true, issues);
+                if (start.HasValue && end.HasValue && start == end)
+                    issues.Add(new($"{field}.endsAtLocal", "window_order_invalid", "A shift end must differ from its start."));
+                if (code is null || !start.HasValue || !end.HasValue || start == end) continue;
+                var window = new WorkingCalendarWindow(FormatMinutes(start.Value), end.Value == 1440 ? "24:00" : FormatMinutes(end.Value));
+                var breaks = NormalizeWindowList(shift?.BreakWindows, $"{field}.breakWindows", false, issues);
+                ValidateBreakContainment(breaks, [window], $"{field}.breakWindows", issues);
+                shifts.Add(new RotationShift(code, shiftName!, window.StartsAtLocal, window.EndsAtLocal, breaks));
+            }
+        }
+
+        var pattern = new List<string>();
+        if (values.Pattern is { Count: > MaximumPatternDays })
+            issues.Add(new("rotation.pattern", "too_long", $"A rotation pattern may have at most {MaximumPatternDays} days."));
+        else if (values.Pattern is not null)
+        {
+            for (var index = 0; index < values.Pattern.Count; index++)
+            {
+                var code = values.Pattern[index]?.Trim().ToLowerInvariant();
+                if (string.IsNullOrEmpty(code)) code = RotationShiftCode.Off;
+                if (code != RotationShiftCode.Off && !shiftCodes.Contains(code))
+                    issues.Add(new($"rotation.pattern[{index}]", "unknown_shift", $"Pattern day {index + 1} uses unknown shift '{code}'."));
+                pattern.Add(code);
+            }
+        }
+
+        string? anchorDate = null;
+        if (!string.IsNullOrWhiteSpace(values.AnchorDate))
+        {
+            if (DateOnly.TryParseExact(values.AnchorDate.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var anchor))
+                anchorDate = anchor.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            else
+                issues.Add(new("rotation.anchorDate", "invalid_date", "anchorDate must use yyyy-MM-dd."));
+        }
+        else if (pattern.Count > 0)
+        {
+            issues.Add(new("rotation.anchorDate", "required", "A rotation pattern requires the anchorDate on which its first day falls."));
+        }
+
+        var crews = new List<RotationCrew>();
+        var crewCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (values.Crews is { Count: > 0 })
+        {
+            if (pattern.Count == 0)
+                issues.Add(new("rotation.crews", "crews_require_pattern", "Crews follow the rotation pattern; define the pattern first or leave the crews empty."));
+            else if (values.Crews.Count > MaximumCrews)
+                issues.Add(new("rotation.crews", "too_many", $"A rotation may define at most {MaximumCrews} crews."));
+            else
+            {
+                for (var index = 0; index < values.Crews.Count; index++)
+                {
+                    var field = $"rotation.crews[{index}]";
+                    var crew = values.Crews[index];
+                    var code = crew?.Code?.Trim();
+                    if (string.IsNullOrEmpty(code))
+                    {
+                        issues.Add(new($"{field}.code", "required", "Each crew requires a code."));
+                        continue;
+                    }
+                    if (code.Length > CodeMaximum)
+                        issues.Add(new($"{field}.code", "too_long", $"A crew code must contain at most {CodeMaximum} characters."));
+                    if (!crewCodes.Add(code))
+                        issues.Add(new($"{field}.code", "duplicate_code", $"Crew code '{code}' is used more than once."));
+                    var crewName = crew?.Name?.Trim();
+                    if (string.IsNullOrEmpty(crewName)) crewName = code;
+                    if (crewName.Length > ShiftNameMaximum)
+                        issues.Add(new($"{field}.name", "too_long", $"A crew name must contain at most {ShiftNameMaximum} characters."));
+                    var offset = crew?.OffsetDays ?? 0;
+                    if (offset < 0 || offset >= pattern.Count)
+                        issues.Add(new($"{field}.offsetDays", "out_of_range", $"offsetDays must be from 0 to {pattern.Count - 1}, within the {pattern.Count}-day pattern."));
+                    crews.Add(new RotationCrew(code, crewName, offset));
+                }
+            }
+        }
+
+        return new ShiftRotation(anchorDate, shifts, pattern, crews);
+    }
+
+    private static string? NormalizeShiftCode(string? value, string field, ICollection<WorkingCalendarValidationIssue> issues)
+    {
+        var code = value?.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(code))
+        {
+            issues.Add(new(field, "required", "Each shift requires a code."));
+            return null;
+        }
+        if (code == RotationShiftCode.Off)
+        {
+            issues.Add(new(field, "reserved_code", "'off' is reserved for a day on which no shift starts."));
+            return null;
+        }
+        if (code.Length > CodeMaximum || !code.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-'))
+        {
+            issues.Add(new(field, "invalid_code", $"A shift code uses at most {CodeMaximum} letters, digits, '_' or '-'."));
+            return null;
+        }
+        return code;
     }
 
     private static IReadOnlyList<WorkingCalendarWindow> NormalizeWindows(WorkingCalendarValues values, ICollection<WorkingCalendarValidationIssue> issues)
@@ -299,7 +479,33 @@ internal sealed record WorkingCalendarValues(
     IReadOnlyList<WorkingCalendarWindow?>? Windows = null,
     IReadOnlyList<WorkingCalendarWindow?>? BreakWindows = null,
     IReadOnlyList<WorkingCalendarException?>? Exceptions = null,
-    IReadOnlyList<string?>? Usages = null);
+    IReadOnlyList<string?>? Usages = null,
+    string? ScheduleKind = null,
+    ShiftRotationValues? Rotation = null);
+
+internal sealed record ShiftRotationValues(
+    string? AnchorDate,
+    IReadOnlyList<RotationShiftValues?>? Shifts,
+    IReadOnlyList<string?>? Pattern,
+    IReadOnlyList<RotationCrewValues?>? Crews)
+{
+    internal static ShiftRotationValues From(ShiftRotation rotation) => new(
+        rotation.AnchorDate,
+        rotation.Shifts.Select(shift => (RotationShiftValues?)new RotationShiftValues(
+            shift.Code, shift.Name, shift.StartsAtLocal, shift.EndsAtLocal,
+            shift.BreakWindows.Cast<WorkingCalendarWindow?>().ToArray())).ToArray(),
+        rotation.Pattern.Cast<string?>().ToArray(),
+        rotation.Crews.Select(crew => (RotationCrewValues?)new RotationCrewValues(crew.Code, crew.Name, crew.OffsetDays)).ToArray());
+}
+
+internal sealed record RotationShiftValues(
+    string? Code,
+    string? Name,
+    string? StartsAtLocal,
+    string? EndsAtLocal,
+    IReadOnlyList<WorkingCalendarWindow?>? BreakWindows);
+
+internal sealed record RotationCrewValues(string? Code, string? Name, int? OffsetDays);
 
 internal sealed record ValidatedWorkingCalendarValues(
     string Name,
@@ -308,7 +514,9 @@ internal sealed record ValidatedWorkingCalendarValues(
     IReadOnlyList<WorkingCalendarWindow> Windows,
     IReadOnlyList<WorkingCalendarWindow> BreakWindows,
     IReadOnlyList<WorkingCalendarException> Exceptions,
-    IReadOnlyList<string> Usages);
+    IReadOnlyList<string> Usages,
+    string ScheduleKind = WorkingCalendarScheduleKind.Weekly,
+    ShiftRotation? Rotation = null);
 
 internal sealed record WorkingCalendarValidationIssue(string Field, string Code, string Message);
 

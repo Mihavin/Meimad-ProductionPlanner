@@ -8,7 +8,8 @@ internal sealed record EmployeeResource(
     bool RespectMasterCalendar = true,
     double ToolLoadSecondsPerTool = 60,
     double? FixtureAssemblySeconds = null,
-    double FirstPartRunningSpeedPercent = 66.6666666667)
+    double FirstPartRunningSpeedPercent = 66.6666666667,
+    string? ShiftCrewCode = null)
 {
     internal bool IsAvailableForFuturePlanning => IsActive && !string.IsNullOrWhiteSpace(AssignedCalendarId);
 }

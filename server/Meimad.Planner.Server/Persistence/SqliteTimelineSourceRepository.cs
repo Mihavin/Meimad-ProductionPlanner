@@ -712,7 +712,10 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                    COALESCE((SELECT json_group_array(skill_id) FROM (
                        SELECT skill_id FROM employee_skills
                        WHERE employee_skills.employee_resource_id = employee_resources.id
-                       ORDER BY skill_id)), '[]')
+                       ORDER BY skill_id)), '[]'),
+                   working_calendars.id, working_calendars.name, working_calendars.version,
+                   working_calendars.created_at, working_calendars.updated_at,
+                   employee_resources.shift_crew_code
             FROM employee_resources
             JOIN working_calendars ON working_calendars.id = employee_resources.assigned_calendar_id
             WHERE employee_resources.is_active = 1
@@ -727,9 +730,19 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 reader.GetInt32(5) == 1,
                 reader.GetDouble(6), reader.IsDBNull(7) ? null : reader.GetDouble(7), reader.GetDouble(8),
                 NullableString(reader, 9),
-                JsonSerializer.Deserialize<string[]>(reader.GetString(10)) ?? []));
+                JsonSerializer.Deserialize<string[]>(reader.GetString(10)) ?? [],
+                SqliteWorkingCalendarRepository.Parse(
+                    reader.GetString(11), reader.GetString(12), reader.GetString(2), reader.GetString(3), reader.GetInt32(13),
+                    DateTimeOffset.Parse(reader.GetString(14), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal),
+                    DateTimeOffset.Parse(reader.GetString(15), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal)),
+                NullableString(reader, 16)));
         }
         await reader.DisposeAsync();
+        var rosterFrom = DateOnly.FromDateTime(horizonStart.UtcDateTime).AddDays(-2);
+        var rosterTo = DateOnly.FromDateTime(horizonEnd.UtcDateTime).AddDays(2);
+        var roster = (await SqliteShiftRosterRepository.ListAsync(connection, transaction, rosterFrom, rosterTo, null, cancellationToken))
+            .GroupBy(entry => entry.ResourceId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
 
         // Read every active resource's relevant exceptions in one indexed query. The
         // previous per-resource query was an N+1 pattern that made Timeline loading
@@ -777,7 +790,8 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         {
             resources[index] = resources[index] with
             {
-                Exceptions = exceptionsByResource.GetValueOrDefault(resources[index].ResourceId) ?? []
+                Exceptions = exceptionsByResource.GetValueOrDefault(resources[index].ResourceId) ?? [],
+                Roster = roster.GetValueOrDefault(resources[index].ResourceId) ?? []
             };
         }
         return resources;

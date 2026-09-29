@@ -138,7 +138,7 @@
                                      HorizontalContentAlignment="Stretch" />
                             <StackPanel Grid.Row="2" Margin="0,10,0,0">
                                 <TextBlock Text="Dedicated Setup Calendar" Style="{StaticResource SetupFieldLabel}" />
-                                <ComboBox ItemsSource="{Binding SetupWorkerCalendars}"
+                                <ComboBox ItemsSource="{Binding SetupCalendarChoices}"
                                           SelectedItem="{Binding SelectedSetupCalendar}"
                                           DisplayMemberPath="Name" />
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
@@ -148,7 +148,7 @@
                                 <TextBlock Text="Setup personnel may use different availability than Machines."
                                            Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,7,0,0" />
                                 <TextBlock Text="Israel Master Calendar" Style="{StaticResource SetupFieldLabel}" Margin="0,12,0,0" />
-                                <ComboBox ItemsSource="{Binding WorkingCalendars}" SelectedItem="{Binding SelectedMasterCalendar}" DisplayMemberPath="Name" />
+                                <ComboBox ItemsSource="{Binding MasterCalendarChoices}" SelectedItem="{Binding SelectedMasterCalendar}" DisplayMemberPath="Name" />
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                     <Button Content="Use as master" Command="{Binding SetMasterCalendarCommand}" />
                                     <Button Content="Clear" Command="{Binding ClearMasterCalendarCommand}" Margin="0" />
@@ -163,6 +163,13 @@
                             <TextBlock Text="{Binding CalendarFormHeading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10" />
                             <TextBlock Text="Legacy explicit-window calendars are read-only."
                                        Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
+                            <TextBlock Text="Calendar kind" Style="{StaticResource SetupFieldLabel}" />
+                            <WrapPanel Margin="0,2,0,12" IsEnabled="{Binding IsCalendarKindEditable}">
+                                <RadioButton Content="Weekly schedule" IsChecked="{Binding CalendarIsWeekly}" Margin="0,0,18,0"
+                                             ToolTip="The same working windows on every selected working day. Machines, Workstations and employees can use it." />
+                                <RadioButton Content="12h shift rotation (employees)" IsChecked="{Binding CalendarIsRotation}"
+                                             ToolTip="Day and night shifts that employees rotate through. The kind cannot change after the Calendar is created." />
+                            </WrapPanel>
                             <UniformGrid Columns="2" IsEnabled="{Binding IsCalendarEditable}">
                                 <StackPanel Style="{StaticResource SetupField}">
                                     <TextBlock Text="Calendar name" Style="{StaticResource SetupFieldLabel}" />
@@ -186,13 +193,41 @@
                                       IsChecked="{Binding CalendarUseIsraeliHolidays}"
                                       IsEnabled="{Binding IsCalendarEditable}" Margin="0,0,0,12"
                                       ToolTip="Uses the local holiday cache. Timeline and resource calculation do not access the internet." />
-                            <StackPanel Style="{StaticResource SetupField}" IsEnabled="{Binding IsCalendarEditable}">
+                            <StackPanel IsEnabled="{Binding IsCalendarEditable}" Visibility="{Binding CalendarIsRotation, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <StackPanel Style="{StaticResource SetupField}">
+                                    <TextBlock Text="Shifts (one per line: code | name | HH:mm-HH:mm | breaks)" Style="{StaticResource SetupFieldLabel}" />
+                                    <TextBox Text="{Binding CalendarShiftsText, UpdateSourceTrigger=PropertyChanged}"
+                                             AcceptsReturn="True" MinHeight="58" VerticalScrollBarVisibility="Auto"
+                                             ToolTip="For example: day | Day | 07:00-19:00 | 12:00-12:30, and night | Night | 19:00-07:00 | 00:00-00:30. A shift that ends earlier than it starts ends the next morning and belongs to the evening it starts." />
+                                </StackPanel>
+                                <UniformGrid Columns="2">
+                                    <StackPanel Style="{StaticResource SetupField}">
+                                        <TextBlock Text="Repeating pattern (shift codes, - for off)" Style="{StaticResource SetupFieldLabel}" />
+                                        <TextBox Text="{Binding CalendarPatternText, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="For example: day day night night - - - - for 2 days, 2 nights and 4 days off. Leave empty when the shifts are decided week by week in the Shift Roster." />
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}">
+                                        <TextBlock Text="Pattern start date (yyyy-MM-dd)" Style="{StaticResource SetupFieldLabel}" />
+                                        <TextBox Text="{Binding CalendarPatternStartDate, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="The date on which the first pattern day falls for a crew with offset 0." />
+                                    </StackPanel>
+                                </UniformGrid>
+                                <StackPanel Style="{StaticResource SetupField}">
+                                    <TextBlock Text="Crews (one per line: code | name | offset days)" Style="{StaticResource SetupFieldLabel}" />
+                                    <TextBox Text="{Binding CalendarCrewsText, UpdateSourceTrigger=PropertyChanged}"
+                                             AcceptsReturn="True" MinHeight="45" VerticalScrollBarVisibility="Auto"
+                                             ToolTip="For example: A | Crew A | 0 and B | Crew B | 2. A crew starts the pattern that many days after the start date. Leave empty without a pattern." />
+                                </StackPanel>
+                                <TextBlock Text="Each employee on this Calendar follows one crew. Change a single day of an employee in the Shift Roster; its entry replaces the pattern day. Dated exceptions below are closures: no pattern shift starts that day."
+                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,12" />
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource SetupField}" IsEnabled="{Binding IsCalendarEditable}" Visibility="{Binding CalendarIsWeekly, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <TextBlock Text="Working windows (one HH:mm-HH:mm range per line)" Style="{StaticResource SetupFieldLabel}" />
                                 <TextBox Text="{Binding CalendarWindowsText, UpdateSourceTrigger=PropertyChanged}"
                                          AcceptsReturn="True" MinHeight="58" VerticalScrollBarVisibility="Auto"
                                          ToolTip="For example: 06:00-10:00 then 10:30-18:00, or one overnight shift such as 17:00-07:00. Windows are shared by the selected workdays." />
                             </StackPanel>
-                            <StackPanel Style="{StaticResource SetupField}" IsEnabled="{Binding IsCalendarEditable}">
+                            <StackPanel Style="{StaticResource SetupField}" IsEnabled="{Binding IsCalendarEditable}" Visibility="{Binding CalendarIsWeekly, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <TextBlock Text="Lunch / break windows (one HH:mm-HH:mm range per line)" Style="{StaticResource SetupFieldLabel}" />
                                 <TextBox Text="{Binding CalendarBreakWindowsText, UpdateSourceTrigger=PropertyChanged}"
                                          AcceptsReturn="True" MinHeight="45" VerticalScrollBarVisibility="Auto"
@@ -204,8 +239,8 @@
                                          AcceptsReturn="True" MinHeight="70" VerticalScrollBarVisibility="Auto"
                                          ToolTip="One per line: yyyy-MM-dd | closed | name, or yyyy-MM-dd | 08:00-16:00 | 12:00-12:30 | name. Use commas for multiple windows and - for no breaks." />
                             </StackPanel>
-                            <TextBlock Text="Working days" Style="{StaticResource SetupFieldLabel}" />
-                            <WrapPanel Margin="0,2,0,12" IsEnabled="{Binding IsCalendarEditable}">
+                            <TextBlock Text="Working days" Style="{StaticResource SetupFieldLabel}" Visibility="{Binding CalendarIsWeekly, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <WrapPanel Margin="0,2,0,12" IsEnabled="{Binding IsCalendarEditable}" Visibility="{Binding CalendarIsWeekly, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <CheckBox Content="Sun" IsChecked="{Binding WorksSunday}" Margin="0,0,14,0" />
                                 <CheckBox Content="Mon" IsChecked="{Binding WorksMonday}" Margin="0,0,14,0" />
                                 <CheckBox Content="Tue" IsChecked="{Binding WorksTuesday}" Margin="0,0,14,0" />
@@ -1033,6 +1068,7 @@
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Last name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceLastName}"/></StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Role" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding ResourceRoles}" SelectedItem="{Binding ResourceRole}"/></StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Assigned calendar" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding ResourceCalendars}" SelectedItem="{Binding SelectedResourceCalendar}" DisplayMemberPath="DisplayName"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}" Visibility="{Binding HasResourceCrews, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Shift crew" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding ResourceCrews}" SelectedItem="{Binding SelectedResourceCrew}" DisplayMemberPath="DisplayName" ToolTip="The crew whose rotation pattern this employee follows. Single days are changed in the Shift Roster."/></StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Email" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceEmail}"/></StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Photo path" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourcePhotoPath}"/></StackPanel>
                             </UniformGrid>

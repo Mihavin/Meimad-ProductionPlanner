@@ -15,11 +15,13 @@ internal sealed record CreateWorkingCalendarRequest(
     IReadOnlyList<WorkingCalendarWindow?>? BreakWindows = null,
     IReadOnlyList<WorkingCalendarException?>? Exceptions = null,
     IReadOnlyList<string?>? Usages = null,
-    bool UseIsraeliHolidays = false)
+    bool UseIsraeliHolidays = false,
+    string? ScheduleKind = null,
+    ShiftRotationValues? Rotation = null)
 {
     internal CreateWorkingCalendarCommand ToCommand() => new(
         Name, TimeZoneId, Workdays, ShiftStartsAtLocal, ShiftEndsAtLocal,
-        Windows, BreakWindows, Exceptions, Usages, UseIsraeliHolidays);
+        Windows, BreakWindows, Exceptions, Usages, UseIsraeliHolidays, ScheduleKind, Rotation);
 }
 
 internal sealed class PatchWorkingCalendarRequest
@@ -40,7 +42,8 @@ internal sealed class PatchWorkingCalendarRequest
             reader.Windows("breakWindows"),
             reader.Exceptions("exceptions"),
             reader.StringArray("usages"),
-            reader.Boolean("useIsraeliHolidays"));
+            reader.Boolean("useIsraeliHolidays"),
+            reader.Rotation("rotation"));
         reader.ThrowIfInvalid();
         return command;
     }
@@ -48,7 +51,8 @@ internal sealed class PatchWorkingCalendarRequest
     private sealed class FieldReader
     {
         private static readonly HashSet<string> Allowed =
-            ["name", "timeZoneId", "workdays", "shiftStartsAtLocal", "shiftEndsAtLocal", "windows", "breakWindows", "exceptions", "usages", "useIsraeliHolidays"];
+            ["name", "timeZoneId", "workdays", "shiftStartsAtLocal", "shiftEndsAtLocal", "windows", "breakWindows", "exceptions", "usages", "useIsraeliHolidays", "rotation"];
+        private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
         private readonly IReadOnlyDictionary<string, JsonElement> fields;
         private readonly List<WorkingCalendarRequestIssue> issues = [];
 
@@ -56,7 +60,9 @@ internal sealed class PatchWorkingCalendarRequest
         {
             this.fields = fields;
             foreach (var field in fields.Keys.Where(field => !Allowed.Contains(field)))
-                issues.Add(new(field, "unknown_field", $"Field '{field}' is not supported."));
+                issues.Add(field == "scheduleKind"
+                    ? new(field, "schedule_kind_immutable", "A Calendar keeps the schedule kind it was created with; create a new Calendar for the other kind.")
+                    : new(field, "unknown_field", $"Field '{field}' is not supported."));
             if (fields.Count == 0) issues.Add(new(string.Empty, "empty_patch", "At least one Working Calendar field is required."));
         }
 
@@ -89,6 +95,22 @@ internal sealed class PatchWorkingCalendarRequest
                 values.Add(item.ValueKind == JsonValueKind.Null ? null : item.GetString());
             }
             return WorkingCalendarField<IReadOnlyList<string?>?>.Specified(values);
+        }
+
+        internal WorkingCalendarField<ShiftRotationValues?> Rotation(string name)
+        {
+            if (!fields.TryGetValue(name, out var value)) return WorkingCalendarField<ShiftRotationValues?>.Unspecified;
+            if (value.ValueKind == JsonValueKind.Null) return WorkingCalendarField<ShiftRotationValues?>.Specified(null);
+            try
+            {
+                if (value.ValueKind == JsonValueKind.Object)
+                    return WorkingCalendarField<ShiftRotationValues?>.Specified(value.Deserialize<ShiftRotationValues>(JsonOptions));
+            }
+            catch (JsonException)
+            {
+            }
+            issues.Add(new(name, "invalid_type", "Field 'rotation' must be an object with anchorDate, shifts, pattern and crews."));
+            return WorkingCalendarField<ShiftRotationValues?>.Unspecified;
         }
 
         internal WorkingCalendarField<bool?> Boolean(string name)
@@ -198,7 +220,8 @@ internal sealed record WorkingCalendarResponse(
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    bool UseIsraeliHolidays)
+    bool UseIsraeliHolidays,
+    ShiftRotation? Rotation)
 {
     internal static WorkingCalendarResponse FromDomain(WorkingCalendar calendar) => new(
         calendar.WorkingCalendarId,
@@ -215,7 +238,8 @@ internal sealed record WorkingCalendarResponse(
         calendar.Version,
         calendar.CreatedAt,
         calendar.UpdatedAt,
-        calendar.UseIsraeliHolidays);
+        calendar.UseIsraeliHolidays,
+        calendar.Rotation);
 }
 
 internal sealed record WorkingCalendarListResponse(

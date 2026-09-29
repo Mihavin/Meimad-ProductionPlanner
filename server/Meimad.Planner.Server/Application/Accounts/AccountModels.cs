@@ -26,7 +26,7 @@ internal static class Permissions
         new(PrepareTools, "Prepare tools", "Work the Tool Room queue: offsets, lengths and diameters of prepared tools."),
         new(EditToolLibrary, "Edit the tool library", "Tool catalog tools, Cimatron import and export."),
         new(DecideQc, "Decide QC", "Accept or reject Production Runs in the QC queue."),
-        new(PlanMachines, "Plan machines", "Planning Board assignments and order, planning modes, priorities, Timeline pins, Production Runs, readiness inputs, E-Ink packages and downtimes."),
+        new(PlanMachines, "Plan machines", "Planning Board assignments and order, planning modes, priorities, Timeline pins, Production Runs, readiness inputs, E-Ink packages, downtimes and the Shift Roster."),
         new(ManageWorkOrders, "Manage Work Orders and orders", "Release Work Orders, create and change Work Orders and Orders."),
         new(VerifyMaterials, "Verify materials", "Verify Work Order material orders, material receipts and reservations."),
         new(RunOperations, "Run operations", "Start, pause, reset and finish operations and record manual reports."),

@@ -99,7 +99,8 @@ internal sealed class DatabaseMigrator
         new SchemaV91SpindleInterfaceMigration(),
         new SchemaV92Bt40PullStudsMigration(),
         new SchemaV93CaseOperationTimeHistoryMigration(),
-        new SchemaV94ManualWorkflowStatusMigration()
+        new SchemaV94ManualWorkflowStatusMigration(),
+        new SchemaV95ShiftRotationMigration()
     ];
 
     private readonly SqliteDatabase database;

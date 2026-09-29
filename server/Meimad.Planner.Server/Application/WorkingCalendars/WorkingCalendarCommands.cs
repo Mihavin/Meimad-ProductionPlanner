@@ -12,7 +12,9 @@ internal sealed record CreateWorkingCalendarCommand(
     IReadOnlyList<WorkingCalendarWindow?>? BreakWindows = null,
     IReadOnlyList<WorkingCalendarException?>? Exceptions = null,
     IReadOnlyList<string?>? Usages = null,
-    bool UseIsraeliHolidays = false);
+    bool UseIsraeliHolidays = false,
+    string? ScheduleKind = null,
+    ShiftRotationValues? Rotation = null);
 
 internal readonly record struct WorkingCalendarField<T>(bool IsSpecified, T Value)
 {
@@ -30,4 +32,5 @@ internal sealed record UpdateWorkingCalendarCommand(
     WorkingCalendarField<IReadOnlyList<WorkingCalendarWindow?>?> BreakWindows,
     WorkingCalendarField<IReadOnlyList<WorkingCalendarException?>?> Exceptions,
     WorkingCalendarField<IReadOnlyList<string?>?> Usages,
-    WorkingCalendarField<bool?> UseIsraeliHolidays);
+    WorkingCalendarField<bool?> UseIsraeliHolidays,
+    WorkingCalendarField<ShiftRotationValues?> Rotation = default);

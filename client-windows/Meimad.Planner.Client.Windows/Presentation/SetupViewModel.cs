@@ -48,6 +48,13 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private bool calendarUsageRegularWorker = true;
     private bool calendarUsageQaWorker = true;
     private bool calendarUseIsraeliHolidays;
+    private bool calendarIsRotation;
+    private string calendarShiftsText = DefaultRotationShifts;
+    private string calendarPatternText = string.Empty;
+    private string calendarPatternStartDate = string.Empty;
+    private string calendarCrewsText = string.Empty;
+    private RotationCrew? selectedResourceCrew;
+    private const string DefaultRotationShifts = "day | Day | 07:00-19:00\r\nnight | Night | 19:00-07:00";
     private bool worksSunday = true;
     private bool worksMonday = true;
     private bool worksTuesday = true;
@@ -506,7 +513,35 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public bool WorksFriday { get => worksFriday; set => SetField(ref worksFriday, value); }
     public bool WorksSaturday { get => worksSaturday; set => SetField(ref worksSaturday, value); }
     public string CalendarFormHeading => editingCalendarId is null ? "New calendar" : "Edit calendar";
-    public bool IsCalendarEditable => editingCalendarId is null || SelectedCalendar?.ScheduleKind == "weekly";
+    public bool IsCalendarEditable => editingCalendarId is null || SelectedCalendar?.ScheduleKind is "weekly" or "rotation";
+
+    /// <summary>A 12h shift rotation for employees instead of a weekly schedule; chosen when the Calendar is created.</summary>
+    public bool CalendarIsRotation
+    {
+        get => calendarIsRotation;
+        set
+        {
+            if (!SetField(ref calendarIsRotation, value)) return;
+            OnPropertyChanged(nameof(CalendarIsWeekly));
+            if (value) CalendarUsageMachine = false;
+        }
+    }
+
+    /// <summary>The weekly radio button; both buttons bind two-way so either click keeps the other in step.</summary>
+    public bool CalendarIsWeekly
+    {
+        get => !CalendarIsRotation;
+        set { if (value) CalendarIsRotation = false; }
+    }
+    public bool IsCalendarKindEditable => editingCalendarId is null;
+    public string CalendarShiftsText { get => calendarShiftsText; set => SetField(ref calendarShiftsText, value); }
+    public string CalendarPatternText { get => calendarPatternText; set => SetField(ref calendarPatternText, value); }
+    public string CalendarPatternStartDate { get => calendarPatternStartDate; set => SetField(ref calendarPatternStartDate, value); }
+    public string CalendarCrewsText { get => calendarCrewsText; set => SetField(ref calendarCrewsText, value); }
+
+    /// <summary>A rotation belongs to employees, so it is offered neither as the Setup nor as the Master Calendar.</summary>
+    public IReadOnlyList<WorkingCalendar> SetupCalendarChoices => SetupWorkerCalendars.Where(value => !value.IsRotation).ToArray();
+    public IReadOnlyList<WorkingCalendar> MasterCalendarChoices => WorkingCalendars.Where(value => !value.IsRotation).ToArray();
 
     public PlannerMachine? SelectedMachine
     {
@@ -816,7 +851,22 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         "qa_worker" => QaWorkerCalendars,
         _ => RegularWorkerCalendars
     };
-    public WorkingCalendar? SelectedResourceCalendar { get => selectedResourceCalendar; set => SetField(ref selectedResourceCalendar, value); }
+    public WorkingCalendar? SelectedResourceCalendar
+    {
+        get => selectedResourceCalendar;
+        set
+        {
+            if (!SetField(ref selectedResourceCalendar, value)) return;
+            OnPropertyChanged(nameof(ResourceCrews));
+            OnPropertyChanged(nameof(HasResourceCrews));
+            SelectedResourceCrew = ResourceCrews.FirstOrDefault(crew => crew.Code == SelectedResourceCrew?.Code);
+        }
+    }
+
+    /// <summary>The crews of the selected rotation Calendar; the employee follows one of them.</summary>
+    public IReadOnlyList<RotationCrew> ResourceCrews => SelectedResourceCalendar?.Rotation?.Crews ?? [];
+    public bool HasResourceCrews => ResourceCrews.Count > 0;
+    public RotationCrew? SelectedResourceCrew { get => selectedResourceCrew; set => SetField(ref selectedResourceCrew, value); }
     public string ResourcePhotoPath { get => resourcePhotoPath; set => SetField(ref resourcePhotoPath, value); }
     public string ResourceNotes { get => resourceNotes; set => SetField(ref resourceNotes, value); }
     public string ResourceEmail { get => resourceEmail; set => SetField(ref resourceEmail, value); }
@@ -994,6 +1044,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(RegularWorkerCalendars));
             OnPropertyChanged(nameof(QaWorkerCalendars));
             OnPropertyChanged(nameof(ResourceCalendars));
+            OnPropertyChanged(nameof(SetupCalendarChoices));
+            OnPropertyChanged(nameof(MasterCalendarChoices));
             Replace(Machines, await machinesTask);
             RebuildResourceMachineSkills([]);
             Replace(Downtimes, await downtimesTask);
@@ -1054,10 +1106,16 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         CalendarUsageRegularWorker = true;
         CalendarUsageQaWorker = true;
         CalendarUseIsraeliHolidays = false;
+        CalendarIsRotation = false;
+        CalendarShiftsText = DefaultRotationShifts;
+        CalendarPatternText = string.Empty;
+        CalendarPatternStartDate = string.Empty;
+        CalendarCrewsText = string.Empty;
         SetWorkdays(["sunday", "monday", "tuesday", "wednesday", "thursday"]);
         OnPropertyChanged(nameof(CalendarFormHeading));
         OnPropertyChanged(nameof(IsCalendarEditable));
-        StatusMessage = "Enter the recurring weekly calendar.";
+        OnPropertyChanged(nameof(IsCalendarKindEditable));
+        StatusMessage = "Enter the recurring weekly calendar, or choose a 12h shift rotation for employees.";
         RaiseCommandStates();
         return Task.CompletedTask;
     }
@@ -1065,6 +1123,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     internal async Task SaveCalendarAsync()
     {
         if (!CanSaveCalendar()) return;
+        if (CalendarIsRotation)
+        {
+            await SaveRotationCalendarAsync();
+            return;
+        }
         var workdays = SelectedWorkdays();
         if (string.IsNullOrWhiteSpace(CalendarName) || workdays.Count == 0)
         {
@@ -2063,7 +2126,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             NullIfBlank(ResourceNotes), NullIfBlank(ResourceEmail), ResourceIsActive, ResourceRespectMasterCalendar,
             double.Parse(ResourceToolLoadSecondsPerTool, CultureInfo.InvariantCulture),
             string.IsNullOrWhiteSpace(ResourceFixtureAssemblySeconds) ? null : double.Parse(ResourceFixtureAssemblySeconds, CultureInfo.InvariantCulture),
-            double.Parse(ResourceFirstPartRunningSpeedPercent, CultureInfo.InvariantCulture));
+            double.Parse(ResourceFirstPartRunningSpeedPercent, CultureInfo.InvariantCulture),
+            HasResourceCrews ? SelectedResourceCrew?.Code : null);
         var succeeded = false;
         IsBusy = true;
         try
@@ -2071,7 +2135,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             if (savedId is null)
             {
                 savedId = (await apiClient!.CreateResourceAsync(
-                    new ResourceCreate(update.EmployeeNumber, update.FirstName, update.LastName, update.Role, update.Skills, update.AssignedCalendarId, update.PhotoPath, update.Notes, update.Email, update.IsActive, update.RespectMasterCalendar),
+                    new ResourceCreate(update.EmployeeNumber, update.FirstName, update.LastName, update.Role, update.Skills, update.AssignedCalendarId, update.PhotoPath, update.Notes, update.Email, update.IsActive, update.RespectMasterCalendar, ShiftCrewCode: update.ShiftCrewCode),
                     clientId, editGeneration)).ResourceId;
             }
             else
@@ -2418,8 +2482,147 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         CalendarUsageQaWorker = usages.Contains("qa_worker");
         CalendarUseIsraeliHolidays = value.UseIsraeliHolidays;
         SetWorkdays(value.Workdays);
+        CalendarIsRotation = value.IsRotation;
+        CalendarShiftsText = value.Rotation is null
+            ? DefaultRotationShifts
+            : string.Join(Environment.NewLine, value.Rotation.Shifts.Select(FormatRotationShift));
+        CalendarPatternText = string.Join(' ', (value.Rotation?.Pattern ?? []).Select(code => code == "off" ? "-" : code));
+        CalendarPatternStartDate = value.Rotation?.AnchorDate ?? string.Empty;
+        CalendarCrewsText = string.Join(Environment.NewLine,
+            (value.Rotation?.Crews ?? []).Select(crew => $"{crew.Code} | {crew.Name} | {crew.OffsetDays.ToString(CultureInfo.InvariantCulture)}"));
         OnPropertyChanged(nameof(CalendarFormHeading));
         OnPropertyChanged(nameof(IsCalendarEditable));
+        OnPropertyChanged(nameof(IsCalendarKindEditable));
+    }
+
+    private async Task SaveRotationCalendarAsync()
+    {
+        if (string.IsNullOrWhiteSpace(CalendarName))
+        {
+            StatusMessage = "Calendar name is required.";
+            return;
+        }
+
+        ShiftRotation rotation;
+        IReadOnlyList<WorkingCalendarException> exceptions;
+        try
+        {
+            rotation = ParseRotation(CalendarShiftsText, CalendarPatternText, CalendarPatternStartDate, CalendarCrewsText);
+            exceptions = ParseCalendarExceptions();
+        }
+        catch (FormatException exception)
+        {
+            StatusMessage = exception.Message;
+            return;
+        }
+        var usages = SelectedCalendarUsages();
+        if (usages.Count == 0)
+        {
+            StatusMessage = "Select at least one worker usage.";
+            return;
+        }
+
+        var savedId = editingCalendarId;
+        var succeeded = false;
+        IsBusy = true;
+        try
+        {
+            if (savedId is null)
+            {
+                var created = await apiClient!.CreateWorkingCalendarAsync(
+                    new WorkingCalendarCreate(CalendarName, CalendarTimeZoneId, [], null, null, null, null,
+                        exceptions, usages, CalendarUseIsraeliHolidays, "rotation", rotation),
+                    clientId, editGeneration);
+                savedId = created.WorkingCalendarId;
+            }
+            else
+            {
+                await apiClient!.UpdateWorkingCalendarAsync(
+                    savedId,
+                    new WorkingCalendarUpdate(CalendarName, CalendarTimeZoneId, [], null, null, null, null,
+                        exceptions, usages, CalendarUseIsraeliHolidays, rotation),
+                    CalendarEntityTag(SelectedCalendar!), clientId, editGeneration);
+            }
+            succeeded = true;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        if (succeeded)
+        {
+            SelectedCalendar = null;
+            await RefreshAsync();
+            SelectedCalendar = FindCalendar(savedId);
+            StatusMessage = "Shift rotation saved by the Server.";
+            ConfigurationChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>
+    /// Reads the rotation form. Shifts: <c>code | name | HH:mm-HH:mm | breaks</c> per line. Pattern:
+    /// shift codes separated by spaces, with <c>-</c> for a day off; empty lets the Shift Roster decide.
+    /// Crews: <c>code | name | offset days</c> per line. The Server validates the meaning.
+    /// </summary>
+    internal static ShiftRotation ParseRotation(string shiftsText, string patternText, string startDate, string crewsText)
+    {
+        var shifts = new List<RotationShift>();
+        foreach (var line in Lines(shiftsText))
+        {
+            var parts = line.Split('|', StringSplitOptions.TrimEntries);
+            if (parts.Length is < 3 or > 4 || parts[0].Length == 0)
+                throw new FormatException($"Write each shift as code | name | HH:mm-HH:mm | breaks: '{line}'.");
+            WorkingCalendarWindow window;
+            IReadOnlyList<WorkingCalendarWindow> breaks;
+            try
+            {
+                window = ParseCalendarWindow(parts[2]);
+                breaks = parts.Length == 4 && parts[3] is not ("" or "-")
+                    ? parts[3].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(ParseCalendarWindow).ToArray()
+                    : [];
+            }
+            catch (FormatException)
+            {
+                throw new FormatException($"Use HH:mm-HH:mm shift times and breaks: '{line}'.");
+            }
+            shifts.Add(new RotationShift(parts[0], parts[1].Length == 0 ? parts[0] : parts[1], window.StartsAtLocal, window.EndsAtLocal, breaks));
+        }
+        if (shifts.Count == 0) throw new FormatException("Define at least one shift, for example: day | Day | 07:00-19:00.");
+
+        var pattern = patternText
+            .Split([' ', ',', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(code => code == "-" ? "off" : code)
+            .ToArray();
+        var anchor = string.IsNullOrWhiteSpace(startDate) ? null : startDate.Trim();
+        if (anchor is not null && !DateOnly.TryParseExact(anchor, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+            throw new FormatException("Write the pattern start date as yyyy-MM-dd.");
+
+        var crews = new List<RotationCrew>();
+        foreach (var line in Lines(crewsText))
+        {
+            var parts = line.Split('|', StringSplitOptions.TrimEntries);
+            if (parts.Length != 3 || parts[0].Length == 0
+                || !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var offset))
+                throw new FormatException($"Write each crew as code | name | offset days: '{line}'.");
+            crews.Add(new RotationCrew(parts[0], parts[1].Length == 0 ? parts[0] : parts[1], offset));
+        }
+        return new ShiftRotation(anchor, shifts, pattern, crews);
+
+        static IEnumerable<string> Lines(string text) =>
+            text.Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    private static string FormatRotationShift(RotationShift shift)
+    {
+        var breaks = shift.BreakWindows is { Count: > 0 }
+            ? " | " + string.Join(',', shift.BreakWindows.Select(window => $"{window.StartsAtLocal}-{window.EndsAtLocal}"))
+            : string.Empty;
+        return $"{shift.Code} | {shift.Name} | {shift.StartsAtLocal}-{shift.EndsAtLocal}{breaks}";
     }
 
     private void PopulateMachineForm(PlannerMachine value)
@@ -2574,6 +2777,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         ResourceRole = value.Role;
         RebuildResourceMachineSkills(value.Skills);
         SelectedResourceCalendar = FindCalendar(value.AssignedCalendarId);
+        SelectedResourceCrew = ResourceCrews.FirstOrDefault(crew => string.Equals(crew.Code, value.ShiftCrewCode, StringComparison.OrdinalIgnoreCase));
         ResourcePhotoPath = value.PhotoPath ?? string.Empty;
         ResourceNotes = value.Notes ?? string.Empty;
         ResourceEmail = value.Email ?? string.Empty;

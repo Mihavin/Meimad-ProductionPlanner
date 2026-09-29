@@ -12,16 +12,16 @@ internal sealed record CreateEmployeeResourceRequest(
     IReadOnlyList<string?>? Skills, string? AssignedCalendarId, string? PhotoPath, string? Notes,
     string? Email, bool IsActive, bool RespectMasterCalendar = true,
     double ToolLoadSecondsPerTool = 60, double? FixtureAssemblySeconds = null,
-    double FirstPartRunningSpeedPercent = 66.6666666667)
-{ internal CreateEmployeeResourceCommand ToCommand() => new(EmployeeNumber, FirstName, LastName, Role, Skills, AssignedCalendarId, PhotoPath, Notes, Email, IsActive, RespectMasterCalendar, ToolLoadSecondsPerTool, FixtureAssemblySeconds, FirstPartRunningSpeedPercent); }
+    double FirstPartRunningSpeedPercent = 66.6666666667, string? ShiftCrewCode = null)
+{ internal CreateEmployeeResourceCommand ToCommand() => new(EmployeeNumber, FirstName, LastName, Role, Skills, AssignedCalendarId, PhotoPath, Notes, Email, IsActive, RespectMasterCalendar, ToolLoadSecondsPerTool, FixtureAssemblySeconds, FirstPartRunningSpeedPercent, ShiftCrewCode); }
 
 internal sealed class PatchEmployeeResourceRequest
 {
     [JsonExtensionData] public Dictionary<string, JsonElement> Fields { get; init; } = new(StringComparer.Ordinal);
     internal UpdateEmployeeResourceCommand ToCommand()
     {
-        var reader = new AdministrativePatchReader(Fields, new HashSet<string>(["employeeNumber","firstName","lastName","role","skills","assignedCalendarId","photoPath","notes","email","isActive","respectMasterCalendar","toolLoadSecondsPerTool","fixtureAssemblySeconds","firstPartRunningSpeedPercent"], StringComparer.Ordinal));
-        var result = new UpdateEmployeeResourceCommand(reader.String("employeeNumber"), reader.String("firstName"), reader.String("lastName"), reader.String("role"), reader.StringArray("skills"), reader.String("assignedCalendarId"), reader.String("photoPath"), reader.String("notes"), reader.String("email"), reader.Boolean("isActive"), reader.Boolean("respectMasterCalendar"), reader.Number("toolLoadSecondsPerTool"), reader.Number("fixtureAssemblySeconds"), reader.Number("firstPartRunningSpeedPercent"));
+        var reader = new AdministrativePatchReader(Fields, new HashSet<string>(["employeeNumber","firstName","lastName","role","skills","assignedCalendarId","photoPath","notes","email","isActive","respectMasterCalendar","toolLoadSecondsPerTool","fixtureAssemblySeconds","firstPartRunningSpeedPercent","shiftCrewCode"], StringComparer.Ordinal));
+        var result = new UpdateEmployeeResourceCommand(reader.String("employeeNumber"), reader.String("firstName"), reader.String("lastName"), reader.String("role"), reader.StringArray("skills"), reader.String("assignedCalendarId"), reader.String("photoPath"), reader.String("notes"), reader.String("email"), reader.Boolean("isActive"), reader.Boolean("respectMasterCalendar"), reader.Number("toolLoadSecondsPerTool"), reader.Number("fixtureAssemblySeconds"), reader.Number("firstPartRunningSpeedPercent"), reader.String("shiftCrewCode"));
         reader.ThrowIfInvalid(); return result;
     }
 }
@@ -62,8 +62,9 @@ internal sealed record EmployeeResourceResponse(
     string ResourceId, string EmployeeNumber, string Name, string FirstName, string LastName, string Role, IReadOnlyList<string> Skills,
     string AssignedCalendarId, string? PhotoPath, string? Notes, string? Email, bool IsActive,
     int Version, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, bool RespectMasterCalendar,
-    double ToolLoadSecondsPerTool, double? FixtureAssemblySeconds, double FirstPartRunningSpeedPercent)
-{ internal static EmployeeResourceResponse FromDomain(EmployeeResource value) => new(value.ResourceId,value.EmployeeNumber,value.Name,value.FirstName,value.LastName,value.ResourceType,value.Skills,value.AssignedCalendarId,value.PhotoPath,value.Notes,value.Email,value.IsActive,value.Version,value.CreatedAt,value.UpdatedAt,value.RespectMasterCalendar,value.ToolLoadSecondsPerTool,value.FixtureAssemblySeconds,value.FirstPartRunningSpeedPercent); }
+    double ToolLoadSecondsPerTool, double? FixtureAssemblySeconds, double FirstPartRunningSpeedPercent,
+    string? ShiftCrewCode)
+{ internal static EmployeeResourceResponse FromDomain(EmployeeResource value) => new(value.ResourceId,value.EmployeeNumber,value.Name,value.FirstName,value.LastName,value.ResourceType,value.Skills,value.AssignedCalendarId,value.PhotoPath,value.Notes,value.Email,value.IsActive,value.Version,value.CreatedAt,value.UpdatedAt,value.RespectMasterCalendar,value.ToolLoadSecondsPerTool,value.FixtureAssemblySeconds,value.FirstPartRunningSpeedPercent,value.ShiftCrewCode); }
 internal sealed record EmployeeResourceListResponse(IReadOnlyList<EmployeeResourceResponse> Items, string? NextCursor);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

@@ -1,8 +1,10 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Machines;
 using Meimad.Planner.Server.Application.Reports;
+using Meimad.Planner.Server.Application.ShiftRoster;
 using Meimad.Planner.Server.Application.WorkingCalendars;
 using Meimad.Planner.Server.Domain.AdministrativeSetup;
+using Meimad.Planner.Server.Domain.WorkingCalendars;
 
 namespace Meimad.Planner.Server.Application.AdministrativeSetup;
 
@@ -14,9 +16,10 @@ internal sealed class AdministrativeSetupService
     private readonly IIsraeliHolidaySource holidaySource;
     private readonly TimeProvider timeProvider;
     private readonly ReportEmailSmtp reportEmailSmtp;
+    private readonly IShiftRosterRepository shiftRoster;
 
-    public AdministrativeSetupService(IAdministrativeSetupRepository repository, IWorkingCalendarRepository workingCalendars, IMachineRepository machines, IIsraeliHolidaySource holidaySource, TimeProvider timeProvider, ReportEmailSmtp reportEmailSmtp)
-    { this.repository = repository; this.workingCalendars = workingCalendars; this.machines = machines; this.holidaySource = holidaySource; this.timeProvider = timeProvider; this.reportEmailSmtp = reportEmailSmtp; }
+    public AdministrativeSetupService(IAdministrativeSetupRepository repository, IWorkingCalendarRepository workingCalendars, IMachineRepository machines, IIsraeliHolidaySource holidaySource, TimeProvider timeProvider, ReportEmailSmtp reportEmailSmtp, IShiftRosterRepository shiftRoster)
+    { this.repository = repository; this.workingCalendars = workingCalendars; this.machines = machines; this.holidaySource = holidaySource; this.timeProvider = timeProvider; this.reportEmailSmtp = reportEmailSmtp; this.shiftRoster = shiftRoster; }
 
     internal Task<IReadOnlyList<EmployeeResource>> ListResourcesAsync(CancellationToken token = default) => repository.ListResourcesAsync(token);
     internal async Task<IReadOnlyList<EmployeeResource>> ListAvailableResourcesAsync(CancellationToken token = default) =>
@@ -27,10 +30,11 @@ internal sealed class AdministrativeSetupService
         var values = AdministrativeSetupValidator.Validate(new EmployeeResourceValues(
             command.EmployeeNumber, command.FirstName, command.LastName, command.ResourceType, command.Skills,
             command.AssignedCalendarId, command.PhotoPath, command.Notes, command.Email, command.IsActive, command.ToolLoadSecondsPerTool, command.FixtureAssemblySeconds, command.FirstPartRunningSpeedPercent));
-        await EnsureAssignedCalendarAsync(values.AssignedCalendarId!, values.ResourceType!, token);
+        var calendar = await EnsureAssignedCalendarAsync(values.AssignedCalendarId!, values.ResourceType!, token);
+        var crew = ValidateShiftCrew(calendar, command.ShiftCrewCode);
         await EnsureMachineSkillsAsync(values.Skills!, token);
         var now = timeProvider.GetUtcNow();
-        return await repository.CreateResourceAsync(new(Guid.NewGuid().ToString("N"), values.EmployeeNumber!, values.Name, values.ResourceType!, values.Email, values.FirstName!, values.LastName!, values.Skills!, values.AssignedCalendarId!, values.PhotoPath, values.Notes, values.IsActive, 1, now, now, command.RespectMasterCalendar, values.ToolLoadSecondsPerTool, values.FixtureAssemblySeconds, values.FirstPartRunningSpeedPercent), authority, token);
+        return await repository.CreateResourceAsync(new(Guid.NewGuid().ToString("N"), values.EmployeeNumber!, values.Name, values.ResourceType!, values.Email, values.FirstName!, values.LastName!, values.Skills!, values.AssignedCalendarId!, values.PhotoPath, values.Notes, values.IsActive, 1, now, now, command.RespectMasterCalendar, values.ToolLoadSecondsPerTool, values.FixtureAssemblySeconds, values.FirstPartRunningSpeedPercent, crew), authority, token);
     }
     internal async Task<EmployeeResource> UpdateResourceAsync(string id, int expectedVersion, UpdateEmployeeResourceCommand command, EditAuthority authority, CancellationToken token = default)
     {
@@ -44,9 +48,12 @@ internal sealed class AdministrativeSetupService
             Select(command.ToolLoadSecondsPerTool, current.ToolLoadSecondsPerTool) ?? 60,
             Select(command.FixtureAssemblySeconds, current.FixtureAssemblySeconds),
             Select(command.FirstPartRunningSpeedPercent, current.FirstPartRunningSpeedPercent) ?? 66.6666666667));
-        await EnsureAssignedCalendarAsync(values.AssignedCalendarId!, values.ResourceType!, token);
+        var calendar = await EnsureAssignedCalendarAsync(values.AssignedCalendarId!, values.ResourceType!, token);
+        var crew = ValidateShiftCrew(calendar, Select(command.ShiftCrewCode, current.ShiftCrewCode));
+        if (values.AssignedCalendarId != current.AssignedCalendarId)
+            await EnsureRosterFitsCalendarAsync(current, calendar, token);
         if (command.Skills.IsSpecified) await EnsureMachineSkillsAsync(values.Skills!, token);
-        var candidate = current with { EmployeeNumber = values.EmployeeNumber!, Name = values.Name, ResourceType = values.ResourceType!, FirstName = values.FirstName!, LastName = values.LastName!, Skills = values.Skills!, AssignedCalendarId = values.AssignedCalendarId!, PhotoPath = values.PhotoPath, Notes = values.Notes, Email = values.Email, IsActive = values.IsActive, RespectMasterCalendar = Select(command.RespectMasterCalendar, current.RespectMasterCalendar) ?? true, ToolLoadSecondsPerTool = values.ToolLoadSecondsPerTool, FixtureAssemblySeconds = values.FixtureAssemblySeconds, FirstPartRunningSpeedPercent = values.FirstPartRunningSpeedPercent, Version = expectedVersion + 1, UpdatedAt = timeProvider.GetUtcNow() };
+        var candidate = current with { ShiftCrewCode = crew, EmployeeNumber = values.EmployeeNumber!, Name = values.Name, ResourceType = values.ResourceType!, FirstName = values.FirstName!, LastName = values.LastName!, Skills = values.Skills!, AssignedCalendarId = values.AssignedCalendarId!, PhotoPath = values.PhotoPath, Notes = values.Notes, Email = values.Email, IsActive = values.IsActive, RespectMasterCalendar = Select(command.RespectMasterCalendar, current.RespectMasterCalendar) ?? true, ToolLoadSecondsPerTool = values.ToolLoadSecondsPerTool, FixtureAssemblySeconds = values.FixtureAssemblySeconds, FirstPartRunningSpeedPercent = values.FirstPartRunningSpeedPercent, Version = expectedVersion + 1, UpdatedAt = timeProvider.GetUtcNow() };
         return await repository.UpdateResourceAsync(candidate, expectedVersion, authority, token) ?? throw new AdministrativeVersionConflictException("Employee Resource", id, expectedVersion);
     }
     internal Task<bool> DeleteResourceAsync(string id, EditAuthority authority, CancellationToken token = default) => repository.DeleteResourceAsync(id, authority, token);
@@ -133,9 +140,11 @@ internal sealed class AdministrativeSetupService
         var zone = TimeZoneInfo.FindSystemTimeZoneById(calendar.TimeZoneId);
         var localFrom = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(from, zone).Date);
         var localTo = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(to, zone).Date);
-        var exceptions = await repository.ListEmployeeExceptionsAsync(resourceId, localFrom, localTo, token);
+        // A shift that starts the evening before the horizon reaches into it.
+        var exceptions = await repository.ListEmployeeExceptionsAsync(resourceId, localFrom.AddDays(-1), localTo, token);
         var holidays = calendar.UseIsraeliHolidays ? await repository.ListHolidaysAsync(token) : [];
-        return EmployeeAvailabilityCalculator.Calculate(resource, calendar, exceptions, holidays, from, to);
+        var roster = calendar.IsRotation ? await shiftRoster.ListAsync(localFrom.AddDays(-1), localTo.AddDays(1), resourceId, token) : [];
+        return EmployeeAvailabilityCalculator.Calculate(resource, calendar, exceptions, holidays, from, to, roster);
     }
 
     internal Task<IReadOnlyList<IsraeliHoliday>> ListHolidaysAsync(CancellationToken token = default) => repository.ListHolidaysAsync(token);
@@ -198,13 +207,42 @@ internal sealed class AdministrativeSetupService
 
     private static T Select<T>(AdminField<T> field, T current) => field.IsSpecified ? field.Value : current;
 
-    private async Task EnsureAssignedCalendarAsync(string calendarId, string role, CancellationToken token)
+    private async Task<WorkingCalendar> EnsureAssignedCalendarAsync(string calendarId, string role, CancellationToken token)
     {
         var calendar = await workingCalendars.GetByIdAsync(calendarId, token)
             ?? throw new EmployeeAssignedCalendarNotFoundException(calendarId);
         var requiredUsage = EmployeeResourceRole.CalendarUsage(role);
         if (calendar.Usages is not null && !calendar.Usages.Contains(requiredUsage, StringComparer.OrdinalIgnoreCase))
             throw new EmployeeCalendarUsageException(calendarId, role);
+        return calendar;
+    }
+
+    /// <summary>An employee on a rotation with crews follows one of them; every other employee has no crew.</summary>
+    private static string? ValidateShiftCrew(WorkingCalendar calendar, string? crewCode)
+    {
+        var code = string.IsNullOrWhiteSpace(crewCode) ? null : crewCode.Trim();
+        var crews = calendar.Rotation?.Crews ?? [];
+        if (crews.Count == 0)
+        {
+            if (code is null) return null;
+            throw new AdministrativeSetupValidationException([new("shiftCrewCode", "crew_not_used",
+                $"Calendar '{calendar.Name}' has no crews, so the employee cannot follow crew '{code}'.")]);
+        }
+        var crew = code is null ? null : crews.FirstOrDefault(value => string.Equals(value.Code, code, StringComparison.OrdinalIgnoreCase));
+        return crew?.Code ?? throw new AdministrativeSetupValidationException([new("shiftCrewCode", code is null ? "required" : "unknown_crew",
+            $"Choose which crew of Calendar '{calendar.Name}' the employee follows: {string.Join(", ", crews.Select(value => value.Code))}.")]);
+    }
+
+    /// <summary>The employee's Shift Roster days from yesterday on must name shifts of the new Calendar.</summary>
+    private async Task EnsureRosterFitsCalendarAsync(EmployeeResource employee, WorkingCalendar calendar, CancellationToken token)
+    {
+        var from = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime).AddDays(-1);
+        var entries = await shiftRoster.ListAsync(from, DateOnly.MaxValue, employee.ResourceId, token);
+        var known = calendar.Rotation?.Shifts.Select(shift => shift.Code).Append(RotationShiftCode.Off).ToHashSet(StringComparer.Ordinal);
+        var unfit = entries.FirstOrDefault(entry => known is null || !known.Contains(entry.ShiftCode));
+        if (unfit is not null)
+            throw new AdministrativeSetupValidationException([new("assignedCalendarId", "roster_does_not_fit",
+                $"{employee.Name} has Shift Roster days from {unfit.Date:yyyy-MM-dd} that Calendar '{calendar.Name}' cannot keep. Clear those roster days first, or choose a rotation Calendar with the same shifts.")]);
     }
 }
 

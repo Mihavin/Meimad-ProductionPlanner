@@ -704,11 +704,17 @@ internal sealed record WorkingCalendar(
     IReadOnlyList<WorkingCalendarWindow>? BreakWindows = null,
     IReadOnlyList<WorkingCalendarException>? Exceptions = null,
     IReadOnlyList<string>? Usages = null,
-    bool UseIsraeliHolidays = false)
+    bool UseIsraeliHolidays = false,
+    ShiftRotation? Rotation = null)
 {
-    public string DisplayName => ScheduleKind == "weekly"
-        ? $"{Name} ({TimeZoneId}, {WindowSummary})"
-        : $"{Name} ({TimeZoneId}, explicit windows)";
+    public bool IsRotation => ScheduleKind == "rotation";
+
+    public string DisplayName => ScheduleKind switch
+    {
+        "weekly" => $"{Name} ({TimeZoneId}, {WindowSummary})",
+        "rotation" => $"{Name} ({TimeZoneId}, shift rotation: {string.Join(", ", (Rotation?.Shifts ?? []).Select(shift => $"{shift.Name} {shift.StartsAtLocal}-{shift.EndsAtLocal}"))})",
+        _ => $"{Name} ({TimeZoneId}, explicit windows)"
+    };
 
     private string WindowSummary => Windows is { Count: > 0 }
         ? string.Join(", ", Windows.Select(window => $"{window.StartsAtLocal}-{window.EndsAtLocal}"))
@@ -729,7 +735,9 @@ internal sealed record WorkingCalendarCreate(
     IReadOnlyList<WorkingCalendarWindow>? BreakWindows = null,
     IReadOnlyList<WorkingCalendarException>? Exceptions = null,
     IReadOnlyList<string>? Usages = null,
-    bool UseIsraeliHolidays = false);
+    bool UseIsraeliHolidays = false,
+    string? ScheduleKind = null,
+    ShiftRotation? Rotation = null);
 
 internal sealed record WorkingCalendarUpdate(
     string Name,
@@ -741,9 +749,75 @@ internal sealed record WorkingCalendarUpdate(
     IReadOnlyList<WorkingCalendarWindow>? BreakWindows = null,
     IReadOnlyList<WorkingCalendarException>? Exceptions = null,
     IReadOnlyList<string>? Usages = null,
-    bool UseIsraeliHolidays = false);
+    bool UseIsraeliHolidays = false,
+    ShiftRotation? Rotation = null);
 
 internal sealed record WorkingCalendarWindow(string StartsAtLocal, string EndsAtLocal);
+
+/// <summary>The shifts, repeating pattern and crews of a rotation Calendar; the Server owns their meaning.</summary>
+internal sealed record ShiftRotation(
+    string? AnchorDate,
+    IReadOnlyList<RotationShift> Shifts,
+    IReadOnlyList<string> Pattern,
+    IReadOnlyList<RotationCrew> Crews);
+
+internal sealed record RotationShift(
+    string Code,
+    string Name,
+    string StartsAtLocal,
+    string EndsAtLocal,
+    IReadOnlyList<WorkingCalendarWindow>? BreakWindows = null);
+
+internal sealed record RotationCrew(string Code, string Name, int OffsetDays)
+{
+    public string DisplayName => Name == Code ? Code : $"{Code} - {Name}";
+}
+
+internal sealed record ShiftRosterSnapshot(
+    string From,
+    string To,
+    IReadOnlyList<ShiftRosterCalendar> Calendars,
+    IReadOnlyList<ShiftRosterEmployee> Employees);
+
+internal sealed record ShiftRosterCalendar(
+    string WorkingCalendarId,
+    string Name,
+    string TimeZoneId,
+    IReadOnlyList<ShiftRosterShift> Shifts,
+    IReadOnlyList<RotationCrew> Crews,
+    int PatternLength);
+
+internal sealed record ShiftRosterShift(string Code, string Name, string StartsAtLocal, string EndsAtLocal);
+
+internal sealed record ShiftRosterEmployee(
+    string ResourceId,
+    string EmployeeNumber,
+    string Name,
+    string Role,
+    string WorkingCalendarId,
+    string? ShiftCrewCode,
+    IReadOnlyList<ShiftRosterDay> Days);
+
+internal sealed record ShiftRosterDay(
+    string Date,
+    string? PatternShiftCode,
+    string? RosterShiftCode,
+    string EffectiveShiftCode,
+    string? ClosureName,
+    string? AbsenceType,
+    bool UnknownShift,
+    int? EntryVersion,
+    string? Note,
+    string? UpdatedBy,
+    DateTimeOffset? UpdatedAt,
+    DateTimeOffset? StartsAt,
+    DateTimeOffset? EndsAt);
+
+/// <summary>One roster change: a shift code or <c>off</c>, or null to let the pattern apply again.</summary>
+internal sealed record ShiftRosterChange(
+    string ResourceId, string Date, string? ShiftCode, string? Note, int? ExpectedVersion);
+
+internal sealed record ShiftRosterSave(IReadOnlyList<ShiftRosterChange> Entries);
 
 internal sealed record WorkingCalendarException(
     string Date,
@@ -842,7 +916,8 @@ internal sealed record PlannerResource(
     bool RespectMasterCalendar = true,
     double ToolLoadSecondsPerTool = 60,
     double? FixtureAssemblySeconds = null,
-    double FirstPartRunningSpeedPercent = 66.6666666667)
+    double FirstPartRunningSpeedPercent = 66.6666666667,
+    string? ShiftCrewCode = null)
 {
     public string DisplayName => $"{EmployeeNumber} - {Name}";
 }
@@ -920,7 +995,8 @@ internal sealed record ResourceCreate(
     bool IsActive,
     bool RespectMasterCalendar = true,
     double ToolLoadSecondsPerTool = 60, double? FixtureAssemblySeconds = null,
-    double FirstPartRunningSpeedPercent = 66.6666666667);
+    double FirstPartRunningSpeedPercent = 66.6666666667,
+    string? ShiftCrewCode = null);
 
 internal sealed record ResourceUpdate(
     string EmployeeNumber,
@@ -935,7 +1011,8 @@ internal sealed record ResourceUpdate(
     bool IsActive,
     bool RespectMasterCalendar = true,
     double ToolLoadSecondsPerTool = 60, double? FixtureAssemblySeconds = null,
-    double FirstPartRunningSpeedPercent = 66.6666666667);
+    double FirstPartRunningSpeedPercent = 66.6666666667,
+    string? ShiftCrewCode = null);
 
 internal sealed record EmployeeCalendarException(
     string ExceptionId,

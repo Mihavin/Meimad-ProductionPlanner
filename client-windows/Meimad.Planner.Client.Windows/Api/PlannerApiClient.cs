@@ -587,6 +587,19 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<ShiftRosterSnapshot> GetShiftRosterAsync(
+        DateOnly from,
+        DateOnly to,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task SaveShiftRosterAsync(
+        IReadOnlyList<ShiftRosterChange> changes,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<SetupCalendarSelection> GetSetupCalendarAsync(
         CancellationToken cancellationToken = default) =>
         Task.FromResult(new SetupCalendarSelection(null, null));
@@ -2818,6 +2831,31 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             clientId,
             editGeneration,
             cancellationToken);
+
+    public async Task<ShiftRosterSnapshot> GetShiftRosterAsync(
+        DateOnly from,
+        DateOnly to,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/shift-roster?from={from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}&to={to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}", cancellationToken);
+        return await ReadSuccessAsync<ShiftRosterSnapshot>(response, cancellationToken);
+    }
+
+    public async Task SaveShiftRosterAsync(
+        IReadOnlyList<ShiftRosterChange> changes,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, "api/v1/shift-roster", clientId);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(new ShiftRosterSave(changes));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await ReadSuccessAsync<JsonElement>(response, cancellationToken);
+    }
 
     public async Task<SetupCalendarSelection> GetSetupCalendarAsync(
         CancellationToken cancellationToken = default)

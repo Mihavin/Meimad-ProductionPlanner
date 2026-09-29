@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Domain.WorkingCalendars;
 namespace Meimad.Planner.Server.Application.Timeline;
 
 internal interface ITimelineSourceRepository
@@ -159,7 +160,10 @@ internal sealed record TimelineSourceResource(
     double? FixtureAssemblySeconds = null,
     double FirstPartRunningSpeedPercent = 66.6666666667,
     string? Name = null,
-    IReadOnlyList<string>? OperationalSkillIds = null);
+    IReadOnlyList<string>? OperationalSkillIds = null,
+    WorkingCalendar? Calendar = null,
+    string? ShiftCrewCode = null,
+    IReadOnlyList<ShiftRosterEntry>? Roster = null);
 
 internal sealed record TimelineSourceResourceException(
     DateOnly Date,

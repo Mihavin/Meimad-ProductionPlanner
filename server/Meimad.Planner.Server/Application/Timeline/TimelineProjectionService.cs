@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Meimad.Planner.Server.Domain.ResourcePlanning;
 using Meimad.Planner.Server.Domain.Timeline;
+using Meimad.Planner.Server.Domain.WorkingCalendars;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Application.EventLogging;
 using Meimad.Planner.Server.Application.Readiness;
@@ -249,10 +250,12 @@ internal sealed class TimelineProjectionService
                 source.Holidays);
         var resourceCalendars = source.Resources.Select(resource =>
         {
-            var windows = ApplyResourceExceptions(
-                ReadAvailability(resource.CalendarJson, resource.TimeZoneId, horizonStart, horizonEnd,
-                    $"Employee resource {resource.ResourceId} calendar", mappingConflicts, [], source.Holidays),
-                resource.TimeZoneId, resource.Exceptions, horizonStart, horizonEnd);
+            var windows = resource.Calendar?.ScheduleKind is WorkingCalendarScheduleKind.Weekly or WorkingCalendarScheduleKind.Rotation
+                ? EmployeeShiftWindows(resource, resource.Calendar, source.Holidays, horizonStart, horizonEnd, mappingConflicts)
+                : ApplyResourceExceptions(
+                    ReadAvailability(resource.CalendarJson, resource.TimeZoneId, horizonStart, horizonEnd,
+                        $"Employee resource {resource.ResourceId} calendar", mappingConflicts, [], source.Holidays),
+                    resource.TimeZoneId, resource.Exceptions, horizonStart, horizonEnd);
             if (resource.RespectMasterCalendar && masterAvailability is not null)
                 windows = IntersectAvailability(windows, masterAvailability);
             return new TimelineResourceCalendar(resource.ResourceId, ResourceRole(resource.Role), windows, resource.Skills);
@@ -1020,6 +1023,17 @@ internal sealed class TimelineProjectionService
                     document.UseIsraeliHolidays ? holidays : []);
             }
 
+            if (document?.Rotation is not null)
+            {
+                conflicts.Add(Conflict(
+                    "rotation_calendar_not_allowed",
+                    "blocking",
+                    $"{label} is a shift rotation Calendar, which only employees can follow. Choose a weekly Calendar.",
+                    [],
+                    machineIds));
+                return [];
+            }
+
             if (document is null)
             {
                 conflicts.Add(Conflict(
@@ -1049,6 +1063,56 @@ internal sealed class TimelineProjectionService
                 $"{label} contains invalid availability JSON.",
                 [],
                 machineIds));
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// An employee's working time from dated shifts: the weekly schedule or the shift rotation with
+    /// its Shift Roster, where an absence removes the whole shift that starts on its date.
+    /// </summary>
+    private static IReadOnlyList<TimelineWindow> EmployeeShiftWindows(
+        TimelineSourceResource resource,
+        WorkingCalendar calendar,
+        IReadOnlyList<TimelineSourceHoliday> holidays,
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd,
+        ICollection<TimelineProjectionConflict> conflicts)
+    {
+        var label = resource.Name ?? $"Employee resource {resource.ResourceId}";
+        if (calendar.Rotation is { Crews.Count: > 0 } && resource.ShiftCrewCode is null)
+            conflicts.Add(new TimelineProjectionConflict(
+                $"employee_shift_crew_missing:{resource.ResourceId}",
+                "employee_shift_crew_missing",
+                "warning",
+                $"{label} follows no crew of rotation Calendar '{calendar.Name}', so only Shift Roster days count as working time.",
+                [],
+                []));
+        try
+        {
+            return EmployeeShiftCalculator.Intervals(
+                    calendar,
+                    resource.ShiftCrewCode,
+                    resource.Roster ?? [],
+                    resource.Exceptions.Select(value => new ShiftAbsence(
+                        value.Date, value.IsFullDay, value.StartsAtLocal, value.EndsAtLocal)).ToArray(),
+                    holidays.Select(value => new ShiftHoliday(
+                        value.Date, value.Name, value.Status, value.StartsAtLocal, value.EndsAtLocal)).ToArray(),
+                    horizonStart,
+                    horizonEnd)
+                .Select(interval => new TimelineWindow(interval.StartsAt, interval.EndsAt))
+                .ToArray();
+        }
+        catch (Exception exception) when (exception is
+            InvalidOperationException or FormatException or ArgumentException
+            or TimeZoneNotFoundException or InvalidTimeZoneException)
+        {
+            conflicts.Add(Conflict(
+                "calendar_configuration_invalid",
+                "blocking",
+                $"{label} calendar '{calendar.Name}' contains an invalid schedule.",
+                [],
+                []));
             return [];
         }
     }
@@ -2772,7 +2836,8 @@ internal sealed class TimelineProjectionService
     private sealed record AvailabilityDocument(
         IReadOnlyList<AvailabilityWindow>? Availability,
         WeeklySchedule? WeeklySchedule,
-        bool UseIsraeliHolidays = false);
+        bool UseIsraeliHolidays = false,
+        JsonElement? Rotation = null);
 
     private sealed record AvailabilityWindow(DateTimeOffset StartsAt, DateTimeOffset EndsAt);
 

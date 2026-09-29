@@ -1,0 +1,109 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.ShiftRosterView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource CanvasBrush}">
+  <UserControl.Resources>
+    <!-- The colour follows the resulting shift; the text in the cell always names it as well. -->
+    <Style x:Key="RosterCell" TargetType="Border">
+      <Setter Property="BorderBrush" Value="#B0B7C3" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Margin" Value="2" />
+      <Setter Property="Padding" Value="4" />
+      <Setter Property="Background" Value="White" />
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding Kind}" Value="day"><Setter Property="Background" Value="#FFF4C7" /></DataTrigger>
+        <DataTrigger Binding="{Binding Kind}" Value="night"><Setter Property="Background" Value="#D9E2F5" /></DataTrigger>
+        <DataTrigger Binding="{Binding Kind}" Value="other"><Setter Property="Background" Value="#E3F1E4" /></DataTrigger>
+        <DataTrigger Binding="{Binding Kind}" Value="off"><Setter Property="Background" Value="#F3F4F6" /></DataTrigger>
+        <DataTrigger Binding="{Binding Kind}" Value="closed"><Setter Property="Background" Value="#E5E7EB" /></DataTrigger>
+        <DataTrigger Binding="{Binding Kind}" Value="absent"><Setter Property="Background" Value="#FBE3E1" /></DataTrigger>
+        <DataTrigger Binding="{Binding IsChanged}" Value="True">
+          <Setter Property="BorderBrush" Value="#1E88E5" />
+          <Setter Property="BorderThickness" Value="2" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+  </UserControl.Resources>
+  <Grid Margin="8">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+    <DockPanel Margin="0,0,0,8">
+      <StackPanel>
+        <TextBlock Text="Shift Roster" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock Text="Which 12h shift each employee on a shift rotation starts on each day. Pattern follows the employee's crew; any other choice is a roster entry that replaces the pattern for that day. The Timeline plans setup, QC and loading work with these shifts."
+                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+      </StackPanel>
+    </DockPanel>
+    <DockPanel Grid.Row="1" Margin="0,0,0,8">
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+        <Button Content="Repeat last week" Command="{Binding CopyPreviousWeekCommand}" Margin="0,0,8,0"
+                ToolTip="Set this week's days to last week's shifts. Nothing is saved until you press Save." />
+        <Button Content="Discard" Command="{Binding DiscardCommand}" Margin="0,0,8,0" ToolTip="Forget the unsaved changes and reload the roster" />
+        <Button Content="Save" Command="{Binding SaveCommand}" FontWeight="SemiBold"
+                ToolTip="Save the changed days. If someone changed one of them since you loaded the roster, nothing is saved and the roster reloads." />
+      </StackPanel>
+      <StackPanel Orientation="Horizontal">
+        <Button Content="◀ Previous week" Command="{Binding PreviousWeekCommand}" Margin="0,0,6,0" />
+        <Button Content="This week" Command="{Binding ThisWeekCommand}" Margin="0,0,6,0" />
+        <Button Content="Next week ▶" Command="{Binding NextWeekCommand}" Margin="0,0,6,0" />
+        <Button Content="Refresh" Command="{Binding RefreshCommand}" Margin="0,0,14,0" />
+        <TextBlock Text="{Binding WeekTitle}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+      </StackPanel>
+    </DockPanel>
+    <Grid Grid.Row="2" Margin="0,0,18,2">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="240" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Text="EMPLOYEE" FontWeight="Bold" VerticalAlignment="Bottom" Margin="4,0,0,2" />
+      <ItemsControl Grid.Column="1" ItemsSource="{Binding DayHeaders}">
+        <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Rows="1" Columns="7" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate><TextBlock Text="{Binding}" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,2" /></DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </Grid>
+    <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
+      <ItemsControl ItemsSource="{Binding Rows}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Border BorderBrush="#E5E7EB" BorderThickness="0,0,0,1" Padding="0,2">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="240" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Margin="4,0,8,0">
+                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Text="{Binding Detail}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+                <ItemsControl Grid.Column="1" ItemsSource="{Binding Cells}">
+                  <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Rows="1" Columns="7" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Border Style="{StaticResource RosterCell}" ToolTip="{Binding ToolTip}">
+                        <StackPanel>
+                          <TextBlock Text="{Binding ShiftText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                          <TextBlock Text="{Binding DetailText}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                          <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" DisplayMemberPath="Label"
+                                    Margin="0,3,0,0" FontSize="11"
+                                    IsEnabled="{Binding DataContext.CanEdit, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                        </StackPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+    <TextBlock Grid.Row="4" Text="{Binding Status}" Margin="0,8,0,0" TextWrapping="Wrap" />
+  </Grid>
+</UserControl>

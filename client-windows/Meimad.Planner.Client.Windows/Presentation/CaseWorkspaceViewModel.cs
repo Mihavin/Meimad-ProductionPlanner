@@ -2408,7 +2408,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             Replace(Operations, await operationsTask);
             RebuildOperationReferenceOptions(isEditingOperation ? SelectedOperation?.CaseOperationId : null);
             ApplyMachineTypeOptions(await machinesTask, await machineTypesTask);
-            Replace(WorkingCalendars, await calendarsTask);
+            // A shift rotation belongs to employees and cannot time an external delay.
+            Replace(WorkingCalendars, (await calendarsTask).Where(calendar => !calendar.IsRotation).ToArray());
             Replace(Orders, await ordersTask);
             Replace(DerivedOrders, await derivedOrdersTask);
             Replace(Batches, await batchesTask);

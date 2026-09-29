@@ -1380,3 +1380,40 @@ Open points:
 - `ManualWorkflowStatusApiTests`: the event chain, QC queue, board, finish closing the session, collected times, the DPRNT gate and switch, finish before start;
 - client `RealTimesAndManualWorkflowTests`;
 - migration version tests.
+
+## 12h shift rotation and Shift Roster (2026-09-29, schema v95)
+
+**Owner request:**
+> Need to improve the calendar to manage 12h shifts. The employee can work some days the night some days the day shift. Need to manage the Shift Employees rotation.
+
+**Owner decisions (2026-09-29):**
+- Rotation model: a repeating pattern that crews follow at an offset, plus per-date overrides per employee.
+- The factory has no fixed cycle today; shifts are decided week by week, so the weekly Shift Roster is the main tool and a rotation's pattern may stay empty.
+- Shift times: day 07:00–19:00, night 19:00–07:00.
+- An absence (vacation, sick day, ...) on a date removes the whole shift that starts on that date, including a night shift's hours after midnight.
+
+**Implemented (schema v95):**
+- Server:
+  - Working Calendar `scheduleKind` `rotation` beside `weekly`, with `rotation` = named shifts (an end earlier than the start ends the next morning; contained breaks), an optional repeating `pattern` of shift codes or `off` from `anchorDate`, and `crews` with `offsetDays`. The kind is fixed at creation. A rotation is an employee Calendar: it has no machine usage and cannot be the Setup or Israel Master Calendar. Its dated exceptions are closures only.
+  - `employee_resources.shift_crew_code`: an employee on a rotation with crews follows exactly one of them; other employees have none.
+  - `employee_shift_roster_entries`: one dated shift code or `off` per employee and date, with version, actor and time. `GET /api/v1/shift-roster?from&to` (at most 62 days) returns each rotation employee's pattern day, roster entry and resulting shift per date; `PUT /api/v1/shift-roster` saves a batch atomically with the `Plan machines` permission. Each change carries the version it was read at (null: no entry), and a stale change refuses the whole batch with `409 edit_conflict` naming who changed the day and when.
+  - `EmployeeShiftCalculator` expands weekly and rotation employee Calendars into shifts dated by their start. The Timeline, the auxiliary resource allocator and `GET /resources/{id}/availability` use it, so one rule applies everywhere; this also fixes the availability endpoint returning no time for an overnight Calendar.
+  - Guards: a crew an employee follows, or a shift the Shift Roster uses from yesterday on, cannot be removed from the rotation; an employee cannot move to a Calendar that cannot keep their roster days from yesterday on. A rotation used by a Machine, Workstation, External Resource or external delay yields the blocking Timeline conflict `rotation_calendar_not_allowed`; an employee on a crewed rotation without a crew yields the warning `employee_shift_crew_missing`.
+- Windows client:
+  - Setup → Calendars: **Calendar kind** (weekly schedule or 12h shift rotation) with shifts, pattern, pattern start date and crews as text lines, like the existing window and exception fields.
+  - Setup → Employees: **Shift crew** for employees on a crewed rotation.
+  - New **Shift Roster** tab: a Sunday-to-Saturday week of every rotation employee, with the pattern, a shift or Off per day, week navigation, **Repeat last week** and Save/Discard. The cell text names the shift, absence or closure; colour only repeats it.
+  - Rotation Calendars are not offered as Setup, Master, Workstation, External Resource or external-delay Calendars.
+
+**Decisions made while implementing (reversible):**
+- An explicit roster entry is applied as entered on a closure or holiday; closures and non-working/partial-working holidays change only pattern days.
+- A partial absence whose time is earlier than an overnight shift's start is in that shift's after-midnight part, as breaks already are.
+- A full-day absence on a date no longer removes the after-midnight hours of the previous evening's night shift. This changes existing weekly overnight employee Calendars, as decided above.
+- The roster uses the existing `Plan machines` permission, like downtimes, rather than a new permission.
+- Pattern day `i` for crew offset `o` is `((date − anchorDate) − o) mod patternLength`.
+
+**Tests:**
+- `EmployeeShiftCalculatorTests`: crew offsets, night shifts across midnight, roster override, roster-only rotation, full and partial absences on a night shift, shift breaks, closures and holidays, crewless employee, weekly overnight availability.
+- `ShiftRotationValidatorTests`, `ShiftRosterApiTests` (roster read/save/clear, stale-change conflict, permission, guards, employee-only use), `ShiftRotationMigrationTests`, migration version tests.
+- Client `ShiftRosterViewModelTests` (save with versions, repeat last week, viewer, Sunday week, rotation form parsing).
+- Not verified: the WPF main-window startup test times out against the live Server that requires sign-in, before and after this change, so the new tab's layout was not rendered by a test.

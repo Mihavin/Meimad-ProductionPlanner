@@ -28,7 +28,9 @@ internal sealed class WorkingCalendarService
             command.Windows,
             command.BreakWindows,
             command.Exceptions,
-            command.Usages));
+            command.Usages,
+            command.ScheduleKind,
+            command.Rotation));
         var now = timeProvider.GetUtcNow();
         return await repository.CreateAsync(new WorkingCalendar(
             Guid.NewGuid().ToString("N"),
@@ -41,11 +43,12 @@ internal sealed class WorkingCalendarService
             values.BreakWindows,
             values.Exceptions,
             values.Usages,
-            "weekly",
+            values.ScheduleKind,
             1,
             now,
             now,
-            command.UseIsraeliHolidays), editAuthority, cancellationToken);
+            command.UseIsraeliHolidays,
+            values.Rotation), editAuthority, cancellationToken);
     }
 
     internal Task<IReadOnlyList<WorkingCalendar>> ListAsync(
@@ -67,6 +70,8 @@ internal sealed class WorkingCalendarService
             ?? throw new WorkingCalendarNotFoundException(workingCalendarId);
         var windowsWerePatched = command.Windows.IsSpecified;
         var legacyShiftWasPatched = command.ShiftStartsAtLocal.IsSpecified || command.ShiftEndsAtLocal.IsSpecified;
+        // The kind is fixed at creation: employees, crews and roster entries depend on it.
+        var kind = current.IsRotation ? WorkingCalendarScheduleKind.Rotation : WorkingCalendarScheduleKind.Weekly;
         var values = WorkingCalendarValidator.ValidateAndNormalize(new WorkingCalendarValues(
             Select(command.Name, current.Name),
             Select(command.TimeZoneId, current.TimeZoneId),
@@ -76,7 +81,9 @@ internal sealed class WorkingCalendarService
             legacyShiftWasPatched ? null : Select(command.Windows, current.Windows.Cast<WorkingCalendarWindow?>().ToArray()),
             Select(command.BreakWindows, current.BreakWindows.Cast<WorkingCalendarWindow?>().ToArray()),
             Select(command.Exceptions, current.Exceptions.Cast<WorkingCalendarException?>().ToArray()),
-            Select(command.Usages, current.Usages.Cast<string?>().ToArray())));
+            Select(command.Usages, current.Usages.Cast<string?>().ToArray()),
+            kind,
+            Select(command.Rotation, current.Rotation is null ? null : ShiftRotationValues.From(current.Rotation))));
         var updated = current with
         {
             Name = values.Name,
@@ -89,7 +96,8 @@ internal sealed class WorkingCalendarService
             Exceptions = values.Exceptions,
             Usages = values.Usages,
             UseIsraeliHolidays = Select(command.UseIsraeliHolidays, current.UseIsraeliHolidays) ?? false,
-            ScheduleKind = "weekly",
+            ScheduleKind = values.ScheduleKind,
+            Rotation = values.Rotation,
             Version = expectedVersion + 1,
             UpdatedAt = timeProvider.GetUtcNow()
         };

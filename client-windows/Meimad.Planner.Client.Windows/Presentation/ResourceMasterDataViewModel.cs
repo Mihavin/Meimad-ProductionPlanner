@@ -143,7 +143,8 @@ internal sealed class ResourceMasterDataViewModel : INotifyPropertyChanged
             Replace(Workstations, await stations);
             Replace(ExternalResources, await external);
             Replace(Employees, await employees);
-            Replace(Calendars, await calendars);
+            // A shift rotation belongs to employees; Workstations and External Resources use weekly Calendars.
+            Replace(Calendars, (await calendars).Where(calendar => !calendar.IsRotation));
             SelectedType ??= WorkstationTypes.FirstOrDefault(value => value.IsActive);
             SelectedCalendar ??= Calendars.FirstOrDefault();
             SelectedExternalCalendar ??= Calendars.FirstOrDefault();

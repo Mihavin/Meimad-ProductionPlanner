@@ -43,6 +43,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         QcQueue = new QcQueueViewModel();
         MaterialOrders = new MaterialOrdersViewModel();
         ToolRequirements = new ToolRequirementsViewModel();
+        ShiftRoster = new ShiftRosterViewModel();
         NcCreatorQueue = new PreparationQueueViewModel(
             "PROGRAMMING_PENDING", "NC Creator — Programming Pending",
             "Assigned operations that do not yet have one current Machine-compatible NC release selection.");
@@ -148,6 +149,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public MaterialOrdersViewModel MaterialOrders { get; }
 
     public ToolRequirementsViewModel ToolRequirements { get; }
+
+    public ShiftRosterViewModel ShiftRoster { get; }
 
     public PreparationQueueViewModel NcCreatorQueue { get; }
 
@@ -599,6 +602,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         QcQueue.AttachSession(apiClient, ClientId, userId, For(PlannerPermissions.DecideQc));
         MaterialOrders.AttachSession(apiClient);
         ToolRequirements.AttachSession(apiClient);
+        ShiftRoster.AttachSession(apiClient, ClientId, signedIn?.Has(PlannerPermissions.PlanMachines) == true);
         UserAdministration.AttachSession(
             signedIn?.Has(PlannerPermissions.ManageUsers) == true ? apiClient : null, userId);
         AttachPreparationQueues(apiClient, userId);
