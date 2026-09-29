@@ -142,6 +142,13 @@ NC estimates are named **per program execution cycle**. Timing precedence is: pi
 
 For the Machine session, tool capacity is evaluated from the union of tools required by all enabled, incomplete programs. The same normalized tool identity is counted once only when its immutable geometry/holder requirements are compatible. Reused identifiers with conflicting geometry, offsets, or pocket requirements are conflicts, not deduplications. Two required tools claiming the same fixed magazine position also create a blocking conflict. The system reports identifiers, positions, required union capacity, and Machine capacity without modifying releases or the Machine.
 
+A newer local G-code version for the same Postprocessor within the run's process revision may replace the pinned release of a started one-operation run (owner decisions 2026-09-29, schema v90).
+- The trigger is the planner's "Refresh from Case".
+- The run gets `SETUP_RESTARTED`, its current Offset Loader is revoked, and its verification is superseded.
+- The next Production Package re-pins `production_gcode_release_id` (and the selected release) on the run program, the Batch Operation and the assignment.
+- The process revision, tool table, run structure and made quantities do not change.
+- A new process revision is not applied to a started run; it applies to runs that have not started.
+
 Offset confirmation belongs to the exact `(productionRunProgramId, machineId, manufacturingProgramRevisionId, gCodeReleaseId)` context. A later revision/release or Machine change makes an earlier confirmation `OUTDATED`; history is retained.
 
 Material readiness remains output-specific and comes only from verified receipts plus explicit reservations on each output's Production Batch. Run-level input cannot override it. Dependency readiness is also output-specific. Overall run readiness is ready only when every incomplete program and every required output is ready.

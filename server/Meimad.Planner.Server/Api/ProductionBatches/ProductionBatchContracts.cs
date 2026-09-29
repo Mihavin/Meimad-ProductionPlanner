@@ -10,7 +10,9 @@ internal sealed record WorkOrderRefreshResponse(
     int OperationsAdded,
     int OperationsUpdated,
     int OperationsRemoved,
-    IReadOnlyList<string> NumberConflicts);
+    IReadOnlyList<string> NumberConflicts,
+    IReadOnlyList<WorkOrderSetupRestart> SetupRestarts,
+    IReadOnlyList<WorkOrderSetupRestart> ProcessRevisionNotSwitched);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed record CreateProductionBatchRequest(

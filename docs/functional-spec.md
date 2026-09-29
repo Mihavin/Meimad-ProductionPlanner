@@ -542,6 +542,14 @@ The Windows client has a read-only Material Orders page listing every Kitaron ma
   - **Kept operations.** A started operation, and one an official package, a bench session or locked production history refers to, stays as it is.
   - **Released.** Releasing takes the Case's list one last time and then freezes it: no operation is added, removed or changed by Case edits. A Case Operation that a released Work Order holds cannot be deleted (409 `delete_blocked`).
   - **Refresh from Case (owner decision 2026-09-28).** A planner may reload a pending or released Work Order's operations from the Case on request, without returning it to pending: the same rules as a pending Work Order (not-started operations take the Case data and keep their Machine placement, missing Case Operations are added, operations whose Case Operation is gone leave unless they must stay); started work never changes, and a released Work Order stays released. Complete and cancelled Work Orders are refused (409 `work_order_closed`).
+  - **Newer G-code for running work (owner decisions 2026-09-29, schema v90).** Refresh from Case is also how a newer G-code release reaches work already running.
+    - A started operation whose production program has a newer local version for the same Postprocessor goes back to setup like a new one:
+      - the tablet shows it ready for setup, and the parts already made stay counted;
+      - its current Production Package is retired, and the Machine's loaded program is refused at its next verified start;
+      - readiness shows G-code outdated until a new Production Package pins the new release; setup verification (when enabled) and first-part QC follow as for a new run.
+    - The Windows client lists the affected operations and asks before refreshing.
+    - A new process revision is reported but not switched inside a running Production Run, whose process revision is immutable (AGENTS.md rule 27). It applies to operations that have not started.
+    - Operations produced by a combined multi-output Production Run are not restarted.
   - **Back to pending.** Going back to pending refreshes the list from the Case. A Work Order whose production has started (an operation started, or its status is no longer waiting) stays released (422 `work_order_started`).
   - **Numbers.** A pending Work Order that still holds a started operation under a number rejects a Case Operation with the same number (422 `batch_operation_number_in_use`).
 - **Material orders.** A batch is assigned the open Kitaron raw-material purchase lines of its work order's raw material (`TRootCard.RowMaterialID`), earliest due first; the batch list shows them. When Kitaron keeps no per-work-order material calculation, an assigned open purchase line makes the material state `on_order`.

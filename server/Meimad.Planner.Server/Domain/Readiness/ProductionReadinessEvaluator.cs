@@ -21,6 +21,8 @@ internal static class ProductionReadinessEvaluator
         var manual = string.Equals(context.ExecutionMode, "MANUAL", StringComparison.Ordinal);
         var effectiveRelease = ResolveGCode(
             context, manual, currentReleases, compatible, components);
+        if (context.ReplacedGCodeReleaseId is not null && !manual)
+            MarkSetupRestart(effectiveRelease, components);
 
         AddToolTable(context, components);
         AddCompatibility(context, manual, currentReleases, compatible, components);
@@ -118,7 +120,9 @@ internal static class ProductionReadinessEvaluator
             {
                 components.Add(Component(ReadinessComponentKeys.GCode, "G-code",
                     ReadinessStates.Outdated,
-                    "The selected G-code release does not belong to the active process revision.", true));
+                    context.ProductionPinned
+                        ? "A newer G-code release replaces the program in production. Refresh the Work Order from its Case to set the operation up again with it."
+                        : "The selected G-code release does not belong to the active process revision.", true));
                 return null;
             }
 
@@ -148,6 +152,22 @@ internal static class ProductionReadinessEvaluator
             ReadinessStates.Ready,
             $"One compatible current release is available: {compatible[0].PostprocessorName} r{compatible[0].PostSpecificRevision}."));
         return compatible[0];
+    }
+
+    /// <summary>
+    /// An operation sent back to setup for a newer release stays not ready until a new Production
+    /// Package pins that release; the new release is still the effective one the package takes.
+    /// </summary>
+    private static void MarkSetupRestart(ReadinessRelease? effectiveRelease, List<ReadinessComponent> components)
+    {
+        var index = components.FindIndex(component => component.Key == ReadinessComponentKeys.GCode);
+        if (index < 0) return;
+        var current = components[index];
+        components[index] = effectiveRelease is not null
+            ? Component(ReadinessComponentKeys.GCode, "G-code", ReadinessStates.Outdated,
+                $"The G-code in production was replaced by {effectiveRelease.PostprocessorName} r{effectiveRelease.PostSpecificRevision}. Create a new Production Package; the operation then goes through setup, verification and first-part QC again.",
+                true)
+            : current with { Message = "The G-code in production was replaced. " + current.Message, IsBlocking = true };
     }
 
     private static void AddToolTable(

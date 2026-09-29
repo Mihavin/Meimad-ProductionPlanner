@@ -42,6 +42,9 @@ internal interface IProductionBatchRepository
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
 
+    /// <summary>The started operations a refresh would send back to setup, or report; null when the Work Order does not exist.</summary>
+    Task<WorkOrderRefreshPreview?> PreviewRefreshFromCaseAsync(string batchId, CancellationToken cancellationToken);
+
     Task<IReadOnlyList<ProductionBatch>> ListByCaseAsync(
         string caseId,
         CancellationToken cancellationToken);

@@ -56,6 +56,13 @@ internal sealed record ToolPreparationReadinessFact(
     int UnmeasuredRequiredCount,
     DateTimeOffset SavedAt);
 
+/// <summary>
+/// The facts one Operation's readiness is evaluated from. <see cref="ReplacedGCodeReleaseId"/> is
+/// set while a started operation is back in setup for a newer G-code release (schema v90): it is
+/// evaluated like a new one until a new Production Package pins that release.
+/// <see cref="ProductionPinned"/> marks a started operation evaluated against the release pinned
+/// when it started.
+/// </summary>
 internal sealed record ProductionReadinessContext(
     string BatchOperationId,
     string? MachineAssignmentId,
@@ -71,7 +78,9 @@ internal sealed record ProductionReadinessContext(
     IReadOnlyList<ToolOffsetReadinessFact> ToolOffsetFacts,
     string MaterialStatus,
     string? MaterialComment,
-    ToolPreparationReadinessFact? ToolPreparation = null);
+    ToolPreparationReadinessFact? ToolPreparation = null,
+    string? ReplacedGCodeReleaseId = null,
+    bool ProductionPinned = false);
 
 internal sealed record ReadinessComponent(
     string Key,

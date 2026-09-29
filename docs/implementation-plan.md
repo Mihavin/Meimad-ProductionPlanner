@@ -1195,3 +1195,45 @@ Nothing is stored. Windows **Setup → Employees / Resources** now has inner tab
 **Open points:**
 - A Microsoft personal account (Outlook.com / Hotmail) no longer accepts password sign-in from programs. It would need OAuth, which is not implemented; Gmail App Passwords or a company relay work.
 - A backup restored on another machine needs the password entered again.
+
+## Newer G-code for running work (2026-09-29, schema v90)
+
+**Owner decisions (2026-09-29):** "The new Gcode file upload (release or local version change): Work Order - refresh from case > Readiness = Not ready (gcode outdated). The process switch to setup mode (if it was in production state), like a new one > create new production package, need to run verification if enabled, pass QC etc." Chosen:
+- the change reaches Work Orders on **Refresh from Case**;
+- made parts are **kept**;
+- a newer release for the **same postprocessor or a new process revision** counts;
+- the Machine's loaded program is **refused** at its next verified start.
+
+**Implemented:**
+- Migration v90 adds the workflow event `SETUP_RESTARTED` (the event table is rebuilt with its indexes and triggers re-created as they were) and `batch_operation_setup_restarts`.
+- `SqliteSetupRestart` finds the started operations of a Work Order whose production release has a newer local version, and applies the restart inside the on-request refresh:
+  - the `SETUP_RESTARTED` event, and revoking the current Offset Loader and superseding its verification sessions;
+  - retiring the current package (`NC_RELEASE_REPLACED`) and clearing the selected release;
+  - the restart row and an `operation_setup_restarted` event.
+- `GET /api/v1/batches/{id}/refresh-operations/preview` lists them first; the refresh response reports `setupRestarts` and `processRevisionNotSwitched`.
+- Readiness:
+  - an operation back in setup keeps its pinned process revision and tool table, and chooses its release again;
+  - G-code shows `OUTDATED` until a new package pins the new release;
+  - a started operation with a newer local version that has not been refreshed says to refresh the Work Order.
+- Package build accepts the restart state, and package activation re-pins the release and resolves the restart.
+- The tablet, preparation queue, E-Ink status and debug timeline map `SETUP_RESTARTED` to ready for setup.
+- The Windows client asks before a refresh sends running operations back to setup and reports what happened (he/ru).
+
+**Tests:**
+- `SetupRestartApiTests` covers the whole path:
+  - preview, refresh and restart facts, with made parts kept and the readiness message;
+  - the new package pinning the new release, and no second restart;
+  - a new process revision reported and not switched;
+  - finishing resolving an open restart.
+- `SetupRestartMigrationTests` checks that the v90 rebuild keeps events and triggers and admits the new type.
+- Client: `CaseWorkspaceViewModelTests.Refresh_from_case_asks_before_sending_running_operations_back_to_setup`.
+- The migration version tests move to 90.
+
+**Open decision (owner):** a **new process revision** for an operation already in production is not switched. AGENTS.md rule 27 and the database make a started Production Run's process revision immutable. Two options would need a decision:
+- end the run with its made parts and plan the remainder as a new Production Run;
+- or an explicit exception to rule 27.
+
+**Also not covered:**
+- Operations produced by combined multi-output runs.
+- The Timeline does not yet add a new setup phase for an operation back in setup.
+- A cycle that was running on the Machine at the moment of the refresh is not counted.

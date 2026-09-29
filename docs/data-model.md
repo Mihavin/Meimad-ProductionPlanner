@@ -718,6 +718,16 @@ Actors recorded on planning rows (`released_by`, `user_id`, `confirmed_by_user_i
 
 Planner sources: Work Orders linked through `kitaron_sync_links` (`production_batch`, `wo:<NUMBER>`), `batch_operations.actual_start/actual_end`, the first `QC_PASS` in `production_run_workflow_events` of a Production Run with an output for the operation at or after its start, `production_run_outputs.produced_quantity`, and `production_batches.planned_quantity`.
 
+## Setup restart for a newer G-code release (schema v90)
+
+- `production_run_workflow_events.event_type` admits `SETUP_RESTARTED`. The table is rebuilt with its columns, indexes and triggers unchanged.
+- `batch_operation_setup_restarts`: `id`, `batch_operation_id`, `production_run_id`, `machine_id`, `replaced_gcode_release_id`, `workflow_event_id` (the `SETUP_RESTARTED` event, unique), `invalidated_package_id`, `requested_at`, `requested_by`, and `resolved_at` / `resolution` / `resolved_package_id`.
+  - `resolution` is `NEW_PACKAGE`, `OPERATION_FINISHED` or `OPERATION_RESET`.
+  - At most one open restart per Batch Operation.
+  - Rows can only be resolved, once, and never deleted.
+  - A trigger resolves an open restart when the operation becomes `completed` or `not_started`.
+- `production_package_invalidations.reason` gains `NC_RELEASE_REPLACED`.
+
 ## Report email sign-in (schema v89)
 
 - `report_email_settings.smtp_user_name` (nullable, 1-320 characters) and `report_email_settings.smtp_password_protected` (nullable): the mailbox sign-in of report email (owner decision 2026-09-28).

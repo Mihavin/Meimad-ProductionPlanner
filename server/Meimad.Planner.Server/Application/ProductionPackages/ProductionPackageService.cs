@@ -342,8 +342,13 @@ internal sealed class ProductionPackageService(
             ? new[] { ReadinessComponentKeys.ToolTable, ReadinessComponentKeys.ToolCapacity, ReadinessComponentKeys.ToolOffsets }
             : new[] { ReadinessComponentKeys.GCode, ReadinessComponentKeys.MachinePostprocessorCompatibility,
                 ReadinessComponentKeys.ToolTable, ReadinessComponentKeys.ToolCapacity, ReadinessComponentKeys.ToolOffsets };
+        // An operation back in setup for a newer G-code release is not ready until this package pins
+        // the new release, so its G-code only has to resolve to a release the package can take.
+        var setupRestartResolved = context.ReadinessContext.ReplacedGCodeReleaseId is not null
+            && readiness.EffectiveGCodeReleaseId is not null;
         var missing = readiness.Components
             .Where(value => requiredKeys.Contains(value.Key, StringComparer.Ordinal)
+                && !(setupRestartResolved && value.Key == ReadinessComponentKeys.GCode)
                 && (value.IsBlocking || value.State is not (ReadinessStates.Ready or ReadinessStates.NotRequired)))
             .Select(value => $"{value.Label}: {value.Message}")
             .ToArray();

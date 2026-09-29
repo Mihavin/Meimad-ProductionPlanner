@@ -1079,6 +1079,7 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         CancellationToken cancellationToken)
     {
         SqliteWorkOrderRouteRefresh.Result result;
+        SqliteSetupRestart.Outcome restarts;
         await using (var connection = await database.OpenConnectionAsync(cancellationToken))
         await using (var transaction = connection.BeginTransaction(deferred: false))
         {
@@ -1101,14 +1102,42 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             }
             result = await SqliteWorkOrderRouteRefresh.RefreshOnRequestAsync(
                 connection, transaction, batchId, actor ?? "planner", now, cancellationToken);
+            // Started operations with a newer local G-code version go back to setup (schema v90).
+            restarts = await SqliteSetupRestart.ApplyAsync(
+                connection, transaction, batchId, actor ?? "planner", now, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
         var batch = await GetByIdAsync(batchId, cancellationToken);
         return batch is null
             ? null
             : (batch, new WorkOrderRefreshSummary(
-                result.OperationsAdded, result.OperationsUpdated, result.OperationsRemoved, result.NumberConflicts));
+                result.OperationsAdded, result.OperationsUpdated, result.OperationsRemoved, result.NumberConflicts,
+                restarts.Restarted.Select(SetupRestart).ToArray(),
+                restarts.ProcessRevisionNotSwitched.Select(SetupRestart).ToArray()));
     }
+
+    public async Task<WorkOrderRefreshPreview?> PreviewRefreshFromCaseAsync(
+        string batchId, CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: true);
+        if (!await ExistsAsync(
+                connection, transaction,
+                "SELECT EXISTS(SELECT 1 FROM production_batches WHERE id = $id);",
+                "$id", batchId, cancellationToken))
+        {
+            return null;
+        }
+        var candidates = await SqliteSetupRestart.FindAsync(connection, transaction, batchId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new WorkOrderRefreshPreview(
+            candidates.Where(candidate => !candidate.NewProcessRevision).Select(SetupRestart).ToArray(),
+            candidates.Where(candidate => candidate.NewProcessRevision).Select(SetupRestart).ToArray());
+    }
+
+    private static WorkOrderSetupRestart SetupRestart(SqliteSetupRestart.Candidate candidate) => new(
+        candidate.BatchOperationId, candidate.OperationNumber, candidate.MachineName,
+        candidate.ProductionRelease, candidate.NewerRelease, candidate.NewProcessRevision);
 
     private static BatchAllocation ReadAllocation(SqliteDataReader reader)
     {

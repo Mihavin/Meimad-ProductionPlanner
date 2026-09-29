@@ -349,6 +349,11 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                 ("$loaderId", offsetLoader.ReleaseId), ("$at", Format(package.CreatedAt)),
                 ("$by", package.CreatedBy));
         }
+        // An operation back in setup for a newer G-code release now runs the package's release.
+        if (package.GCodeReleaseId is not null)
+            await SqliteSetupRestart.PinNewPackageAsync(
+                connection, transaction, package.BatchOperationId, package.MachineAssignmentId,
+                package.ProductionPackageId, package.GCodeReleaseId, package.CreatedAt, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 

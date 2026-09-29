@@ -1522,7 +1522,31 @@ internal sealed record WorkOrderRefreshResult(
     int OperationsAdded,
     int OperationsUpdated,
     int OperationsRemoved,
-    IReadOnlyList<string> NumberConflicts);
+    IReadOnlyList<string> NumberConflicts,
+    IReadOnlyList<WorkOrderSetupRestartInfo>? SetupRestarts = null,
+    IReadOnlyList<WorkOrderSetupRestartInfo>? ProcessRevisionNotSwitched = null);
+
+/// <summary>
+/// A started operation whose production G-code has a newer release (schema v90): a newer local
+/// version sends it back to setup on "Refresh from Case"; a new process revision is only reported.
+/// </summary>
+internal sealed record WorkOrderSetupRestartInfo(
+    string BatchOperationId,
+    int OperationNumber,
+    string MachineName,
+    string ProductionRelease,
+    string? NewerRelease,
+    bool NewProcessRevision)
+{
+    public string Text => NewerRelease is null
+        ? $"OP{OperationNumber} ({MachineName})"
+        : $"OP{OperationNumber} ({MachineName}): {ProductionRelease} -> {NewerRelease}";
+}
+
+/// <summary>GET /api/v1/batches/{id}/refresh-operations/preview.</summary>
+internal sealed record WorkOrderRefreshPreview(
+    IReadOnlyList<WorkOrderSetupRestartInfo> SetupRestarts,
+    IReadOnlyList<WorkOrderSetupRestartInfo> ProcessRevisionNotSwitched);
 
 internal sealed record ProductionBatch(
     string BatchId,

@@ -64,7 +64,9 @@ internal static class SqliteProductionReadinessContextReader
                 offsetFacts.GetValueOrDefault(row.BatchOperationId) ?? [],
                 materialStatus,
                 materialComment,
-                row.MachineId is null ? null : preparations.GetValueOrDefault((row.BatchOperationId, row.MachineId)));
+                row.MachineId is null ? null : preparations.GetValueOrDefault((row.BatchOperationId, row.MachineId)),
+                row.ReplacedReleaseId,
+                row.ProductionPinned);
         }
 
         return result;
@@ -81,7 +83,9 @@ internal static class SqliteProductionReadinessContextReader
         string? ToolTableId,
         int? RequiredToolCount,
         string? SelectedReleaseId,
-        string BatchId);
+        string BatchId,
+        string? ReplacedReleaseId,
+        bool ProductionPinned);
 
     private static async Task<List<OperationRow>> ReadOperationRowsAsync(
         SqliteConnection connection,
@@ -110,11 +114,21 @@ internal static class SqliteProductionReadinessContextReader
                        CASE WHEN operation.status = 'not_started'
                             THEN active_tools.required_tool_count
                             ELSE pinned_tools.required_tool_count END,
-                       CASE WHEN operation.status = 'not_started'
+                       CASE WHEN operation.status = 'not_started' OR restart.id IS NOT NULL
                             THEN assignment.selected_gcode_release_id
                             ELSE operation.production_gcode_release_id END,
-                       operation.production_batch_id
+                       operation.production_batch_id,
+                       restart.replaced_gcode_release_id,
+                       CASE WHEN operation.status <> 'not_started' AND restart.id IS NULL
+                                 AND operation.production_gcode_release_id IS NOT NULL
+                            THEN 1 ELSE 0 END
                 FROM batch_operations operation
+                -- An operation back in setup for a newer local G-code version (schema v90) keeps
+                -- its process revision and tool table, and chooses its release again like one that
+                -- has not started, until a new Production Package pins the new release.
+                LEFT JOIN batch_operation_setup_restarts restart
+                  ON restart.batch_operation_id = operation.id
+                 AND restart.resolved_at IS NULL
                 LEFT JOIN machine_assignments assignment
                   ON assignment.batch_operation_id = operation.id
                  AND assignment.released_at IS NULL
@@ -134,7 +148,8 @@ internal static class SqliteProductionReadinessContextReader
                 rows.Add(new OperationRow(
                     reader.GetString(0), reader.GetString(1), String(reader, 2), String(reader, 3),
                     String(reader, 4), Int(reader, 5), String(reader, 6), String(reader, 7),
-                    Int(reader, 8), String(reader, 9), reader.GetString(10)));
+                    Int(reader, 8), String(reader, 9), reader.GetString(10),
+                    String(reader, 11), reader.GetInt64(12) == 1));
             }
         }
 

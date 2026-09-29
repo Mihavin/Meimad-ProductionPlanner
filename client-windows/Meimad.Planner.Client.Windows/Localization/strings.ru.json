@@ -4542,5 +4542,13 @@
   "Test email sent to {recipients}. The Server signed in to the mail server.": "Тестовое письмо отправлено: {recipients}. Сервер вошёл на почтовый сервер.",
   "Test email sent to {recipients} without signing in.": "Тестовое письмо отправлено: {recipients}, без входа.",
   "Save the sender address, SMTP host and SMTP port before sending a test email.": "Сохраните адрес отправителя, SMTP-сервер и порт SMTP перед отправкой тестового письма.",
-  "Port 465 (implicit TLS) is not supported. Use port 587 with Use SSL; the connection is then encrypted with STARTTLS.": "Порт 465 (неявный TLS) не поддерживается. Используйте порт 587 с Use SSL; соединение тогда шифруется через STARTTLS."
+  "Port 465 (implicit TLS) is not supported. Use port 587 with Use SSL; the connection is then encrypted with STARTTLS.": "Порт 465 (неявный TLS) не поддерживается. Используйте порт 587 с Use SSL; соединение тогда шифруется через STARTTLS.",
+  "Refreshing Work Order {batchNumber} from its Case sends these running operations back to setup with their newer G-code: {operations}. The parts already made stay counted. A new Production Package, setup, verification and first-part QC are needed before production continues, and with verification on the Machine refuses the loaded program at its next start. Continue?": "Обновление заказ-наряда {batchNumber} из изделия вернёт эти выполняемые операции на наладку с более новым G-кодом: {operations}. Уже изготовленные детали остаются учтёнными. Перед продолжением производства нужны новый производственный пакет, наладка, проверка и ОТК первой детали, а при включённой проверке станок отклонит загруженную программу при следующем запуске. Продолжить?",
+  "Refresh cancelled; nothing was changed.": "Обновление отменено; ничего не изменено.",
+  "Work Order {number} reloaded from the Case: {updated} updated, {added} added, {removed} removed.": "Заказ-наряд {number} перезагружен из изделия: обновлено {updated}, добавлено {added}, удалено {removed}.",
+  "Work Order {number} reloaded from the Case.": "Заказ-наряд {number} перезагружен из изделия.",
+  "Back to setup for newer G-code: {operations}. Create a new Production Package for each.": "Возвращены на наладку с более новым G-кодом: {operations}. Создайте новый производственный пакет для каждой.",
+  "A new process revision was released for {operations}; a running Production Run keeps its process revision, so it applies to operations that have not started.": "Выпущена новая ревизия процесса для {operations}; выполняемый производственный запуск сохраняет свою ревизию процесса, поэтому новая действует для ещё не начатых операций.",
+  "Back to setup": "Возврат на наладку",
+  "A newer G-code release replaces the program in production. Refresh the Work Order from its Case to set the operation up again with it.": "Более новый выпуск G-кода заменяет программу в производстве. Обновите заказ-наряд из изделия, чтобы заново наладить операцию с ним."
 }

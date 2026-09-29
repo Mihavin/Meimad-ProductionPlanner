@@ -159,6 +159,7 @@ internal sealed class ProductionRunDebugTimelineService(
             "CYCLE_INTERRUPTED" => InterruptedMessage(value.MetadataJson),
             "PRODUCTION_SESSION_OPENED" => "Production session opened.",
             "PRODUCTION_SESSION_CLOSED" => ClosureMessage(value.MetadataJson),
+            "SETUP_RESTARTED" => "A newer G-code release replaced the program; setup starts again.",
             _ => Humanize(value.EventType) + "."
         };
     }

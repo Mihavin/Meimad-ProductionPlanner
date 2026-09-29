@@ -683,6 +683,29 @@ public sealed class CaseWorkspaceViewModelTests
     }
 
     [Fact]
+    public async Task Refresh_from_case_asks_before_sending_running_operations_back_to_setup()
+    {
+        var api = new FakeApiClient(CreateCase()) { OffersSetupRestart = true };
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(26));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedBatch = viewModel.Batches.Single();
+        string? question = null;
+        viewModel.ConfirmSetupRestart = value => { question = value; return false; };
+
+        await viewModel.RefreshSelectedBatchOperationsAsync();
+        Assert.Contains("OP20 (Mill 7): Haas r1 -> Haas r2", question, StringComparison.Ordinal);
+        Assert.Null(api.LastRefreshedBatchId);   // declined: nothing was sent
+        Assert.Equal("Refresh cancelled; nothing was changed.", viewModel.StatusMessage);
+
+        viewModel.ConfirmSetupRestart = _ => true;
+        await viewModel.RefreshSelectedBatchOperationsAsync();
+        Assert.Equal("batch-1", api.LastRefreshedBatchId);
+        Assert.Contains("Back to setup for newer G-code: OP20 (Mill 7): Haas r1 -> Haas r2.", viewModel.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("A new process revision was released for OP40 (Mill 9)", viewModel.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Order_edit_omits_unchanged_status_so_server_can_rederive_it_after_quantity_changes()
     {
         var api = new FakeApiClient(CreateCase());
@@ -1294,8 +1317,21 @@ public sealed class CaseWorkspaceViewModelTests
             return Task.FromResult(new WorkOrderRefreshResult(
                 new ProductionBatch(batchId, plannerCase.CaseId, "B-1", "in_production", 5, null, 3, 2,
                     [new("allocation-1", "order", "order-1", 5)], ReleaseState: "released"),
-                1, 1, 0, ["OP30"]));
+                1, 1, 0, ["OP30"],
+                OffersSetupRestart ? [Restart] : null,
+                OffersSetupRestart ? [NewProcess] : null));
         }
+
+        internal bool OffersSetupRestart { get; init; }
+
+        private static readonly WorkOrderSetupRestartInfo Restart = new("operation-20", 20, "Mill 7", "Haas r1", "Haas r2", false);
+        private static readonly WorkOrderSetupRestartInfo NewProcess = new("operation-40", 40, "Mill 9", "Haas r3", null, true);
+
+        public Task<WorkOrderRefreshPreview> PreviewBatchOperationsRefreshAsync(
+            string batchId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(OffersSetupRestart
+                ? new WorkOrderRefreshPreview([Restart], [NewProcess])
+                : new WorkOrderRefreshPreview([], []));
 
         public Task<BatchMaterialReconciliation> GetBatchMaterialAsync(
             string batchId,

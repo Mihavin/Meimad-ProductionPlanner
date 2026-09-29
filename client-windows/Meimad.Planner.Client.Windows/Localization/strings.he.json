@@ -4542,5 +4542,13 @@
   "Test email sent to {recipients}. The Server signed in to the mail server.": "דוא\"ל בדיקה נשלח אל {recipients}. השרת נכנס לשרת הדואר.",
   "Test email sent to {recipients} without signing in.": "דוא\"ל בדיקה נשלח אל {recipients} ללא כניסה.",
   "Save the sender address, SMTP host and SMTP port before sending a test email.": "שמור את כתובת השולח, שרת ה-SMTP ופורט ה-SMTP לפני שליחת דוא\"ל בדיקה.",
-  "Port 465 (implicit TLS) is not supported. Use port 587 with Use SSL; the connection is then encrypted with STARTTLS.": "פורט 465 (TLS מרומז) אינו נתמך. השתמש בפורט 587 עם Use SSL; החיבור מוצפן אז באמצעות STARTTLS."
+  "Port 465 (implicit TLS) is not supported. Use port 587 with Use SSL; the connection is then encrypted with STARTTLS.": "פורט 465 (TLS מרומז) אינו נתמך. השתמש בפורט 587 עם Use SSL; החיבור מוצפן אז באמצעות STARTTLS.",
+  "Refreshing Work Order {batchNumber} from its Case sends these running operations back to setup with their newer G-code: {operations}. The parts already made stay counted. A new Production Package, setup, verification and first-part QC are needed before production continues, and with verification on the Machine refuses the loaded program at its next start. Continue?": "רענון פקודת העבודה {batchNumber} מהפריט מחזיר את הפעולות הרצות האלה לכיוון עם קוד ה-G החדש יותר: {operations}. החלקים שכבר יוצרו נשארים בספירה. לפני שהייצור ממשיך נדרשים חבילת ייצור חדשה, כיוון, אימות ובקרת חלק ראשון, וכשהאימות פעיל המכונה תדחה את התוכנית הטעונה בהפעלה הבאה. להמשיך?",
+  "Refresh cancelled; nothing was changed.": "הרענון בוטל; שום דבר לא שונה.",
+  "Work Order {number} reloaded from the Case: {updated} updated, {added} added, {removed} removed.": "פקודת העבודה {number} נטענה מחדש מהפריט: {updated} עודכנו, {added} נוספו, {removed} הוסרו.",
+  "Work Order {number} reloaded from the Case.": "פקודת העבודה {number} נטענה מחדש מהפריט.",
+  "Back to setup for newer G-code: {operations}. Create a new Production Package for each.": "חזרו לכיוון עם קוד G חדש יותר: {operations}. צור חבילת ייצור חדשה לכל אחת.",
+  "A new process revision was released for {operations}; a running Production Run keeps its process revision, so it applies to operations that have not started.": "שוחררה גרסת תהליך חדשה עבור {operations}; ריצת ייצור פעילה שומרת על גרסת התהליך שלה, ולכן הגרסה החדשה חלה על פעולות שעוד לא התחילו.",
+  "Back to setup": "חזרה לכיוון",
+  "A newer G-code release replaces the program in production. Refresh the Work Order from its Case to set the operation up again with it.": "גרסת קוד G חדשה יותר מחליפה את התוכנית בייצור. רענן את פקודת העבודה מהפריט כדי לכוון את הפעולה מחדש איתה."
 }

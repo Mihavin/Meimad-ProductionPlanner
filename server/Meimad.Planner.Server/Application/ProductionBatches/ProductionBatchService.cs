@@ -96,6 +96,12 @@ internal sealed class ProductionBatchService
         CancellationToken cancellationToken = default) =>
         repository.GetByIdAsync(batchId, cancellationToken);
 
+    internal async Task<WorkOrderRefreshPreview> PreviewRefreshFromCaseAsync(
+        string batchId,
+        CancellationToken cancellationToken = default) =>
+        await repository.PreviewRefreshFromCaseAsync(batchId, cancellationToken)
+        ?? throw new ProductionBatchNotFoundException(batchId);
+
     internal async Task<ProductionBatch> UpdateAsync(
         string batchId,
         int expectedVersion,
@@ -259,7 +265,28 @@ internal sealed record WorkOrderRefreshSummary(
     int OperationsAdded,
     int OperationsUpdated,
     int OperationsRemoved,
-    IReadOnlyList<string> NumberConflicts);
+    IReadOnlyList<string> NumberConflicts,
+    IReadOnlyList<WorkOrderSetupRestart>? SetupRestarts = null,
+    IReadOnlyList<WorkOrderSetupRestart>? ProcessRevisionNotSwitched = null);
+
+/// <summary>
+/// A started operation whose production G-code has a newer release (owner decisions 2026-09-29).
+/// A newer local version for the same Postprocessor sends it back to setup when the Work Order is
+/// refreshed from its Case; a new process revision (<see cref="NewProcessRevision"/>) is only
+/// reported, because a running Production Run keeps its process revision.
+/// </summary>
+internal sealed record WorkOrderSetupRestart(
+    string BatchOperationId,
+    int OperationNumber,
+    string MachineName,
+    string ProductionRelease,
+    string? NewerRelease,
+    bool NewProcessRevision);
+
+/// <summary>What "Refresh from Case" would do to started operations, before the planner confirms it.</summary>
+internal sealed record WorkOrderRefreshPreview(
+    IReadOnlyList<WorkOrderSetupRestart> SetupRestarts,
+    IReadOnlyList<WorkOrderSetupRestart> ProcessRevisionNotSwitched);
 
 internal sealed class ProductionBatchReleaseException(string code, string message) : Exception(message)
 {

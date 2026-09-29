@@ -202,6 +202,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     internal Func<int, bool> ConfirmBatchRemoval { get; set; } = _ => false;
 
+    /// <summary>Asks before "Refresh from Case" sends running operations back to setup (the message is the question).</summary>
+    internal Func<string, bool> ConfirmSetupRestart { get; set; } = _ => false;
+
     public ObservableCollection<CasePoolItemViewModel> Cases { get; } = [];
 
     public ObservableCollection<CaseOperation> Operations { get; } = [];
@@ -2581,8 +2584,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     /// <summary>
     /// Reloads the selected Work Order's operations from the Case Operations (owner decision
     /// 2026-09-28): operations that have not started take the Case's current data, new Case
-    /// Operations are added, removed ones leave; a released Work Order stays released and started
-    /// work is never changed.
+    /// Operations are added, removed ones leave; a released Work Order stays released. A started
+    /// operation whose G-code has a newer local version goes back to setup (owner decisions
+    /// 2026-09-29), after the planner confirms it.
     /// </summary>
     internal async Task RefreshSelectedBatchOperationsAsync()
     {
@@ -2591,6 +2595,19 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         IsBusy = true;
         try
         {
+            var preview = await apiClient.PreviewBatchOperationsRefreshAsync(batch.BatchId);
+            if (preview.SetupRestarts.Count > 0)
+            {
+                var batchNumber = batch.BatchNumber;
+                var operations = string.Join("; ", preview.SetupRestarts.Select(restart => restart.Text));
+                if (!ConfirmSetupRestart(
+                        $"Refreshing Work Order {batchNumber} from its Case sends these running operations back to setup with their newer G-code: {operations}. The parts already made stay counted. A new Production Package, setup, verification and first-part QC are needed before production continues, and with verification on the Machine refuses the loaded program at its next start. Continue?"))
+                {
+                    StatusMessage = "Refresh cancelled; nothing was changed.";
+                    return;
+                }
+            }
+
             var result = await apiClient.RefreshBatchOperationsAsync(batch.BatchId, clientId, editGeneration);
             var saved = result.Batch;
             var index = Batches.IndexOf(batch);
@@ -2598,15 +2615,29 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             SelectedBatch = saved;
             var number = saved.BatchNumber;
             var (added, updated, removed) = (result.OperationsAdded, result.OperationsUpdated, result.OperationsRemoved);
-            StatusMessage = added + updated + removed == 0
-                ? $"Work Order {number} already matches the Case Operations."
-                : $"Work Order {number} reloaded from the Case: {updated} updated, {added} added, {removed} removed. Started operations were not changed.";
+            var restarts = result.SetupRestarts ?? [];
+            var notSwitched = result.ProcessRevisionNotSwitched ?? [];
+            StatusMessage = added + updated + removed > 0
+                ? $"Work Order {number} reloaded from the Case: {updated} updated, {added} added, {removed} removed."
+                : restarts.Count > 0
+                    ? $"Work Order {number} reloaded from the Case."
+                    : $"Work Order {number} already matches the Case Operations.";
+            if (restarts.Count > 0)
+            {
+                var operations = string.Join("; ", restarts.Select(restart => restart.Text));
+                StatusMessage += " " + $"Back to setup for newer G-code: {operations}. Create a new Production Package for each.";
+            }
+            if (notSwitched.Count > 0)
+            {
+                var operations = string.Join("; ", notSwitched.Select(restart => restart.Text));
+                StatusMessage += " " + $"A new process revision was released for {operations}; a running Production Run keeps its process revision, so it applies to operations that have not started.";
+            }
             if (result.NumberConflicts.Count > 0)
             {
                 var operations = string.Join(", ", result.NumberConflicts);
                 StatusMessage += " " + $"Not renumbered or added because another operation of the Work Order uses the number: {operations}.";
             }
-            if (added + updated + removed > 0) PlanChanged?.Invoke(this, EventArgs.Empty);
+            if (added + updated + removed + restarts.Count > 0) PlanChanged?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception exception) when (IsExpected(exception))
         {

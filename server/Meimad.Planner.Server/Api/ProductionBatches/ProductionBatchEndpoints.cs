@@ -24,6 +24,27 @@ internal static class ProductionBatchEndpoints
         batches.MapPost("/{batchId}/unrelease", (string batchId, HttpContext context, ProductionBatchService service, CancellationToken token) =>
             SetReleaseStateAsync(batchId, false, context, service, token));
         batches.MapPost("/{batchId}/refresh-operations", RefreshOperationsAsync);
+        batches.MapGet("/{batchId}/refresh-operations/preview", PreviewRefreshOperationsAsync);
+    }
+
+    /// <summary>
+    /// GET /api/v1/batches/{id}/refresh-operations/preview: the started operations that "Refresh from
+    /// Case" would send back to setup for newer G-code, so the client can ask before it refreshes.
+    /// </summary>
+    private static async Task<IResult> PreviewRefreshOperationsAsync(
+        string batchId,
+        HttpContext httpContext,
+        ProductionBatchService service,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Results.Ok(await service.PreviewRefreshFromCaseAsync(batchId, cancellationToken));
+        }
+        catch (ProductionBatchNotFoundException)
+        {
+            return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Production Batch was not found.", httpContext);
+        }
     }
 
     /// <summary>
@@ -46,7 +67,9 @@ internal static class ProductionBatchEndpoints
                 summary.OperationsAdded,
                 summary.OperationsUpdated,
                 summary.OperationsRemoved,
-                summary.NumberConflicts));
+                summary.NumberConflicts,
+                summary.SetupRestarts ?? [],
+                summary.ProcessRevisionNotSwitched ?? []));
         }
         catch (ProductionBatchReleaseException exception)
         {

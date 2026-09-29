@@ -241,6 +241,12 @@ internal interface IPlannerApiClient : IDisposable
         long editGeneration,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    /// <summary>The started operations a refresh would send back to setup for newer G-code.</summary>
+    Task<WorkOrderRefreshPreview> PreviewBatchOperationsRefreshAsync(
+        string batchId,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new WorkOrderRefreshPreview([], []));
+
     Task<ProductionBatch> CancelBatchProductionAsync(
         string batchId,
         CancelProductionBatchRequest request,
@@ -1799,6 +1805,15 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             editGeneration.ToString(CultureInfo.InvariantCulture));
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<WorkOrderRefreshResult>(response, cancellationToken);
+    }
+
+    public async Task<WorkOrderRefreshPreview> PreviewBatchOperationsRefreshAsync(
+        string batchId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/batches/{Uri.EscapeDataString(batchId)}/refresh-operations/preview", cancellationToken);
+        return await ReadSuccessAsync<WorkOrderRefreshPreview>(response, cancellationToken);
     }
 
     public async Task<BatchMaterialReconciliation> GetBatchMaterialAsync(

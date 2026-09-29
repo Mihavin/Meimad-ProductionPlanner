@@ -54,11 +54,16 @@ public partial class CaseWorkspaceView : UserControl
             newViewModel.PropertyChanged += CaseWorkspace_PropertyChanged;
             newViewModel.ModelFilesLoaded += CaseWorkspace_ModelFilesLoaded;
             newViewModel.ConfirmBatchRemoval = ConfirmBatchRemoval;
+            newViewModel.ConfirmSetupRestart = ConfirmSetupRestart;
         }
         CancelModelLoads();
         StepViewer.ClearModel();
         UpdateStepSnapshotState();
     }
+
+    private static bool ConfirmSetupRestart(string question) => LocalizedMessageBox.Show(
+        question, "Back to setup", MessageBoxButton.YesNo, MessageBoxImage.Warning,
+        MessageBoxResult.No) == MessageBoxResult.Yes;
 
     private static bool ConfirmBatchRemoval(int batchCount) => LocalizedMessageBox.Show(
         $"Adding a child component converts this Case into a parent. {batchCount} direct Production Work Order{(batchCount == 1 ? string.Empty : "s")} and their assignments, execution history, allocations, and generated job-package records will be permanently removed. Continue?",

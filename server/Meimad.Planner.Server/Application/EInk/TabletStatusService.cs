@@ -158,7 +158,7 @@ internal sealed class TabletStatusService
 
         return workflow?.EventType switch
         {
-            null => "READY_FOR_SETUP",
+            null or "SETUP_RESTARTED" => "READY_FOR_SETUP",
             "OFFSET_LOADER_COMPLETED" or "SETUP_VERIFICATION_REQUESTED"
                 or "SETUP_VERIFICATION_FAILED" => "IN_SETUP",
             "SETUP_VERIFICATION_SUCCEEDED" or "QC_FAIL" => "IN_SETUP_RUN",
