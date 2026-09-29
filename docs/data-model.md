@@ -749,3 +749,14 @@ Planner sources: Work Orders linked through `kitaron_sync_links` (`production_ba
 - `gcode_release_subprograms`: `id`, `gcode_release_id`, `position`, `original_file_name`, `program_number` (nullable), `stored_relative_path` (unique, in the release's folder), `file_size`, `file_hash` (SHA-256). Unique per release: position, file name (case-insensitive) and program number. Immutable (update/delete triggers), like `gcode_releases`.
 - `gcode_releases.missing_subprogram_calls_json`: JSON array of the program numbers the release's programs call that it does not include (default `[]` for earlier releases).
 - `production_package_artifacts.artifact_type` admits `NC_SUBPROGRAM` (table rebuilt with the same columns and immutability triggers).
+
+## Case Operation time history (schema v93)
+
+- `case_operation_time_changes`: `id`, `case_operation_id` (cascade with the Operation), `time_kind` (`cycle`, `setup`, `qa`, `load_unload`), `source` (`NC`, `MEASURED`, `MANUAL`), `machine_id` (required unless `MANUAL`), `previous_seconds`, `new_seconds`, `basis_seconds` (the NC time or measured median it came from), `sample_count`, `gcode_release_id`, `changed_by`, `changed_at`. Rows are immutable.
+- Real times are not stored. They are read from `production_run_cycle_attempt_timing`, `production_run_workflow_events` and the `manual_operation_reported` entries of `structured_event_log`. Runs are mapped to their Case Operation through `production_runs.legacy_batch_operation_id` → `batch_operations.source_case_operation_id`. The medians are cached in memory until a new event or report arrives.
+
+## Manual workflow statuses (schema v94)
+
+- `production_run_workflow_events.event_type` admits `MANUAL_READY_FOR_SETUP` and `MANUAL_SETUP_RUN`. The table is rebuilt from its stored definition, with columns, indexes and triggers unchanged.
+- Hand-reported events have source `PLANNER_MANUAL`, a `MANUAL:<id>` source event id, the reporting user and `{ reportedStatus, previousStatus }` metadata. Each is also logged as `manual_workflow_status_reported` in `structured_event_log`.
+- `machine_connections.configuration_json` may carry `dprnt.enabled: false` (the DPRNT output is switched off).

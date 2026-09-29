@@ -659,6 +659,21 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             throw new CaseOperationVersionConflictException(operationId, expectedVersion);
         }
 
+        // Every change of the four times is kept in the Operation's time history (schema v93).
+        foreach (var (kind, previous, next) in new[]
+                 {
+                     (OperationTimeKinds.Cycle, current.CycleTimePerPartSeconds, candidate.CycleTimePerPartSeconds),
+                     (OperationTimeKinds.Setup, current.SetupTimeSeconds, candidate.SetupTimeSeconds),
+                     (OperationTimeKinds.Qa, (int?)current.QaTimeAfterSetupSeconds, (int?)candidate.QaTimeAfterSetupSeconds),
+                     (OperationTimeKinds.LoadUnload, (int?)current.LoadUnloadTimeSeconds, (int?)candidate.LoadUnloadTimeSeconds)
+                 })
+        {
+            if (previous == next) continue;
+            await SqliteOperationTimeStatisticsRepository.RecordChangeAsync(
+                connection, transaction, operationId, kind, "MANUAL", null, previous, next, null, null, null,
+                actor, candidate.UpdatedAt, cancellationToken);
+        }
+
         // A pending Work Order takes its operation list from the Case; a released one is frozen.
         var refresh = await SqliteWorkOrderRouteRefresh.RefreshCaseAsync(
             connection, transaction, candidate.CaseId, actor, candidate.UpdatedAt, cancellationToken);

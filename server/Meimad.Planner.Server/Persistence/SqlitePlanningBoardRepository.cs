@@ -224,6 +224,13 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
               -- Production Notes are notes in the chain, not Machine work.
               AND lower(trim(COALESCE(batch_operations.required_machine_type, ''))) <> 'production note';
             """;
+        // Real times of the same Case Operation on the same Machine come before the NC and the
+        // Operation's own times (owner decision 2026-09-29).
+        var measuredTimes = await SqliteOperationTimeMeasurements.ReadMediansAsync(connection, transaction, cancellationToken);
+        // The workflow status each operation's Production Run is in, and the Machines whose DPRNT
+        // output reports it; on the others the planner reports it by hand (owner decision 2026-09-29).
+        var latestEvents = await SqliteMachineWorkflowReporting.ReadLatestEventsAsync(connection, transaction, cancellationToken);
+        var machinesWithDprnt = await SqliteMachineWorkflowReporting.ReadMachinesWithDprntAsync(connection, transaction, cancellationToken);
         var operations = new List<PlanningBoardOperation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -236,24 +243,32 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
             var automaticLoading = reader.GetInt32(18) == 1;
             var everyNParts = GetNullableInt32(reader, 19);
             var machineId = GetNullableString(reader, 11);
+            var measured = machineId is null || reader.IsDBNull(42)
+                ? null : measuredTimes.GetValueOrDefault((reader.GetString(42), machineId));
+            var measuredCycleSeconds = measured?.Cycle?.MedianSeconds;
+            var measuredSetupSeconds = measured?.Setup?.MedianSeconds;
+            if (measured?.Qa is { } measuredQa) qaSeconds = (int)Math.Round(measuredQa.MedianSeconds);
+            var measuredLoad = SqliteOperationTimeMeasurements.LoadingIsPerPart(automaticLoading, everyNParts)
+                ? measured?.LoadUnload : null;
+            if (measuredLoad is not null) loadUnloadSeconds = (int)Math.Round(measuredLoad.MedianSeconds);
             var hasManagedProcess = !reader.IsDBNull(35);
             var requiredToolCount = GetNullableInt32(reader, 36);
             var availableToolPositions = GetNullableInt32(reader, 37);
             double? ncCycleSeconds = reader.GetString(10) == "not_started" && !reader.IsDBNull(39)
                 ? reader.GetDouble(39) : null;
-            var planningCycleSeconds = ncCycleSeconds ?? cycleSeconds;
+            var planningCycleSeconds = measuredCycleSeconds ?? ncCycleSeconds ?? cycleSeconds;
             var occupancy = reader.GetString(10) == "not_started" && hasManagedProcess
                 ? SetupOccupancyEstimator.Evaluate(new SetupOccupancyInput(
                     plannedQuantity,
                     requiredToolCount,
                     setupSeconds,
-                    null,
+                    measuredCycleSeconds,
                     ncCycleSeconds,
                     cycleSeconds,
                     setupEstimation.DefaultToolLoadTimePerToolSeconds,
                     setupEstimation.DefaultFirstPieceFactor))
                 : null;
-            var scheduledSetupSeconds = occupancy?.TotalSetupSeconds ?? setupSeconds;
+            var scheduledSetupSeconds = measuredSetupSeconds ?? occupancy?.TotalSetupSeconds ?? setupSeconds;
             var scheduledCycleSeconds = occupancy?.SelectedCycleSeconds
                 ?? (plannedQuantity == 0 && occupancy is not null ? 0 : planningCycleSeconds);
             var productionCycleQuantity = occupancy?.RemainingProductionQuantity ?? plannedQuantity;
@@ -314,8 +329,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 !hasManagedProcess || capacity?.IsSatisfied == true,
                 NcEstimatedCycleTimePerPartSeconds: ncCycleSeconds,
                 PlanningCycleTimePerPartSeconds: planningCycleSeconds,
-                PlanningCycleTimeSource: ncCycleSeconds.HasValue
-                    ? "nc_estimate" : cycleSeconds.HasValue ? "manual" : "unavailable",
+                PlanningCycleTimeSource: measuredCycleSeconds.HasValue ? "measured_median"
+                    : ncCycleSeconds.HasValue ? "nc_estimate" : cycleSeconds.HasValue ? "manual" : "unavailable",
                 NcEstimateConfidence: GetNullableString(reader, 40),
                 NcEstimateWarnings: reader.IsDBNull(41)
                     ? [] : JsonSerializer.Deserialize<string[]>(reader.GetString(41)) ?? [],
@@ -323,7 +338,7 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 ToolLoadingTimeSeconds: occupancy?.ToolLoadingSeconds ?? 0,
                 FixtureSetupTimeSeconds: occupancy?.FixtureSetupSeconds,
                 FirstPieceProveOutTimeSeconds: occupancy?.FirstPieceProveOutSeconds,
-                TotalSetupTimeSeconds: occupancy?.TotalSetupSeconds,
+                TotalSetupTimeSeconds: measuredSetupSeconds ?? occupancy?.TotalSetupSeconds,
                 RemainingProductionQuantity: occupancy?.RemainingProductionQuantity,
                 RemainingProductionRuntimeSeconds: occupancy?.RemainingProductionSeconds,
                 TotalPlannedMachineTimeSeconds: occupancy?.TotalPlannedMachineSeconds,
@@ -331,7 +346,18 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 UsesSetupOccupancyEstimate: occupancy is not null,
                 CaseOperationId: GetNullableString(reader, 42),
                 ManualPriority: GetNullableInt32(reader, reader.GetOrdinal("manual_priority")),
-                IsWorkOrderReleased: reader.GetString(reader.GetOrdinal("release_state")) == "released"));
+                IsWorkOrderReleased: reader.GetString(reader.GetOrdinal("release_state")) == "released",
+                SetupTimeSource: measuredSetupSeconds.HasValue ? "measured_median"
+                    : occupancy?.TotalSetupSeconds is not null ? "setup_estimate" : "operation",
+                QaTimeSource: measured?.Qa is not null ? "measured_median" : "operation",
+                LoadUnloadTimeSource: measuredLoad is not null ? "measured_median" : "operation",
+                MeasuredCycleSamples: measured?.Cycle?.SampleCount ?? 0,
+                MeasuredSetupSamples: measured?.Setup?.SampleCount ?? 0,
+                MeasuredQaSamples: measured?.Qa?.SampleCount ?? 0,
+                MeasuredLoadUnloadSamples: measuredLoad?.SampleCount ?? 0,
+                WorkflowStatus: machineId is null ? null
+                    : ManualWorkflowStatuses.Project(latestEvents.GetValueOrDefault(reader.GetString(0))),
+                ManualWorkflowReporting: machineId is not null && !machinesWithDprnt.Contains(machineId)));
         }
 
         await reader.DisposeAsync();

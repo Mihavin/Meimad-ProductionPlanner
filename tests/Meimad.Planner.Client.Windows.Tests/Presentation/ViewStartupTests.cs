@@ -535,11 +535,6 @@ public sealed class ViewStartupTests
                     failures.AddRange(AuditLocalizedWindow(assignmentDialog, language, "assignment dialog"));
                     assignmentDialog.Close();
 
-                    var pauseDialog = new OperationPauseDialog();
-                    pauseDialog.Show();
-                    failures.AddRange(AuditLocalizedWindow(pauseDialog, language, "pause dialog"));
-                    pauseDialog.Close();
-
                     var readiness = new PlannerProductionReadiness(
                         "NOT_READY", false, true, "Not ready: 1 blocking component(s)",
                         [new("material", "Material", "UNVERIFIED", "Material is not confirmed.", true)],

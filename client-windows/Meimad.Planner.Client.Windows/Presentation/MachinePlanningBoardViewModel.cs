@@ -976,6 +976,39 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             operation.IsSearchMatch = operation.Matches(SearchText);
     }
 
+    /// <summary>Reports a production status by hand; the Server records the event telemetry would have sent.</summary>
+    internal async Task ReportWorkflowStatusAsync(PlanningOperationViewModel operation, string status)
+    {
+        if (apiClient is null || !isEditor || IsBusy)
+        {
+            AddFeedback("attention", "Permission required",
+                $"{operation.DisplayTitle} was not changed. Your account may not change the Planning Board.");
+            return;
+        }
+        if (operation.MachineId is null) return;
+        var succeeded = false;
+        IsBusy = true;
+        try
+        {
+            var result = await apiClient.ReportWorkflowStatusAsync(operation.BatchOperationId, status, clientId, editGeneration);
+            var text = PlanningOperationViewModel.WorkflowStatusLabel(result.Status);
+            AddFeedback("information", "Production status reported", $"{operation.DisplayTitle}: {text}.");
+            StatusMessage = $"{operation.DisplayTitle} is now {text}.";
+            succeeded = true;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            AddFeedback("blocking", "Production status rejected", FriendlyMessage(exception));
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally { IsBusy = false; }
+        if (succeeded)
+        {
+            await RefreshAsync();
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
     internal async Task RecordManualReportAsync(PlanningOperationViewModel operation, string reportType, int? partTimeSeconds = null)
     {
         if (apiClient is null || !isEditor || IsBusy || operation.MachineId is null) return;
@@ -1716,7 +1749,61 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
         TotalPlannedMachineTimeSeconds = operation.TotalPlannedMachineTimeSeconds;
         SetupEstimateWarnings = operation.SetupEstimateWarnings ?? [];
         UsesSetupOccupancyEstimate = operation.UsesSetupOccupancyEstimate;
+        SetupTimeSource = operation.SetupTimeSource;
+        QaTimeSource = operation.QaTimeSource;
+        LoadUnloadTimeSource = operation.LoadUnloadTimeSource;
+        MeasuredCycleSamples = operation.MeasuredCycleSamples;
+        MeasuredSetupSamples = operation.MeasuredSetupSamples;
+        MeasuredQaSamples = operation.MeasuredQaSamples;
+        MeasuredLoadUnloadSamples = operation.MeasuredLoadUnloadSamples;
+        QaTimeAfterSetupSeconds = operation.QaTimeAfterSetupSeconds;
+        LoadUnloadTimeSeconds = operation.LoadUnloadTimeSeconds;
+        WorkflowStatus = operation.WorkflowStatus;
+        ManualWorkflowReporting = operation.ManualWorkflowReporting;
     }
+
+    /// <summary>The Production Run's workflow status (READY_FOR_SETUP … IN_PRODUCTION); null when unassigned.</summary>
+    public string? WorkflowStatus { get; }
+
+    /// <summary>The Machine has no DPRNT output, so the planner reports the production status by hand.</summary>
+    public bool ManualWorkflowReporting { get; }
+
+    public bool IsWorkflowReadyForSetup => WorkflowStatus == "READY_FOR_SETUP";
+    public bool IsWorkflowInSetupRun => WorkflowStatus is "IN_SETUP_RUN" or "IN_SETUP";
+    public bool IsWorkflowInQc => WorkflowStatus == "IN_QC";
+    public bool IsWorkflowReadyForProduction => WorkflowStatus == "READY_FOR_PRODUCTION";
+    public bool IsWorkflowInProduction => WorkflowStatus == "IN_PRODUCTION";
+    public bool CanReportWorkflow => ManualWorkflowReporting && MachineId is not null && Status is not ("completed" or "cancelled");
+    public bool CanMarkFinished => MachineId is not null && Status is not ("completed" or "cancelled");
+    public string WorkflowStatusText => WorkflowStatus is null ? string.Empty : WorkflowStatusLabel(WorkflowStatus);
+    public string WorkflowReportingToolTip => MachineId is null
+        ? "Assign the operation to a Machine first."
+        : ManualWorkflowReporting
+            ? "This Machine has no DPRNT output: report its production status here. The Server records it like the Machine would."
+            : "This Machine reports its production status through DPRNT. To report it by hand, switch the Machine's DPRNT output off in Setup → Machine connection.";
+
+    internal static string WorkflowStatusLabel(string status) => status switch
+    {
+        "READY_FOR_SETUP" => "Ready for Setup",
+        "IN_SETUP" => "In setup",
+        "IN_SETUP_RUN" => "Setup Run",
+        "IN_QC" => "Passed to QC",
+        "READY_FOR_PRODUCTION" => "Ready For Production",
+        "IN_PRODUCTION" => "In Production",
+        _ => status.Replace('_', ' ')
+    };
+
+    public int QaTimeAfterSetupSeconds { get; }
+    public int LoadUnloadTimeSeconds { get; }
+
+    /// <summary>Where the setup, QC and load/unload times come from: measured_median, setup_estimate or operation.</summary>
+    public string SetupTimeSource { get; } = "operation";
+    public string QaTimeSource { get; } = "operation";
+    public string LoadUnloadTimeSource { get; } = "operation";
+    public int MeasuredCycleSamples { get; }
+    public int MeasuredSetupSamples { get; }
+    public int MeasuredQaSamples { get; }
+    public int MeasuredLoadUnloadSamples { get; }
 
     public string BatchOperationId { get; }
     public string? CaseOperationId { get; }
@@ -1860,15 +1947,18 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
                 "manager_override" => "Override cycle",
                 "manual" => "Manual cycle",
                 "real_average" => "Real average",
+                "measured_median" => "Real median",
                 _ => "Cycle"
             };
             return $"{source} {Duration(seconds)} / part";
         }
     }
     public string EstimatedTimeDetail => BuildEstimatedTimeDetail();
-    public string SetupEstimateText => UsesSetupOccupancyEstimate && TotalSetupTimeSeconds.HasValue
-        ? $"Setup {Duration(TotalSetupTimeSeconds)}"
-        : "";
+    public string SetupEstimateText => SetupTimeSource == "measured_median" && TotalSetupTimeSeconds.HasValue
+        ? $"Real setup {Duration(TotalSetupTimeSeconds)}"
+        : UsesSetupOccupancyEstimate && TotalSetupTimeSeconds.HasValue
+            ? $"Setup {Duration(TotalSetupTimeSeconds)}"
+            : "";
     public string StatusText => Status switch
     {
         "not_started" => "Not started",
@@ -1980,12 +2070,19 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
             "nc_estimate" => $"NC-based cycle estimate: {Duration(PlanningCycleTimePerPartSeconds ?? NcEstimatedCycleTimePerPartSeconds)} per part ({NcEstimateConfidence ?? "unknown"} confidence).",
             "manual" => $"Manual operation cycle estimate: {Duration(PlanningCycleTimePerPartSeconds)} per part.",
             "real_average" => $"Average of recorded real part times: {Duration(PlanningCycleTimePerPartSeconds)} per part.",
+            "measured_median" => $"Real median of the last {MeasuredCycleSamples} cycles on this Machine: {Duration(PlanningCycleTimePerPartSeconds)} per part.",
             _ => "Cycle estimate unavailable."
         };
-        if (!UsesSetupOccupancyEstimate)
+        var measuredLines = new List<string>();
+        if (SetupTimeSource == "measured_median")
+            measuredLines.Add($"Real setup median of the last {MeasuredSetupSamples} setups on this Machine: {Duration(TotalSetupTimeSeconds)}");
+        if (QaTimeSource == "measured_median")
+            measuredLines.Add($"Real QC median of the last {MeasuredQaSamples} inspections on this Machine: {Duration(QaTimeAfterSetupSeconds)}");
+        if (LoadUnloadTimeSource == "measured_median")
+            measuredLines.Add($"Real load/unload median of the last {MeasuredLoadUnloadSamples} parts on this Machine: {Duration(LoadUnloadTimeSeconds)}");
+        if (!UsesSetupOccupancyEstimate || SetupTimeSource == "measured_median")
         {
-            return cycleSummary + (NcEstimateWarnings.Count == 0
-                ? string.Empty : Environment.NewLine + string.Join(Environment.NewLine, NcEstimateWarnings));
+            return string.Join(Environment.NewLine, new[] { cycleSummary }.Concat(measuredLines).Concat(NcEstimateWarnings));
         }
 
         var lines = new List<string>
@@ -1998,6 +2095,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
             $"Remaining production ({RemainingProductionQuantity ?? 0} parts): {Duration(RemainingProductionRuntimeSeconds)}",
             $"Total planned machine time: {Duration(TotalPlannedMachineTimeSeconds)}"
         };
+        lines.AddRange(measuredLines);
         lines.AddRange(SetupEstimateWarnings);
         lines.AddRange(NcEstimateWarnings);
         return string.Join(Environment.NewLine, lines);

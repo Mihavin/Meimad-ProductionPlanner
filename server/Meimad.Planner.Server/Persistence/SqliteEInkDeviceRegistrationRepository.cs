@@ -203,13 +203,13 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
                        WHEN current.id IS NULL THEN NULL
                        WHEN machine.is_active = 0 OR current.status = 'SUSPENDED'
                            THEN 'BLOCKED'
-                       WHEN workflow.event_type IS NULL OR workflow.event_type = 'SETUP_RESTARTED'
+                       WHEN workflow.event_type IS NULL OR workflow.event_type IN ('SETUP_RESTARTED', 'MANUAL_READY_FOR_SETUP')
                            THEN 'READY_FOR_SETUP'
                        WHEN workflow.event_type IN (
                            'OFFSET_LOADER_COMPLETED', 'SETUP_VERIFICATION_REQUESTED',
                            'SETUP_VERIFICATION_FAILED') THEN 'IN_SETUP'
                        WHEN workflow.event_type IN (
-                           'SETUP_VERIFICATION_SUCCEEDED', 'QC_FAIL') THEN 'IN_SETUP_RUN'
+                           'SETUP_VERIFICATION_SUCCEEDED', 'QC_FAIL', 'MANUAL_SETUP_RUN') THEN 'IN_SETUP_RUN'
                        WHEN workflow.event_type = 'SEND_TO_QC' THEN 'IN_QC'
                        WHEN workflow.event_type = 'QC_PASS' THEN 'READY_FOR_PRODUCTION'
                        WHEN workflow.event_type IN (

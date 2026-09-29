@@ -599,7 +599,8 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
                 ? HaasTelemetryProviders.Mdc : config.TelemetryProvider,
             config.Dprnt?.Source ?? CncDprntSources.Tcp,
             config.Dprnt?.FilePath,
-            config.Dprnt?.ClearPolicy ?? CncDprntClearPolicies.Never);
+            config.Dprnt?.ClearPolicy ?? CncDprntClearPolicies.Never,
+            config.Dprnt?.Enabled ?? true);
 
     private static void Validate(HaasNgcConnectionConfiguration value)
     {

@@ -210,10 +210,10 @@ internal static class PreparationQueueProjector
 
     internal static string WorkflowStatus(string? eventType) => eventType switch
     {
-        null or "SETUP_RESTARTED" => "READY_FOR_SETUP",
+        null or "SETUP_RESTARTED" or "MANUAL_READY_FOR_SETUP" => "READY_FOR_SETUP",
         "OFFSET_LOADER_COMPLETED" or "SETUP_VERIFICATION_REQUESTED"
             or "SETUP_VERIFICATION_FAILED" => "IN_SETUP",
-        "SETUP_VERIFICATION_SUCCEEDED" or "QC_FAIL" => "IN_SETUP_RUN",
+        "SETUP_VERIFICATION_SUCCEEDED" or "QC_FAIL" or "MANUAL_SETUP_RUN" => "IN_SETUP_RUN",
         "SEND_TO_QC" => "IN_QC",
         "QC_PASS" => "READY_FOR_PRODUCTION",
         "CYCLE_START" or "CYCLE_END" or "CYCLE_INTERRUPTED"

@@ -46,7 +46,7 @@ internal static class HaasEndpoints
              request.StableProgramPolls, request.HeaderLineLimit, request.HeaderByteLimit,
                 request.HeaderPartPatterns, request.Enabled, request.Version,
                 request.TelemetryProvider, request.DprntSource, request.DprntFilePath,
-                request.DprntFileClearPolicy), authority!, token);
+                request.DprntFileClearPolicy, request.DprntEnabled), authority!, token);
             return Results.Ok(Response(value));
         }
         catch (HaasValidationException exception)
@@ -103,7 +103,7 @@ internal static class HaasEndpoints
         value.PollingIntervalMs, value.ConnectionTimeoutMs, value.StableProgramPolls,
         value.HeaderLineLimit, value.HeaderByteLimit, value.HeaderPartPatterns,
         value.Enabled, value.Version, value.UpdatedAt, value.TelemetryProvider,
-        value.DprntSource, value.DprntFilePath, value.DprntFileClearPolicy);
+        value.DprntSource, value.DprntFilePath, value.DprntFileClearPolicy, value.DprntEnabled);
 }
 
 internal sealed record HaasConnectionUpdateRequest(
@@ -114,7 +114,8 @@ internal sealed record HaasConnectionUpdateRequest(
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string>? HeaderPartPatterns,
     bool Enabled, int Version, string? TelemetryProvider,
-    string? DprntSource = null, string? DprntFilePath = null, string? DprntFileClearPolicy = null);
+    string? DprntSource = null, string? DprntFilePath = null, string? DprntFileClearPolicy = null,
+    bool? DprntEnabled = null);
 
 internal sealed record HaasConnectionResponse(
     string MachineId, string Host, string MacAddress,
@@ -124,4 +125,5 @@ internal sealed record HaasConnectionResponse(
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
     bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = HaasTelemetryProviders.Mdc,
-    string DprntSource = CncDprntSources.Tcp, string? DprntFilePath = null, string DprntFileClearPolicy = CncDprntClearPolicies.Never);
+    string DprntSource = CncDprntSources.Tcp, string? DprntFilePath = null, string DprntFileClearPolicy = CncDprntClearPolicies.Never,
+    bool DprntEnabled = true);

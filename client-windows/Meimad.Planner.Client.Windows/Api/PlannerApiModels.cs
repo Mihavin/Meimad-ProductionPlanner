@@ -514,7 +514,8 @@ internal sealed record HaasConnectionSettings(
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
     bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = "MDC",
-    string DprntSource = "TCP", string? DprntFilePath = null, string DprntFileClearPolicy = "NEVER");
+    string DprntSource = "TCP", string? DprntFilePath = null, string DprntFileClearPolicy = "NEVER",
+    bool DprntEnabled = true);
 
 internal sealed record HaasConnectionUpdate(
     string Host, string MacAddress, int MdcPort, int MtConnectPort, int DprntPort,
@@ -523,7 +524,8 @@ internal sealed record HaasConnectionUpdate(
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
     bool Enabled, int Version, string TelemetryProvider,
-    string DprntSource = "TCP", string? DprntFilePath = null, string DprntFileClearPolicy = "NEVER");
+    string DprntSource = "TCP", string? DprntFilePath = null, string DprntFileClearPolicy = "NEVER",
+    bool DprntEnabled = true);
 
 internal sealed record HaasConnectionTest(
     bool Succeeded, string Message, string? ProgramNumber, string? MachineStatus,
@@ -658,7 +660,7 @@ internal sealed record FocasConnectionConfiguration(
 
 internal sealed record FocasDprntConfiguration(
     string Source, string? FilePath, string ClearPolicy, int? Port, string? Host = null,
-    string? FtpUsername = null, string? FtpPassword = null);
+    string? FtpUsername = null, string? FtpPassword = null, bool Enabled = true);
 
 internal sealed record FocasProgramAccessConfiguration(
     string Provider, bool Enabled, string ProgramFolder);
@@ -1822,7 +1824,20 @@ internal sealed record PlanningBoardOperation(
     IReadOnlyList<string>? SetupEstimateWarnings = null,
     bool UsesSetupOccupancyEstimate = false,
     string? CaseOperationId = null,
-    int? ManualPriority = null);
+    int? ManualPriority = null,
+    string SetupTimeSource = "operation",
+    string QaTimeSource = "operation",
+    string LoadUnloadTimeSource = "operation",
+    int MeasuredCycleSamples = 0,
+    int MeasuredSetupSamples = 0,
+    int MeasuredQaSamples = 0,
+    int MeasuredLoadUnloadSamples = 0,
+    string? WorkflowStatus = null,
+    bool ManualWorkflowReporting = false);
+
+/// <summary>A production status reported by hand; <see cref="EventId"/> is null when nothing changed.</summary>
+internal sealed record PlannerWorkflowStatusReport(
+    string BatchOperationId, string MachineId, string Status, string PreviousStatus, string? EventId, DateTimeOffset RecordedAt);
 
 internal sealed record PlannerReadinessComponent(
     string Key,
@@ -2530,6 +2545,58 @@ internal sealed record PlannerPullStud(
 internal sealed record PlannerMachineSpindleInterface(string MachineId, string? SpindleAdaptorId, string? PullStudId, int Version);
 
 /// <summary>GET /api/v1/spindle-library.</summary>
+/// <summary>A Case Operation's times with the NC and measured times per Machine (owner request 2026-09-29).</summary>
+internal sealed record PlannerOperationTimeStatistics(
+    string CaseId,
+    string CaseOperationId,
+    int OperationNumber,
+    string Name,
+    int Version,
+    int? SetupSeconds,
+    int? CycleSeconds,
+    int QaSeconds,
+    int LoadUnloadSeconds,
+    bool AutomaticLoading,
+    int? LoadUnloadEveryNParts,
+    bool HasManagedProcess,
+    int? RequiredToolCount,
+    IReadOnlyList<PlannerOperationMachineTimes> Machines,
+    IReadOnlyList<PlannerOperationTimeSample> Samples,
+    IReadOnlyList<PlannerOperationTimeChange> History);
+
+internal sealed record PlannerMeasuredTime(double MedianSeconds, int SampleCount, DateTimeOffset LastMeasuredAt);
+
+internal sealed record PlannerOperationMachineTimes(
+    string MachineId,
+    string MachineNumber,
+    string MachineName,
+    string? GCodeReleaseId,
+    double? NcCycleSeconds,
+    double? NcSetupSeconds,
+    PlannerMeasuredTime? MeasuredCycle,
+    PlannerMeasuredTime? MeasuredSetup,
+    PlannerMeasuredTime? MeasuredQa,
+    PlannerMeasuredTime? MeasuredLoadUnload,
+    int? SetupApplySeconds,
+    bool LoadingIsPerPart);
+
+internal sealed record PlannerOperationTimeSample(
+    string Kind, string MachineId, double Seconds, DateTimeOffset MeasuredAt, string Source, string? BatchNumber, bool InMedian);
+
+internal sealed record PlannerOperationTimeChange(
+    string Id,
+    string Kind,
+    string Source,
+    string? MachineId,
+    string? MachineNumber,
+    int? PreviousSeconds,
+    int? NewSeconds,
+    double? BasisSeconds,
+    int? SampleCount,
+    string? GCodeReleaseId,
+    string ChangedBy,
+    DateTimeOffset ChangedAt);
+
 internal sealed record PlannerSpindleLibrary(
     IReadOnlyList<PlannerSpindleAdaptor> Adaptors,
     IReadOnlyList<PlannerPullStud> PullStuds,

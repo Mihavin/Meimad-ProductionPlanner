@@ -83,6 +83,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string haasMdcPort = "5051";
     private string haasMtConnectPort = "8082";
     private string dprntSource = "TCP";
+    private bool dprntEnabled = true;
     private string dprntTcpPort = "8080";
     private string dprntTcpHost = string.Empty;
     private string dprntFilePath = string.Empty;
@@ -634,6 +635,12 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     /// connection type, so it is configured once here rather than once per vendor panel.
     /// </summary>
     public string DprntSource { get => dprntSource; set => SetField(ref dprntSource, value); }
+
+    /// <summary>
+    /// The Machine's DPRNT output. Switched off, the Server reads nothing, packages print no cycle
+    /// events, and the Planning Board offers the production statuses to report by hand.
+    /// </summary>
+    public bool DprntEnabled { get => dprntEnabled; set => SetField(ref dprntEnabled, value); }
     public IReadOnlyList<string> DprntSources => ShowsFocasConfiguration ? ["TCP", "FILE", "FTP", "NONE"] : ["TCP", "FILE"];
     public string DprntTcpPort { get => dprntTcpPort; set => SetField(ref dprntTcpPort, value); }
     /// <summary>Serial-to-Ethernet bridge address for the TCP source; blank means the controller itself (FANUC FOCAS connections only).</summary>
@@ -1347,7 +1354,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
                     NullIfBlank(HaasLocalNetSharePath), NullIfBlank(HaasCredentialsReference),
                     HaasPartCounterSource, polling, timeout, 2, 50, 32768,
                     [@"\bPART(?:\s+NAME)?\s*[:=]\s*([^()\r\n]+)"], HaasEnabled, haasSettingsVersion,
-                    HaasTelemetryProvider, DprntSource, DprntFilePath.Trim(), DprntFileClearPolicy),
+                    HaasTelemetryProvider, DprntSource, DprntFilePath.Trim(), DprntFileClearPolicy, DprntEnabled),
                 clientId, editGeneration);
             PopulateHaasConfiguration(value);
             HaasDiagnostics = "Haas NGC configuration saved by the Server.";
@@ -1375,7 +1382,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             var configuration = new FocasConnectionConfiguration(
                 FocasHost.Trim(), NullIfBlank(FocasMacAddress), port, timeout, FocasPartCounterSource,
                 new FocasDprntConfiguration(DprntSource, NullIfBlank(DprntFilePath), DprntFileClearPolicy, dprntPort,
-                    NullIfBlank(DprntTcpHost), NullIfBlank(DprntFtpUsername), NullIfBlank(DprntFtpPassword)),
+                    NullIfBlank(DprntTcpHost), NullIfBlank(DprntFtpUsername), NullIfBlank(DprntFtpPassword), DprntEnabled),
                 new FocasProgramAccessConfiguration(
                     FocasProgramUploadEnabled ? "FOCAS_PROGRAM_UPLOAD" : "NONE",
                     FocasProgramUploadEnabled, FocasProgramFolder.Trim()));
@@ -1404,6 +1411,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         FocasPort = (configuration?.Port ?? 8193).ToString(CultureInfo.InvariantCulture);
         FocasPartCounterSource = configuration?.PartCounterSource ?? "PARTS_COUNT_6711";
         DprntSource = configuration?.Dprnt?.Source ?? "TCP";
+        DprntEnabled = configuration?.Dprnt?.Enabled ?? true;
         DprntTcpPort = (configuration?.Dprnt?.Port ?? 8080).ToString(CultureInfo.InvariantCulture);
         DprntTcpHost = configuration?.Dprnt?.Host ?? string.Empty;
         DprntFilePath = configuration?.Dprnt?.FilePath ?? string.Empty;
@@ -2473,6 +2481,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         });
         DprntTcpPort = value.DprntPort.ToString(CultureInfo.InvariantCulture);
         DprntSource = value.DprntSource;
+        DprntEnabled = value.DprntEnabled;
         DprntFilePath = value.DprntFilePath ?? string.Empty;
         DprntFileClearPolicy = value.DprntFileClearPolicy;
         HaasLocalNetShareEnabled = value.LocalNetShareEnabled;
@@ -2493,6 +2502,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         HaasMtConnectPort = "8082";
         SelectedConnectionType = ConnectionTypes.First(type => type.Value == "HAAS_MTCONNECT");
         DprntSource = "TCP";
+        DprntEnabled = true;
         DprntTcpPort = "8080";
         DprntTcpHost = string.Empty;
         DprntFilePath = string.Empty;

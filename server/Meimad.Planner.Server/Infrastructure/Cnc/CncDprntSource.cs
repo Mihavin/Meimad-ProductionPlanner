@@ -32,8 +32,8 @@ internal sealed class CncDprntSource : IAsyncDisposable
         // A serial-to-Ethernet bridge has its own address; otherwise the controller itself serves DPRNT.
         this.host = string.IsNullOrWhiteSpace(value.Host) ? host : value.Host.Trim();
         this.timeoutMs = timeoutMs;
-        Source = string.IsNullOrWhiteSpace(value.Source)
-            ? CncDprntSources.Tcp : value.Source.Trim().ToUpperInvariant();
+        Source = !value.Enabled ? CncDprntSources.None
+            : string.IsNullOrWhiteSpace(value.Source) ? CncDprntSources.Tcp : value.Source.Trim().ToUpperInvariant();
         ClearPolicy = string.IsNullOrWhiteSpace(value.ClearPolicy)
             ? CncDprntClearPolicies.Never : value.ClearPolicy.Trim().ToUpperInvariant();
         FilePath = value.FilePath;

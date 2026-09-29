@@ -426,7 +426,20 @@
                                     </DockPanel>
                                 </StackPanel>
                             </Border>
-                            <DataGrid Grid.Row="2" ItemsSource="{Binding Operations}" SelectedItem="{Binding SelectedOperation}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="220" MaxHeight="420" ScrollViewer.VerticalScrollBarVisibility="Visible">
+                            <DataGrid Grid.Row="2" ItemsSource="{Binding Operations}" SelectedItem="{Binding SelectedOperation}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="220" MaxHeight="420" ScrollViewer.VerticalScrollBarVisibility="Visible"
+                                      ToolTip="Right-click an Operation to see its collected times.">
+                                <DataGrid.Resources>
+                                    <ContextMenu x:Key="OperationRowMenu" x:Shared="False">
+                                        <MenuItem Header="Show statistics…"
+                                                  ToolTip="The Operation's NC and real Machine times, the measurements behind them and the history of its times; apply a time to the Operation."
+                                                  Click="ShowOperationStatistics_Click"
+                                                  AutomationProperties.Name="Show statistics"/>
+                                    </ContextMenu>
+                                    <Style TargetType="DataGridRow">
+                                        <Setter Property="ContextMenu" Value="{StaticResource OperationRowMenu}"/>
+                                        <EventSetter Event="PreviewMouseRightButtonDown" Handler="OperationRow_PreviewMouseRightButtonDown"/>
+                                    </Style>
+                                </DataGrid.Resources>
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Route" Binding="{Binding RouteDisplayPosition}" Width="55" />
                                     <DataGridTextColumn Header="#" Binding="{Binding OperationNumber}" Width="55" />

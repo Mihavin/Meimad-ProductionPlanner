@@ -142,7 +142,10 @@ internal static class CncDprntClearPolicies
 /// address carries the DPRNT output; <paramref name="FilePath"/> and <paramref name="ClearPolicy"/>
 /// apply to the FILE and FTP sources (for FTP, the path of the print file on the controller's
 /// embedded FTP server); <paramref name="FtpUsername"/> and <paramref name="FtpPassword"/> are
-/// the FTP source's login, when the controller's FTP server requires one.
+/// the FTP source's login, when the controller's FTP server requires one. <paramref name="Enabled"/>
+/// switches the Machine's DPRNT output off while keeping the source settings (owner decision
+/// 2026-09-29): nothing is read, packages print no cycle events, and the planner reports the
+/// Machine's workflow statuses by hand on the Planning Board.
 /// </summary>
 internal sealed record CncDprntConfiguration(
     string Source = CncDprntSources.Tcp,
@@ -151,7 +154,8 @@ internal sealed record CncDprntConfiguration(
     int? Port = null,
     string? Host = null,
     string? FtpUsername = null,
-    string? FtpPassword = null);
+    string? FtpPassword = null,
+    bool Enabled = true);
 internal sealed record HaasProgramAccessConfiguration(
     string Provider,
     bool Enabled,

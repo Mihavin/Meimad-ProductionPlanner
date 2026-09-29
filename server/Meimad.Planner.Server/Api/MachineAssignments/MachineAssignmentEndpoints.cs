@@ -21,6 +21,7 @@ internal static class MachineAssignmentEndpoints
         operations.MapPost("/{batchOperationId}/finish", FinishAsync);
         operations.MapPost("/{batchOperationId}/reset", ResetAsync);
         operations.MapPost("/{batchOperationId}/manual-report", ManualReportAsync);
+        operations.MapPost("/{batchOperationId}/workflow-status", ReportWorkflowStatusAsync);
         operations.MapPost("/{batchOperationId}/redo", RedoAsync);
         endpoints.MapGet("/api/v1/planning-board/finished-operations", ListFinishedAsync);
     }
@@ -283,6 +284,27 @@ internal static class MachineAssignmentEndpoints
         catch (Exception exception) when (TryMapError(exception, context, out var error)) { return error!; }
     }
 
+    /// <summary>POST …/workflow-status: a Machine without DPRNT output gets its production status reported by hand.</summary>
+    private static async Task<IResult> ReportWorkflowStatusAsync(
+        string batchOperationId, WorkflowStatusRequest request, HttpContext context, MachineAssignmentService service,
+        CancellationToken cancellationToken)
+    {
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.RunOperations, out var authority, out var accessError))
+            return accessError!;
+        try
+        {
+            return Results.Ok(await service.ReportWorkflowStatusAsync(batchOperationId, request.Status, authority!, cancellationToken));
+        }
+        catch (ManualWorkflowStatusException exception)
+        {
+            return PlanningHttpSupport.Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, context);
+        }
+        catch (Exception exception) when (TryMapError(exception, context, out var error))
+        {
+            return error!;
+        }
+    }
+
     private static async Task<IResult> ChangeExecutionStatusAsync(
         string batchOperationId,
         BatchOperationExecutionAction action,
@@ -416,3 +438,4 @@ internal static class MachineAssignmentEndpoints
         response.Headers.ETag =
             $"\"machine-assignment:{assignment.MachineAssignmentId}:v{assignment.Version}\"";
 }
+internal sealed record WorkflowStatusRequest(string? Status);

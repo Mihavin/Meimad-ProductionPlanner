@@ -1313,3 +1313,70 @@ Open points:
 - The Windows postprocessor status gains *NC cycle time* and *Setup estimate* columns for the current release, per Machine number. The other release details show Machine numbers instead of ids.
 
 **Tests:** `GCodeReleaseApiTests.Released_nc_is_analyzed_once_and_evaluated_per_machine_without_overwriting_manual_cycle` extended (the catalog's setup estimate equals the Planning Board's 172.5 s); client `PostprocessorStatusTimeTests`.
+
+## Real Machine times and operation statistics (2026-09-29)
+
+**Owner request:**
+> Time used for timeline and showed on assigned to machine operation in Planning Board: No NC, no Measured on Machine > Show estimation from operation. NC exist, but no machine measrement - NC Time. Machine Measurment exists - Show the real Machine time. Collect all times, show it in Case / Operation Tab / Rigth clic on operation >> show statistics - new window should show the collected times. Option "Apply time on operation" should be on NC Time and Real time. It should ovveride the Cycle, Setup, QC or Part Loading time in the operation. Keep history.
+
+**Owner decisions:**
+- Only times of the same Case Operation on the same Machine count.
+- A real time is the median of the last 10 measurements.
+- Cycle, setup, QC and loading are all used automatically.
+- Apply writes to the Case Operation (pending Work Orders follow, released ones on Refresh from Case), with history.
+
+**Implemented (schema v93):**
+- `SqliteOperationTimeMeasurements` reads the measurements (see the API contract) and caches the medians.
+- The Planning Board and the Timeline source use real > NC > Operation for cycle, setup, QC and load/unload of assigned operations.
+- `GET/POST /api/v1/cases/{caseId}/operations/{operationId}/time-statistics[/apply]`, and the immutable `case_operation_time_changes` history. Manual edits of the four times are recorded too.
+- Windows client:
+  - the Case → Operations grid's right-click **Show statistics…** opens the statistics window: times by Machine with *Apply NC* / *Apply real*, the collected measurements, and the history;
+  - Planning Board cards show *Real median* and *Real setup*, and the time tooltip names the real QC and load/unload medians.
+
+**Decisions made while implementing (reversible):**
+- The CNC setup is measured from the Offset Loader run to Send to QC, so tool loading before the Offset Loader is not included.
+- Applying a real setup writes the fixture part (median − tool loading − first piece), so the setup estimate does not count them twice.
+- *Apply NC* exists for the cycle only.
+- Gaps between cycles count as loading only when a worker loads every part.
+
+**Tests:** `OperationTimeStatisticsApiTests` covers:
+- the priority chain on the board and the timeline;
+- the statistics, apply, permission, stale version, pending Work Order refresh and history;
+- manual edits in the history;
+- the median of the last ten.
+
+## Planning Board emulates Machine telemetry (2026-09-29)
+
+**Owner request:**
+> Planning Board should emulate the real machine telemetry: Assigned to machine operation / right click menu changes: Show the production statuses manual report (radio buttons) Ready for Setup, Setup Run, Passed to QC, Ready For Production, In Production. Remove the setup start, setup end, manual part time update and production end options. Remove the Play / stop / Pause / reset buttons. Add option "mark operation as Finished" (the operation was finished before, no need to keep it in plan).
+
+**Owner decisions:**
+- The statuses are offered for Machines without DPRNT output. A Machine connection option switches the DPRNT output on or off.
+- They are recorded as Production Run workflow events.
+- Pause is removed entirely.
+
+**Implemented (schema v94):**
+- Server:
+  - `POST /api/v1/batch-operations/{id}/workflow-status`;
+  - the new event types `MANUAL_READY_FOR_SETUP` and `MANUAL_SETUP_RUN`;
+  - the DPRNT output switch (`dprnt.enabled` / `dprntEnabled`);
+  - `workflowStatus` and `manualWorkflowReporting` on the Planning Board;
+  - Finish from not started or paused, with a manual production session closed on Finish;
+  - the Timeline drops finished setup/QC phases of running operations;
+  - measured times from manual statuses.
+- Windows client:
+  - the operation's right-click menu shows the five statuses as radio items, disabled with an explanation on DPRNT Machines, plus **Mark operation as Finished**;
+  - the card shows the current status in place of the player buttons;
+  - the manual report items and the pause dialog are removed;
+  - Setup → Machine connection has a **DPRNT output** checkbox.
+
+**Decisions made while implementing (reversible):**
+- Ready for Setup and Setup Run get their own event types, because an Offset Loader event would arm CNC verification (AGENTS rules 32/33).
+- Passed to QC, Ready for Production and In Production reuse `SEND_TO_QC`, `QC_PASS` and `PRODUCTION_SESSION_OPENED`. A hand-reported Ready for Production therefore counts as a QC pass (for example, in the Kitaron push), with the planner as the user.
+- Setup Run starts the operation under the normal start rules.
+- The start/suspend/reset/manual-report endpoints stay on the Server for older clients.
+
+**Tests:**
+- `ManualWorkflowStatusApiTests`: the event chain, QC queue, board, finish closing the session, collected times, the DPRNT gate and switch, finish before start;
+- client `RealTimesAndManualWorkflowTests`;
+- migration version tests.

@@ -30,6 +30,12 @@ Cases are part masters. Search by part number, name, customer, or active state. 
 
 The **Postprocessor status** of the selected Operation shows, for each postprocessor with a current release, the calculated **NC cycle time** per part and the **Setup estimate** on each Machine that can run it. The setup estimate is tool loading (the required tools × the loading time per tool), plus the Operation's setup time, plus the first piece. It says "fixture time missing" while the Operation has no setup time.
 
+Right-click an Operation and choose **Show statistics…** to see its collected times:
+- **Times by Machine:** for each Machine, the cycle, setup, QC and load/unload time from three sources — the Operation, the current NC release, and the **real median** of the last 10 measurements of this Operation on that Machine. The **Used for planning** column shows which one the Planning Board and Timeline use: the real median first, then the NC time, then the Operation's own time.
+- **Apply NC** (cycle only) or **Apply real** writes that time into the Operation. Pending Work Orders take it at once; released ones take it on **Refresh from Case**. A real setup is written without the tool loading and the first piece, because the setup estimate adds those back.
+- **Collected times** lists the measurements; ✓ marks those in the median.
+- **History** shows every change of the four times, applied or typed, with who made it and when.
+
 Under **Operations**, the selected Operation also lists its **auxiliary steps**: inspection, deburring, packing, plating and similar work on Workstations, External Resources or Employees before or after the Machine. Add, edit or delete them with the Cases permission; steps imported from Kitaron show the origin **Kitaron**, and a step you delete is not brought back by the next synchronization. Your edit of an imported step stays until Kitaron itself changes that step.
 
 Operations imported from Kitaron follow the Kitaron route in operation-number order: the first is **INDEPENDENT** and each next one is **SEQUENTIAL** after the one before it. You can change a dependency; it stays until Kitaron changes that operation, and a **PARALLEL_CAPABLE** or **LOCKED_SIMULTANEOUS** choice is never replaced. Deleting an imported operation links the next imported operation to the one before it. **LOCKED_SIMULTANEOUS** operations with the same group key run as a flow line in operation-number order: each operation is set up when a qualified setup worker is free (one setup worker can set up the Machines one after the other), operation 100 starts part 1 as soon as operation 80 has finished it, and each Machine stays reserved from the group's first activity until its last part is done. Times you type on an imported operation are kept; only a real Kitaron time replaces them.
@@ -45,7 +51,8 @@ The pool (**UNASSIGNED**) lists only operations that have a Machine Type and bel
 - Drag an operation from the pool or between machine backlogs to assign or move it.
 - Reordering is manual. The Planner does not optimize or silently repair the plan.
 - The first backlog operation is the one eligible to start. A running operation cannot be displaced.
-- Use the operation commands **Start**, **Pause/Suspend**, **Finish**, and **Reset** only when the command is enabled.
+- Right-click an operation on a Machine to report its **production status** when the Machine has no DPRNT output: **Ready for Setup**, **Setup Run**, **Passed to QC**, **Ready For Production** or **In Production**. The selected status has a filled radio button. The Server records it just as the Machine would, so the tablet, the QC queue and the Timeline follow it. Setup Run starts the operation, which must be first in the Machine's backlog. On a Machine with DPRNT the statuses show what the Machine reported and cannot be changed; switch the Machine's **DPRNT output** off in Setup → Machine connection to report them by hand.
+- **Mark operation as Finished** removes an operation that was already finished from the plan and its Machine backlog, even if it never started here.
 - A pause requires a reason. Reset is for a paused operation and returns it to `not started`; Finish closes the operation and compacts the backlog.
 - Cross-machine or cross-type compatibility warnings require explicit confirmation and a reason.
 

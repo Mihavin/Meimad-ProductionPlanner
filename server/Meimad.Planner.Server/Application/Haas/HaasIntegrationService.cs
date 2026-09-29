@@ -59,6 +59,10 @@ internal sealed class HaasIntegrationService(
             ?? CncDprntClearPolicies.Never;
         if (!CncDprntClearPolicies.IsSupported(dprntFileClearPolicy))
             throw new HaasValidationException("dprntFileClearPolicy", "DPRNT file clear policy must be NEVER, ON_OFFSET_LOADER, or AFTER_READ.");
+        // A client that predates the DPRNT output switch keeps the Server-side choice.
+        var dprntEnabled = update.DprntEnabled ?? current?.DprntEnabled ?? true;
+        if (!dprntEnabled && telemetryProvider == HaasTelemetryProviders.DprntOnly)
+            throw new HaasValidationException("dprntEnabled", "The DPRNT telemetry provider needs the Machine's DPRNT output switched on.");
         var counterSource = update.PartCounterSource?.Trim().ToUpperInvariant() ?? string.Empty;
         if (!HaasPartCounterSources.IsSupported(counterSource))
             throw new HaasValidationException("partCounterSource", "Part counter source must be Q500, M30_COUNTER_1, or M30_COUNTER_2.");
@@ -82,7 +86,7 @@ internal sealed class HaasIntegrationService(
             update.PollingIntervalMs, update.ConnectionTimeoutMs, update.StableProgramPolls,
             update.HeaderLineLimit, update.HeaderByteLimit, patterns, update.Enabled,
             current?.Version + 1 ?? 1, current?.CreatedAt ?? now, now, telemetryProvider,
-            dprntSource, dprntFilePath, dprntFileClearPolicy);
+            dprntSource, dprntFilePath, dprntFileClearPolicy, dprntEnabled);
         return await repository.UpsertSettingsAsync(value, update.ExpectedVersion, authority, token);
     }
 

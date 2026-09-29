@@ -125,6 +125,9 @@ internal sealed class CncConnectionService(
         if (telemetryProvider == HaasTelemetryProviders.MtConnect && value.MtConnect is null)
             throw new CncValidationException("configuration.mtConnect", "MTConnect configuration is required when MTCONNECT is the telemetry provider.");
         var dprnt = value.Dprnt is null ? null : ValidateDprnt(value.Dprnt, allowNone: false);
+        if (telemetryProvider == HaasTelemetryProviders.DprntOnly && dprnt is { Enabled: false })
+            throw new CncValidationException("configuration.dprnt.enabled",
+                "The DPRNT telemetry provider needs the Machine's DPRNT output switched on.");
         if (update.AllowWrite)
             throw new CncValidationException("allowWrite",
                 "Direct CNC variable writes are disabled; protected setup verification executes on the controller.");
@@ -249,7 +252,7 @@ internal sealed class CncConnectionService(
         var ftpPassword = Optional(value.FtpPassword);
         if (ftpPassword is { Length: > 256 })
             throw new CncValidationException("configuration.dprnt.ftpPassword", "DPRNT FTP password must be 256 characters or fewer.");
-        return new(source, filePath, clearPolicy, value.Port, tcpHost, ftpUsername, ftpPassword);
+        return new(source, filePath, clearPolicy, value.Port, tcpHost, ftpUsername, ftpPassword, value.Enabled);
     }
 
     private static string Required(string? value, string field)

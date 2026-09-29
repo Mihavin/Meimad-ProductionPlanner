@@ -106,7 +106,16 @@ internal sealed record PlanningBoardOperationResponse(
     IReadOnlyList<string> SetupEstimateWarnings,
     bool UsesSetupOccupancyEstimate,
     string? CaseOperationId,
-    int? ManualPriority)
+    int? ManualPriority,
+    string SetupTimeSource,
+    string QaTimeSource,
+    string LoadUnloadTimeSource,
+    int MeasuredCycleSamples,
+    int MeasuredSetupSamples,
+    int MeasuredQaSamples,
+    int MeasuredLoadUnloadSamples,
+    string? WorkflowStatus,
+    bool ManualWorkflowReporting)
 {
     internal static PlanningBoardOperationResponse FromApplication(
         PlanningBoardOperation operation) => new(
@@ -174,7 +183,16 @@ internal sealed record PlanningBoardOperationResponse(
         operation.SetupEstimateWarnings ?? [],
         operation.UsesSetupOccupancyEstimate,
         operation.CaseOperationId,
-        operation.ManualPriority);
+        operation.ManualPriority,
+        operation.SetupTimeSource,
+        operation.QaTimeSource,
+        operation.LoadUnloadTimeSource,
+        operation.MeasuredCycleSamples,
+        operation.MeasuredSetupSamples,
+        operation.MeasuredQaSamples,
+        operation.MeasuredLoadUnloadSamples,
+        operation.WorkflowStatus,
+        operation.ManualWorkflowReporting);
 }
 
 internal sealed record PlanningBoardMachineResponse(

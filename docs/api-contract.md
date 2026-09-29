@@ -979,7 +979,7 @@ Start, Finish, and Reset requests have no body; Suspend has the structured pause
 }
 ```
 
-Start accepts `not_started` or `suspended`, requires an assignment at backlog position zero, and rejects a Machine that already has another `in_progress` operation. Suspend and Finish accept only `in_progress`. Reset accepts only `suspended`, returns the operation to `not_started`, retains its assignment, backlog position, and planning mode, closes the active pause event, and rejects a running operation so the operator must Pause first. Suspend requires `reasonType`: `additional_qa`, `tooling_problem`, `customer_request`, or `other`. Their required fields are respectively `problemDescription`, `toolingItemDescription`, both `customerContactName` and `requestDescription`, or `comment`; an optional comment is retained for every type. Missing data returns `422 validation_failed` without mutation. The Server records `pausedBy` from Edit Mode authority and the start timestamp; Resume or Reset atomically closes the event with its end timestamp. An in-progress operation cannot be moved, unassigned, reset, or switched to another planning mode; it must be suspended first, otherwise the relevant command returns `409`. Suspend retains assignment, position, and mode. Finish changes status to `completed`, deletes the active assignment, and compacts remaining positions without starting or moving anything else. Every accepted Start/Suspend/Finish/Reset transition recomputes the parent Production Batch and linked Order statuses in the same transaction; rows and versions change only when their derived tokens change. Suspended work remains `in_production`, Reset returns it to waiting/active facts when no other work has started, and the final Finish makes a non-empty Batch `complete`. Completed operations are omitted from the active Planning Board and cannot be assigned again; `GET /api/v1/planning-board/finished-operations?limit=` lists them (`{ items: [ { batchOperationId, version, batchId, batchNumber, caseId, partNumber, caseName, operationNumber, operationName, plannedQuantity, producedQuantity, actualStart, actualEnd, machineId, machineName } ] }`, Work Orders not cancelled, newest finish first, default 300, at most 1,000). `POST /api/v1/batch-operations/{id}/redo` with `{ expectedVersion }` (`planning.board`, owner decision 2026-09-28) returns a completed operation to `not_started` with actual start/end/Machine cleared, resets its own Production Run to `PLANNED` with completed cycles and produced quantity 0 (outputs `ALLOCATED`), releases any active Machine assignment and recomputes Batch and Order status; it answers `200 { batchOperationId, batchId, operationNumber, batchNumber, previousProducedQuantity }`, `409 edit_conflict` for a stale version, `409 operation_not_finished`, `409 work_order_cancelled`, `409 operation_made_by_production_run` (made by a run that is not its own), `404` when unknown and `422` without `expectedVersion`.
+Start accepts `not_started` or `suspended`, requires an assignment at backlog position zero, and rejects a Machine that already has another `in_progress` operation. Suspend accepts only `in_progress`; Finish accepts `in_progress`, and since schema v94 also `not_started` and `suspended` for work finished outside the plan. Reset accepts only `suspended`, returns the operation to `not_started`, retains its assignment, backlog position, and planning mode, closes the active pause event, and rejects a running operation so the operator must Pause first. Suspend requires `reasonType`: `additional_qa`, `tooling_problem`, `customer_request`, or `other`. Their required fields are respectively `problemDescription`, `toolingItemDescription`, both `customerContactName` and `requestDescription`, or `comment`; an optional comment is retained for every type. Missing data returns `422 validation_failed` without mutation. The Server records `pausedBy` from Edit Mode authority and the start timestamp; Resume or Reset atomically closes the event with its end timestamp. An in-progress operation cannot be moved, unassigned, reset, or switched to another planning mode; it must be suspended first, otherwise the relevant command returns `409`. Suspend retains assignment, position, and mode. Finish changes status to `completed`, deletes the active assignment, and compacts remaining positions without starting or moving anything else. Every accepted Start/Suspend/Finish/Reset transition recomputes the parent Production Batch and linked Order statuses in the same transaction; rows and versions change only when their derived tokens change. Suspended work remains `in_production`, Reset returns it to waiting/active facts when no other work has started, and the final Finish makes a non-empty Batch `complete`. Completed operations are omitted from the active Planning Board and cannot be assigned again; `GET /api/v1/planning-board/finished-operations?limit=` lists them (`{ items: [ { batchOperationId, version, batchId, batchNumber, caseId, partNumber, caseName, operationNumber, operationName, plannedQuantity, producedQuantity, actualStart, actualEnd, machineId, machineName } ] }`, Work Orders not cancelled, newest finish first, default 300, at most 1,000). `POST /api/v1/batch-operations/{id}/redo` with `{ expectedVersion }` (`planning.board`, owner decision 2026-09-28) returns a completed operation to `not_started` with actual start/end/Machine cleared, resets its own Production Run to `PLANNED` with completed cycles and produced quantity 0 (outputs `ALLOCATED`), releases any active Machine assignment and recomputes Batch and Order status; it answers `200 { batchOperationId, batchId, operationNumber, batchNumber, previousProducedQuantity }`, `409 edit_conflict` for a stale version, `409 operation_not_finished`, `409 work_order_cancelled`, `409 operation_made_by_production_run` (made by a run that is not its own), `404` when unknown and `422` without `expectedVersion`.
 
 The implemented Machine master requires an existing Working Calendar. Clients obtain the opaque `workingCalendarId` from `GET /working-calendars`; users are not expected to know or type it. `picturePath` is optional, must be an absolute filesystem path, and is stored as text only. The Server does not require the file to exist during create/update. `GET /machines/{machineId}/picture` returns PNG, JPEG, BMP, or GIF bytes, `404 picture_not_found` for a missing/unavailable path, and `415 picture_format_unsupported` for another extension; errors do not expose the path. `deviceId` is a read-only projection of the optional enabled E-Ink binding administered through the active-editor device-registration API. PATCH requires the Machine ETag and rejects changes that would make assigned operations incompatible. Setting `isActive` false therefore requires an empty backlog. `displayEnabled` does not affect assignment compatibility.
 
@@ -2730,3 +2730,76 @@ Owner decisions 2026-09-28: a release may carry the subprogram files its program
 A file's program number is the `O` (or `:`) number on its first code line after `%` and comment-only lines, else a leading number in its file name (`O09810_probe.nc`, `1001.nc`); a file may have none. Calls are `M98 P<n>` and `G65 P<n>` (a FANUC `M98 P` with eight digits is a four-digit repeat count plus the program number); `M97` calls a local block and needs no file. Release refuses with `422 validation_failed`: a subprogram containing `[[MEIMAD:` or `(MEIMAD PACKAGE` (`subprogram_placeholder_not_allowed`: only the main program is a package template), two files with the same program number or the main program's number (`duplicate_program_number`), a repeated file name or the main program's name (`duplicate_file_name`), a disallowed extension, or more than 50 files. Nothing is stored when the release is refused.
 
 The subprograms are stored in the release's own folder (a numbered file as `O<number><extension>`, which the NC engine finds, so the release's NC analysis follows the calls) and are immutable. The release representation adds `subprograms: [ { subprogramId, position, originalFileName, programNumber, fileSize, fileHash } ]` and `missingSubprogramCalls: [ <number> ]`: the numbers the program, or an included file it reaches, calls that no included file provides (for example probing macros kept on the machine). A Production Package copies every subprogram byte for byte as artifact type `NC_SUBPROGRAM` at `nc/<original file name>` beside the `RUNNABLE_NC` program; a missing or checksum-mismatched subprogram fails the build (`production_package_source_missing` / `production_package_source_corrupt`), and two NC files with the same package file name fail it with `production_package_subprogram_name_conflict`.
+
+### Operation time statistics and real Machine times (schema v93)
+
+Owner decisions 2026-09-29: the Planning Board and the Timeline use, for an Operation assigned to a Machine, the real time of the same Case Operation on the same Machine when one was measured; without one, the NC time; without NC, the Operation's own time. A real time is the median of the last 10 measurements.
+
+- Measurements come from immutable events:
+  - **cycle:** completed CNC cycle attempts (Machine timestamps when both ends have one), and manual part-time reports;
+  - **setup:** an `OFFSET_LOADER_COMPLETED` to the first `SEND_TO_QC` after it, or a manual setup start to its setup end;
+  - **QC:** `SEND_TO_QC` to the next `QC_PASS` / `QC_FAIL`, unless the part was sent again first;
+  - **load/unload:** a `CYCLE_END` to the next `CYCLE_START` of the run, at most 1 h. It is used only when a worker loads every part (not with automatic loading or loading every N parts).
+- Planning Board operations add `setupTimeSource` (`measured_median`, `setup_estimate` or `operation`), `qaTimeSource` and `loadUnloadTimeSource` (`measured_median` or `operation`), and `measuredCycleSamples`, `measuredSetupSamples`, `measuredQaSamples`, `measuredLoadUnloadSamples`. `planningCycleTimeSource` adds `measured_median`. A measured setup replaces the whole setup estimate (tool loading, fixture and first piece); `totalSetupTimeSeconds`, `qaTimeAfterSetupSeconds` and `loadUnloadTimeSeconds` carry the times used. Timeline intervals report `planningCycleTimeSource` `measured_median` the same way. A running operation's own CNC series (`cnc_series_average`) and its own manual reports still come first.
+- `GET /api/v1/cases/{caseId}/operations/{operationId}/time-statistics` (everyone signed in) returns:
+  - the Operation's `version`, `setupSeconds`, `cycleSeconds`, `qaSeconds`, `loadUnloadSeconds`, `automaticLoading`, `loadUnloadEveryNParts`, `hasManagedProcess` and `requiredToolCount`;
+  - `machines: [ { machineId, machineNumber, machineName, gCodeReleaseId, ncCycleSeconds, ncSetupSeconds, measuredCycle, measuredSetup, measuredQa, measuredLoadUnload, setupApplySeconds, loadingIsPerPart } ]`. The list covers every Machine with an NC estimate of the active process's current releases or a measurement. A measured time is `{ medianSeconds, sampleCount, lastMeasuredAt }`. `setupApplySeconds` is what applying the measured setup writes: the median minus tool loading and the first piece, which the setup estimate adds back;
+  - `samples: [ { kind, machineId, seconds, measuredAt, source (CNC / MANUAL), batchNumber, inMedian } ]`, the newest 50 per kind and Machine;
+  - `history: [ { id, kind, source (NC / MEASURED / MANUAL), machineId, machineNumber, previousSeconds, newSeconds, basisSeconds, sampleCount, gCodeReleaseId, changedBy, changedAt } ]`, newest first.
+- `POST …/time-statistics/apply` (Cases permission) takes `{ kind: cycle | setup | qa | load_unload, source: NC | MEASURED, machineId, expectedVersion }`:
+  - The Server computes the value and writes it to the Case Operation.
+  - Pending Work Orders take it at once; released ones on Refresh from Case.
+  - The change is recorded in the history, and the call returns the statistics.
+  - `NC` is offered for the cycle only; the NC setup estimate is built from the Operation's own setup time.
+  - Errors:
+    - `409 resource_version_stale`, with who last changed a time and when;
+    - `422 nc_time_unavailable`, `measured_time_unavailable`, `measured_loading_not_per_part` or `machine_time_unavailable`;
+    - `400 invalid_time_kind` / `invalid_time_source`.
+- A manual edit of the cycle, setup, QC or load/unload time through `PATCH /api/v1/cases/{caseId}/operations/{operationId}` is recorded in the same history with source `MANUAL`.
+
+### Manual production statuses for Machines without DPRNT (schema v94)
+
+Owner decisions 2026-09-29: on the Planning Board, the planner reports the production status of an operation on a Machine without DPRNT output. The Server records it as the Production Run workflow event that telemetry would have produced.
+
+- A Machine reports its own workflow when:
+  - its execution mode is `CNC_GCODE`;
+  - its connection is enabled;
+  - and its DPRNT source is not `NONE`.
+  Every other Machine (manual, no connection, or DPRNT output switched off) gets its statuses reported by hand.
+- The DPRNT output switch:
+  - The connection configuration's `dprnt.enabled` (default `true`) turns the DPRNT output off while keeping the source settings. The Haas connection API carries it as `dprntEnabled`.
+  - Switched off, the Server reads no DPRNT, Production Packages print no cycle events, and the Machine counts as having no DPRNT.
+  - The `DPRNT` telemetry provider needs it switched on (`422`).
+- `POST /api/v1/batch-operations/{id}/workflow-status` takes `{ status }` and needs the operations permission. The statuses and the events they record (source `PLANNER_MANUAL`):
+
+  | Status | Event recorded |
+  |---|---|
+  | `READY_FOR_SETUP` | `MANUAL_READY_FOR_SETUP` |
+  | `IN_SETUP_RUN` | `MANUAL_SETUP_RUN` |
+  | `IN_QC` | `SEND_TO_QC` |
+  | `READY_FOR_PRODUCTION` | `QC_PASS` |
+  | `IN_PRODUCTION` | `PRODUCTION_SESSION_OPENED` |
+
+  - Any status after `READY_FOR_SETUP` starts a not-started or paused operation first, under the usual start rules (first in the backlog, no other running operation, readiness).
+  - It returns `{ batchOperationId, machineId, status, previousStatus, eventId, recordedAt }`. `eventId` is null when the run already had that status.
+  - Errors:
+    - `409 machine_reports_workflow` for a Machine with DPRNT;
+    - `409 operation_finished`;
+    - `409 operation_not_assigned`;
+    - `422` for an unknown status;
+    - the start errors.
+- Consumers of the new events:
+  - Tablets, the preparation queue and the E-Ink device list show `MANUAL_READY_FOR_SETUP` as `READY_FOR_SETUP` and `MANUAL_SETUP_RUN` as `IN_SETUP_RUN`.
+  - A tablet's `SEND_TO_QC` is accepted after `MANUAL_SETUP_RUN`.
+  - A hand-reported `IN_QC` enters the QC queue like a tablet's.
+- Planning Board operations add:
+  - `workflowStatus` (the projected status of the run, null when unassigned);
+  - `manualWorkflowReporting` (the Machine has no DPRNT).
+- Timeline: a running operation whose run is `IN_QC` has no setup left, and one that is `READY_FOR_PRODUCTION` or `IN_PRODUCTION` has no setup or QC left.
+- Finish:
+  - `POST …/finish` also accepts `not_started` and `suspended`. It marks an operation finished outside the plan (actual start stays empty) and closes an active pause.
+  - When the run's latest event is a hand-reported `PRODUCTION_SESSION_OPENED`, Finish appends `PRODUCTION_SESSION_CLOSED` with `{ producedQuantity }` (the Work Order quantity).
+- Measured times:
+  - a setup is measured from `MANUAL_SETUP_RUN` to the next `SEND_TO_QC`, like an Offset Loader;
+  - a manual production session gives a cycle sample: session time ÷ produced quantity.
+- The Windows Planning Board no longer offers Start, Pause, Finish, Reset or the manual setup start/end, part time and production end reports. `POST …/start`, `/suspend`, `/reset` and `/manual-report` remain for compatibility.

@@ -92,43 +92,27 @@ public partial class MachinePlanningBoardView : UserControl
             await viewModel.DeleteMachineAsync(machine);
     }
 
-    private async void StartOperation_Click(object sender, RoutedEventArgs e) =>
-        await ChangeOperationExecutionAsync(sender, "start");
-
-    private async void SuspendOperation_Click(object sender, RoutedEventArgs e)
+    /// <summary>A production status reported by hand for a Machine without DPRNT output.</summary>
+    private async void WorkflowStatus_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { DataContext: PlanningOperationViewModel operation }
-            || DataContext is not MachinePlanningBoardViewModel viewModel) return;
-        var dialog = new OperationPauseDialog { Owner = Window.GetWindow(this) };
-        if (dialog.ShowDialog() == true && dialog.Value is not null)
-            await viewModel.ChangeExecutionStatusAsync(operation, "suspend", dialog.Value);
+        if (sender is not MenuItem { Tag: string status } item ||
+            item.DataContext is not PlanningOperationViewModel operation ||
+            DataContext is not MachinePlanningBoardViewModel viewModel) return;
+        await viewModel.ReportWorkflowStatusAsync(operation, status);
     }
 
-    private async void FinishOperation_Click(object sender, RoutedEventArgs e) =>
-        await ChangeOperationExecutionAsync(sender, "finish");
-
-    private async void ResetOperation_Click(object sender, RoutedEventArgs e) =>
-        await ChangeOperationExecutionAsync(sender, "reset");
-
-    private async void ManualReport_Click(object sender, RoutedEventArgs e)
+    /// <summary>An operation finished outside the plan leaves the plan and its Machine backlog.</summary>
+    private async void MarkFinished_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not MenuItem item ||
-            item.Parent is not ContextMenu { PlacementTarget: FrameworkElement target } ||
-            target.DataContext is not PlanningOperationViewModel operation ||
+        if (sender is not MenuItem { DataContext: PlanningOperationViewModel operation } ||
             DataContext is not MachinePlanningBoardViewModel viewModel) return;
-        var reportType = item.Tag?.ToString() ?? string.Empty;
-        int? seconds = null;
-        if (reportType == "partTimeUpdate")
-        {
-            var value = TextPromptWindow.Show(
-                Window.GetWindow(this),
-                "Enter manual part time in seconds:",
-                "Manual part time update",
-                "0");
-            if (value is null || !int.TryParse(value.Trim(), out var parsed) || parsed <= 0) return;
-            seconds = parsed;
-        }
-        await viewModel.RecordManualReportAsync(operation, reportType, seconds);
+        if (LocalizedMessageBox.Show(
+                $"Mark {operation.DisplayTitle} as finished? It leaves the plan and its Machine backlog.",
+                "Mark operation as Finished",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        await viewModel.ChangeExecutionStatusAsync(operation, "finish");
     }
 
     private async void ScheduleBackward_Click(object sender, RoutedEventArgs e) =>
@@ -272,37 +256,6 @@ public partial class MachinePlanningBoardView : UserControl
         }
 
         await viewModel.ChangePlanningModeAsync(operation, planningMode);
-    }
-
-    private async Task ChangeOperationExecutionAsync(object sender, string action)
-    {
-        if (sender is Button { DataContext: PlanningOperationViewModel operation }
-            && DataContext is MachinePlanningBoardViewModel viewModel)
-        {
-            if (action == "finish"
-                && LocalizedMessageBox.Show(
-                    $"Finish {operation.DisplayTitle}? This removes it from the active Machine backlog.",
-                    "Finish operation",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning,
-                    MessageBoxResult.No) != MessageBoxResult.Yes)
-            {
-                return;
-            }
-
-            if (action == "reset"
-                && LocalizedMessageBox.Show(
-                    $"Reset {operation.DisplayTitle} to Not started? Its machine assignment and backlog position will be kept.",
-                    "Reset operation",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning,
-                    MessageBoxResult.No) != MessageBoxResult.Yes)
-            {
-                return;
-            }
-
-            await viewModel.ChangeExecutionStatusAsync(operation, action);
-        }
     }
 
     private void DragSource_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)

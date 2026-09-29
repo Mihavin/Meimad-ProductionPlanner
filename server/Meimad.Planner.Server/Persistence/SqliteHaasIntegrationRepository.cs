@@ -522,7 +522,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
             new HaasMtConnectConfiguration(value.MtConnectPort, value.ConnectionTimeoutMs, value.DprntPort),
             value.TelemetryProvider,
             value.MacAddress,
-            new CncDprntConfiguration(value.DprntSource, value.DprntFilePath, value.DprntFileClearPolicy));
+            new CncDprntConfiguration(value.DprntSource, value.DprntFilePath, value.DprntFileClearPolicy, Enabled: value.DprntEnabled));
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """

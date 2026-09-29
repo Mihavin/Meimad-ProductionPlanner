@@ -564,6 +564,86 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
         var pausedBy = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var result = await ApplyExecutionAsync(
+            connection, transaction, pausedBy, batchOperationId, action, pauseReason, now, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
+    /// <summary>
+    /// A planner reports the workflow status of an operation on a Machine without DPRNT output
+    /// (owner decisions 2026-09-29). The Server records the Production Run workflow event that
+    /// telemetry would have produced, so tablets, the QC queue and the Timeline see the same
+    /// status. Every status after "ready for setup" means the Machine works on the operation, so
+    /// a not-started or paused operation is started first (with the usual start rules).
+    /// </summary>
+    public async Task<ManualWorkflowStatusResult> ReportWorkflowStatusAsync(
+        string batchOperationId, string status, DateTimeOffset now, EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        var actor = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var execution = await ReadExecutionStateAsync(connection, transaction, batchOperationId, cancellationToken)
+            ?? throw new BatchOperationNotFoundException(batchOperationId);
+        if (execution.Status is "completed" or "cancelled")
+            throw new ManualWorkflowStatusException("operation_finished",
+                "The operation is finished; its production status can no longer change.");
+        if (execution.AssignmentId is null || execution.MachineId is null)
+            throw new BatchOperationNotAssignedException(batchOperationId);
+        if ((await SqliteMachineWorkflowReporting.ReadMachinesWithDprntAsync(connection, transaction, cancellationToken))
+            .Contains(execution.MachineId))
+            throw new ManualWorkflowStatusException("machine_reports_workflow",
+                "This Machine reports its production status through DPRNT. To report it by hand, switch the Machine's DPRNT output off in Setup → Machine connection.");
+
+        string? runId;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT production_run_id FROM machine_assignments WHERE id = $id;";
+            read.Parameters.AddWithValue("$id", execution.AssignmentId);
+            runId = await read.ExecuteScalarAsync(cancellationToken) as string;
+        }
+        if (runId is null)
+            throw new ManualWorkflowStatusException("production_run_missing", "The Machine assignment has no Production Run.");
+        var latest = (await SqliteMachineWorkflowReporting.ReadLatestEventsAsync(connection, transaction, cancellationToken))
+            .GetValueOrDefault(batchOperationId);
+        var previous = ManualWorkflowStatuses.Project(latest);
+        if (previous == status)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new(batchOperationId, execution.MachineId, status, previous, null, now);
+        }
+
+        if (status != ManualWorkflowStatuses.ReadyForSetup && execution.Status is "not_started" or "suspended")
+        {
+            await ApplyExecutionAsync(connection, transaction, actor, batchOperationId,
+                BatchOperationExecutionAction.Start, null, now, cancellationToken);
+        }
+        var eventType = ManualWorkflowStatuses.EventType(status);
+        var appended = await SqliteMachineWorkflowReporting.AppendAsync(connection, transaction, runId, execution.MachineId,
+            eventType, actor, new { reportedStatus = status, previousStatus = previous }, now, cancellationToken);
+        await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction, new(
+            "manual_workflow_status_reported", now, actor,
+            new Dictionary<string, string>
+            {
+                ["batchOperationId"] = batchOperationId, ["machineId"] = execution.MachineId, ["productionRunId"] = runId
+            },
+            status, null, new { status = previous }, new { status, eventType }), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new(batchOperationId, execution.MachineId, status, previous, appended.EventId, appended.At);
+    }
+
+    private async Task<BatchOperationExecutionResult> ApplyExecutionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string pausedBy,
+        string batchOperationId,
+        BatchOperationExecutionAction action,
+        OperationPauseReason? pauseReason,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
         var execution = await ReadExecutionStateAsync(
             connection, transaction, batchOperationId, cancellationToken)
             ?? throw new BatchOperationNotFoundException(batchOperationId);
@@ -579,8 +659,9 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 when execution.Status is "not_started" or "suspended" => "in_progress",
             BatchOperationExecutionAction.Suspend
                 when execution.Status == "in_progress" => "suspended",
+            // An operation finished outside the plan may be marked finished before it started.
             BatchOperationExecutionAction.Finish
-                when execution.Status == "in_progress" => "completed",
+                when execution.Status is "in_progress" or "not_started" or "suspended" => "completed",
             BatchOperationExecutionAction.Reset
                 when execution.Status == "suspended" => "not_started",
             _ => throw new BatchOperationTransitionException(execution.Status, action)
@@ -683,6 +764,18 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             await ClosePauseEventAsync(
                 connection, transaction, batchOperationId, action, now, cancellationToken);
         }
+        else if (action == BatchOperationExecutionAction.Finish && execution.Status == "suspended")
+        {
+            await ClosePauseEventAsync(
+                connection, transaction, batchOperationId, action, now, cancellationToken, required: false);
+        }
+
+        // A production session reported by hand ends with the operation, and says how many parts it made.
+        if (action == BatchOperationExecutionAction.Finish && execution.MachineId is { } finishedMachine)
+        {
+            await CloseManualProductionSessionAsync(
+                connection, transaction, batchOperationId, finishedMachine, pausedBy, now, cancellationToken);
+        }
 
         if (action == BatchOperationExecutionAction.Finish)
         {
@@ -770,7 +863,6 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 productionToolTableFileHash = productionPin?.ToolTableFileHash
             }), cancellationToken);
 
-        await transaction.CommitAsync(cancellationToken);
         return new BatchOperationExecutionResult(
             batchOperationId,
             execution.MachineId,
@@ -924,9 +1016,53 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         await command.ExecuteNonQueryAsync(token);
     }
 
+    private static async Task CloseManualProductionSessionAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string batchOperationId, string machineId,
+        string userId, DateTimeOffset now, CancellationToken token)
+    {
+        string? runId = null;
+        int quantity = 0;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = """
+                SELECT event.production_run_id, batch.planned_quantity
+                FROM production_run_workflow_events event
+                JOIN production_runs run ON run.id = event.production_run_id
+                JOIN batch_operations operation ON operation.id = run.legacy_batch_operation_id
+                JOIN production_batches batch ON batch.id = operation.production_batch_id
+                WHERE run.legacy_batch_operation_id = $operationId
+                ORDER BY event.server_received_at DESC, event.id DESC
+                LIMIT 1;
+                """;
+            read.Parameters.AddWithValue("$operationId", batchOperationId);
+            await using var reader = await read.ExecuteReaderAsync(token);
+            if (await reader.ReadAsync(token))
+            {
+                runId = reader.GetString(0);
+                quantity = reader.GetInt32(1);
+            }
+        }
+        if (runId is null) return;
+        await using (var latest = connection.CreateCommand())
+        {
+            latest.Transaction = transaction;
+            latest.CommandText = """
+                SELECT event_type = 'PRODUCTION_SESSION_OPENED' AND source = $source
+                FROM production_run_workflow_events WHERE production_run_id = $runId
+                ORDER BY server_received_at DESC, id DESC LIMIT 1;
+                """;
+            latest.Parameters.AddWithValue("$runId", runId);
+            latest.Parameters.AddWithValue("$source", ManualWorkflowStatuses.Source);
+            if (Convert.ToInt64(await latest.ExecuteScalarAsync(token) ?? 0L) != 1) return;
+        }
+        await SqliteMachineWorkflowReporting.AppendAsync(connection, transaction, runId, machineId,
+            "PRODUCTION_SESSION_CLOSED", userId, new { producedQuantity = quantity }, now, token);
+    }
+
     private static async Task ClosePauseEventAsync(
         SqliteConnection connection, SqliteTransaction transaction, string operationId,
-        BatchOperationExecutionAction action, DateTimeOffset now, CancellationToken token)
+        BatchOperationExecutionAction action, DateTimeOffset now, CancellationToken token, bool required = true)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -937,7 +1073,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             """;
         command.Parameters.AddWithValue("$operationId", operationId);
         command.Parameters.AddWithValue("$at", FormatInstant(now));
-        if (await command.ExecuteNonQueryAsync(token) != 1)
+        if (await command.ExecuteNonQueryAsync(token) != 1 && required)
         {
             throw new BatchOperationTransitionException("suspended_without_active_pause", action);
         }

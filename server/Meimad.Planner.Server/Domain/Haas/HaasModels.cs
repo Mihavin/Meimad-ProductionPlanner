@@ -61,7 +61,8 @@ internal sealed record HaasConnectionSettings(
     string TelemetryProvider = HaasTelemetryProviders.Mdc,
     string DprntSource = CncDprntSources.Tcp,
     string? DprntFilePath = null,
-    string DprntFileClearPolicy = CncDprntClearPolicies.Never);
+    string DprntFileClearPolicy = CncDprntClearPolicies.Never,
+    bool DprntEnabled = true);
 
 internal sealed record HaasProgramStatus(
     string? ProgramNumber,

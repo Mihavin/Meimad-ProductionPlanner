@@ -111,7 +111,16 @@ internal sealed record PlanningBoardOperation(
     bool UsesSetupOccupancyEstimate = false,
     string? CaseOperationId = null,
     int? ManualPriority = null,
-    bool IsWorkOrderReleased = false);
+    bool IsWorkOrderReleased = false,
+    string SetupTimeSource = "operation",
+    string QaTimeSource = "operation",
+    string LoadUnloadTimeSource = "operation",
+    int MeasuredCycleSamples = 0,
+    int MeasuredSetupSamples = 0,
+    int MeasuredQaSamples = 0,
+    int MeasuredLoadUnloadSamples = 0,
+    string? WorkflowStatus = null,
+    bool ManualWorkflowReporting = false);
 
 /// <summary>
 /// The unassigned pool of the Machines tab lists only Machine work that is released for production

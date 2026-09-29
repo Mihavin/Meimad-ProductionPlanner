@@ -414,6 +414,30 @@ public partial class CaseWorkspaceView : UserControl
         }
     }
 
+    /// <summary>Right-clicking an Operation selects it, so the menu acts on the row under the mouse.</summary>
+    private void OperationRow_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is DataGridRow row) row.IsSelected = true;
+    }
+
+    private async void ShowOperationStatistics_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel) return;
+        if (sender is FrameworkElement { DataContext: CaseOperation clicked } && viewModel.SelectedOperation != clicked)
+            viewModel.SelectedOperation = clicked;
+        if (viewModel.TimeStatisticsContext is not { } context)
+        {
+            LocalizedMessageBox.Show(Window.GetWindow(this), "Connect to the Server and select the Operation first.", "Operation statistics",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (OperationTimeStatisticsWindow.Open(Window.GetWindow(this), context.Client, context.ClientId,
+                context.Operation.CaseId, context.Operation.CaseOperationId))
+        {
+            await viewModel.ReloadOperationsAfterTimeChangeAsync(context.Operation.CaseOperationId);
+        }
+    }
+
     private async void ViewReleaseNcFile_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: PlannerGCodeRelease release }) await OpenReleaseAsync(release);

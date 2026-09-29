@@ -98,7 +98,8 @@ internal sealed record HaasSettingsUpdate(
     string? TelemetryProvider,
     string? DprntSource = null,
     string? DprntFilePath = null,
-    string? DprntFileClearPolicy = null);
+    string? DprntFileClearPolicy = null,
+    bool? DprntEnabled = null);
 
 internal sealed class HaasValidationException(string field, string message) : Exception(message)
 {

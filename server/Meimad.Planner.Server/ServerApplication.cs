@@ -216,6 +216,7 @@ public static class ServerApplication
         builder.Services.AddSingleton<IToolPreparationRepository, SqliteToolPreparationRepository>();
         builder.Services.AddSingleton<ToolPreparationService>();
         builder.Services.AddSingleton<SqliteSpindleInterfaceRepository>();
+        builder.Services.AddSingleton<SqliteOperationTimeStatisticsRepository>();
         builder.Services.AddSingleton<IToolCatalogRepository, SqliteToolCatalogRepository>();
         builder.Services.AddSingleton<ToolCatalogService>();
         builder.Services.AddSingleton<CimatronToolTransferService>();
@@ -426,6 +427,7 @@ public static class ServerApplication
         application.MapProductionPackageEndpoints();
         application.MapToolPreparationEndpoints();
         application.MapSpindleInterfaceEndpoints();
+        application.MapOperationTimeStatisticsEndpoints();
         application.MapToolCatalogEndpoints();
         application.MapToolRequirementEndpoints();
         application.MapResourcePlanningEndpoints();

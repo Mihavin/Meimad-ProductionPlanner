@@ -1819,6 +1819,28 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     /// A release from the history grid, read-only in the NC viewer. "Edit copy" continues on a
     /// local copy that can be saved (a local version) or released as a new revision.
     /// </summary>
+    /// <summary>What the operation statistics window needs: the Server connection and the selected Operation.</summary>
+    internal (IPlannerApiClient Client, string ClientId, CaseOperation Operation)? TimeStatisticsContext =>
+        apiClient is { } client && SelectedCase is not null && SelectedOperation is { } operation
+            ? (client, clientId, operation) : null;
+
+    /// <summary>After a time was applied from the statistics: the Operations and Work Orders show the new time.</summary>
+    internal async Task ReloadOperationsAfterTimeChangeAsync(string caseOperationId)
+    {
+        if (apiClient is null || SelectedCase is null) return;
+        try
+        {
+            var operations = await apiClient.ListCaseOperationsAsync(SelectedCase.CaseId);
+            var selected = SelectedOperation?.CaseOperationId;
+            Replace(Operations, operations);
+            SelectedOperation = Operations.FirstOrDefault(value => value.CaseOperationId == (selected ?? caseOperationId));
+            Replace(Batches, await apiClient.ListBatchesAsync(SelectedCase.CaseId));
+            RecalculateCurrentTimeTotals();
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception)) { StatusMessage = FriendlyMessage(exception); }
+    }
+
     internal async Task<NcViewer.NcViewerOpenRequest?> CreateReleaseViewerRequestAsync(PlannerGCodeRelease release)
     {
         if (apiClient is not { } client || SelectedCase is not { } selectedCase || SelectedOperation is not { } operation)

@@ -47,7 +47,7 @@ internal sealed class SqliteTabletEventRepository(SqliteDatabase database)
 
         if (!run.MachineIsActive
             || string.Equals(run.RunStatus, "SUSPENDED", StringComparison.Ordinal)
-            || latestEvent?.EventType is not ("SETUP_VERIFICATION_SUCCEEDED" or "QC_FAIL"))
+            || latestEvent?.EventType is not ("SETUP_VERIFICATION_SUCCEEDED" or "QC_FAIL" or "MANUAL_SETUP_RUN"))
         {
             throw new TabletEventStateException(
                 "tablet_event_not_allowed",

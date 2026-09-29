@@ -156,8 +156,11 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         return values;
     }
 
-    /// <summary>The connection's DPRNT source (<c>dprnt.source</c> in its configuration JSON); TCP when the JSON predates the field.</summary>
-    private static string? DprntSource(string? configurationJson)
+    /// <summary>
+    /// The connection's DPRNT source (<c>dprnt.source</c> in its configuration JSON); TCP when the
+    /// JSON predates the field, and NONE when the DPRNT output is switched off (<c>dprnt.enabled</c>).
+    /// </summary>
+    internal static string? DprntSource(string? configurationJson)
     {
         if (configurationJson is null) return null;
         try
@@ -168,6 +171,9 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             {
                 if (!property.Name.Equals("dprnt", StringComparison.OrdinalIgnoreCase)
                     || property.Value.ValueKind != JsonValueKind.Object) continue;
+                if (property.Value.EnumerateObject().Any(field =>
+                        field.Name.Equals("enabled", StringComparison.OrdinalIgnoreCase) && field.Value.ValueKind == JsonValueKind.False))
+                    return CncDprntSources.None;
                 foreach (var field in property.Value.EnumerateObject())
                 {
                     if (field.Name.Equals("source", StringComparison.OrdinalIgnoreCase) && field.Value.ValueKind == JsonValueKind.String)

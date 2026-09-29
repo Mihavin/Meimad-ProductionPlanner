@@ -419,6 +419,11 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             WHERE lower(trim(COALESCE(batch_operations.required_machine_type, ''))) <> 'production note'
             ORDER BY production_batches.id, batch_operations.route_position;
             """;
+        // Real times of the same Case Operation on the same Machine come before the NC and the
+        // Operation's own times (owner decision 2026-09-29).
+        var measuredTimes = await SqliteOperationTimeMeasurements.ReadMediansAsync(connection, transaction, cancellationToken);
+        // A running operation past QC has no setup or QC left, whether its Machine reported that or a planner did.
+        var latestEvents = await SqliteMachineWorkflowReporting.ReadLatestEventsAsync(connection, transaction, cancellationToken);
         var values = new List<TimelineSourceOperation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -448,6 +453,18 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             var ncCycleSeconds = status == "not_started" && !reader.IsDBNull(43)
                 ? reader.GetDouble(43) : (double?)null;
             var assignedMachineId = NullableString(reader, 16);
+            var workflowStatus = status == "in_progress"
+                ? ManualWorkflowStatuses.Project(latestEvents.GetValueOrDefault(reader.GetString(0))) : null;
+            var setupDone = (useMeasuredSeries && status == "in_progress")
+                || workflowStatus is ManualWorkflowStatuses.InQc or ManualWorkflowStatuses.ReadyForProduction or ManualWorkflowStatuses.InProduction;
+            var qcDone = (useMeasuredSeries && status == "in_progress")
+                || workflowStatus is ManualWorkflowStatuses.ReadyForProduction or ManualWorkflowStatuses.InProduction;
+            var measured = assignedMachineId is null
+                ? null : measuredTimes.GetValueOrDefault((reader.GetString(11), assignedMachineId));
+            var measuredCycleSeconds = measured?.Cycle?.MedianSeconds;
+            var measuredSetupSeconds = measured?.Setup?.MedianSeconds;
+            var measuredLoadSeconds = SqliteOperationTimeMeasurements.LoadingIsPerPart(reader.GetInt32(22) == 1, NullableInt(reader, 23))
+                ? measured?.LoadUnload?.MedianSeconds : null;
             var setupWorker = assignedMachineId is null ? null : resources
                 .Where(resource => resource.Role == "setup_worker" && (resource.Skills.Contains(assignedMachineId, StringComparer.OrdinalIgnoreCase) || resource.Skills.Contains("*", StringComparer.OrdinalIgnoreCase)))
                 .OrderBy(resource => resource.ResourceId, StringComparer.Ordinal).FirstOrDefault();
@@ -456,19 +473,19 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                     plannedQuantity,
                     requiredToolCount,
                     setupWorker?.FixtureAssemblySeconds ?? fixtureSetupSeconds,
-                    null,
+                    measuredCycleSeconds,
                     ncCycleSeconds,
                     manualCycleSeconds,
                     setupWorker?.ToolLoadSecondsPerTool ?? setupEstimation.DefaultToolLoadTimePerToolSeconds,
                     setupWorker is null ? setupEstimation.DefaultFirstPieceFactor : 100d / setupWorker.FirstPartRunningSpeedPercent))
                 : null;
-            var scheduledSetupSeconds = useMeasuredSeries && status == "in_progress"
+            var scheduledSetupSeconds = setupDone
                 ? 0
-                : occupancy?.TotalSetupSeconds ?? fixtureSetupSeconds;
+                : measuredSetupSeconds ?? occupancy?.TotalSetupSeconds ?? fixtureSetupSeconds;
             var scheduledCycleSeconds = useMeasuredSeries
                 ? measuredAverageCycleSeconds
                 : occupancy?.SelectedCycleSeconds
-                ?? (plannedQuantity == 0 && occupancy is not null ? 0 : manualCycleSeconds);
+                ?? (plannedQuantity == 0 && occupancy is not null ? 0 : measuredCycleSeconds ?? manualCycleSeconds);
             var productionCycleQuantity = useMeasuredSeries
                 ? Math.Max(0, remainingCycleCount ?? targetQuantity - completedQuantity)
                 : occupancy?.RemainingProductionQuantity ?? plannedQuantity;
@@ -480,8 +497,9 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 NullableString(reader, 14), NullableString(reader, 15), assignedMachineId, NullableInt(reader, 17),
                 NullableString(reader, 18),
                 NullableString(reader, 34) is { } machineMovedAt ? Parse(machineMovedAt) : null,
-                useMeasuredSeries && status == "in_progress" ? 0 : reader.GetInt32(19),
-                reader.GetInt32(20), reader.GetInt32(21) == 1,
+                qcDone ? 0
+                    : measured?.Qa is { } measuredQa ? (int)Math.Round(measuredQa.MedianSeconds) : reader.GetInt32(19),
+                measuredLoadSeconds is { } load ? (int)Math.Round(load) : reader.GetInt32(20), reader.GetInt32(21) == 1,
                 reader.GetInt32(22) == 1, NullableInt(reader, 23), reader.GetInt32(24) == 1,
                 priorityDate, priorityOrder,
                 reader.IsDBNull(27) ? null : $"{reader.GetString(27).Replace('_', ' ')}: {reader.GetString(30)}",
@@ -499,7 +517,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 reader.GetInt32(41) == 1,
                 manualCycleSeconds,
                 ncCycleSeconds,
-                useMeasuredSeries ? "cnc_series_average" : occupancy?.PlanningCycleSource
+                useMeasuredSeries ? "cnc_series_average" : measuredCycleSeconds.HasValue ? "measured_median" : occupancy?.PlanningCycleSource
                     ?? (manualCycleSeconds.HasValue ? "manual" : "unavailable"),
                 NullableString(reader, 44),
                 reader.IsDBNull(45) ? [] : JsonSerializer.Deserialize<string[]>(reader.GetString(45)) ?? [],
@@ -508,7 +526,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 RequiredToolCount: requiredToolCount,
                 ToolLoadingSeconds: occupancy?.ToolLoadingSeconds ?? 0,
                 FirstPieceProveOutSeconds: occupancy?.FirstPieceProveOutSeconds,
-                TotalSetupSeconds: occupancy?.TotalSetupSeconds,
+                TotalSetupSeconds: measuredSetupSeconds ?? occupancy?.TotalSetupSeconds,
                 ProductionCycleQuantity: productionCycleQuantity,
                 RemainingProductionSeconds: occupancy?.RemainingProductionSeconds,
                 TotalPlannedMachineSeconds: occupancy?.TotalPlannedMachineSeconds,

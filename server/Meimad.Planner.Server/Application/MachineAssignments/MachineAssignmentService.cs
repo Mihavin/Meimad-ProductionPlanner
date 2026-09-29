@@ -267,6 +267,17 @@ internal sealed class MachineAssignmentService
             batchOperationId.Trim(), expectedVersion, timeProvider.GetUtcNow(), editAuthority, cancellationToken);
     }
 
+    internal Task<ManualWorkflowStatusResult> ReportWorkflowStatusAsync(
+        string batchOperationId, string? status, EditAuthority editAuthority, CancellationToken cancellationToken = default)
+    {
+        var normalized = status?.Trim().ToUpperInvariant() ?? string.Empty;
+        if (!Persistence.ManualWorkflowStatuses.All.Contains(normalized))
+            throw new MachineAssignmentValidationException("status", "invalid",
+                "status must be READY_FOR_SETUP, IN_SETUP_RUN, IN_QC, READY_FOR_PRODUCTION or IN_PRODUCTION.");
+        return repository.ReportWorkflowStatusAsync(batchOperationId.Trim(), normalized, timeProvider.GetUtcNow(),
+            editAuthority, cancellationToken);
+    }
+
     internal Task<ManualOperationReportResult> RecordManualReportAsync(
         string batchOperationId, string reportType, int? partTimeSeconds,
         EditAuthority editAuthority, CancellationToken cancellationToken = default)
@@ -396,6 +407,11 @@ internal sealed class BatchOperationNotAssignedException : Exception
 {
     internal BatchOperationNotAssignedException(string batchOperationId)
         : base($"Batch Operation '{batchOperationId}' is not assigned to a Machine.") { }
+}
+
+internal sealed class ManualWorkflowStatusException(string code, string message) : Exception(message)
+{
+    internal string Code { get; } = code;
 }
 
 internal sealed class BatchOperationTransitionException : Exception

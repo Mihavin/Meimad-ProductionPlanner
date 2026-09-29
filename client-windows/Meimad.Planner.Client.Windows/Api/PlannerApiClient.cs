@@ -366,6 +366,17 @@ internal interface IPlannerApiClient : IDisposable
     Task<PlannerSpindleLibrary> GetSpindleLibraryAsync(CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    /// <summary>A Case Operation's times, NC and measured times per Machine, samples and history.</summary>
+    Task<PlannerOperationTimeStatistics> GetOperationTimeStatisticsAsync(
+        string caseId, string caseOperationId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    /// <summary>Applies the NC cycle ("NC") or a measured median ("MEASURED") to the Case Operation.</summary>
+    Task<PlannerOperationTimeStatistics> ApplyOperationTimeAsync(
+        string caseId, string caseOperationId, string kind, string source, string machineId, int expectedVersion,
+        string clientId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     /// <summary>Creates (null id) or replaces a spindle adaptor; needs the Setup permission.</summary>
     Task<PlannerSpindleAdaptor> SaveSpindleAdaptorAsync(
         string? spindleAdaptorId, SpindleAdaptorSave value, string clientId, string userId,
@@ -1014,6 +1025,12 @@ internal interface IPlannerApiClient : IDisposable
         string action,
         string clientId,
         long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    /// <summary>Reports the production status of an operation on a Machine without DPRNT output.</summary>
+    Task<PlannerWorkflowStatusReport> ReportWorkflowStatusAsync(
+        string batchOperationId, string status, string clientId, long editGeneration,
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
@@ -2213,6 +2230,26 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<PlannerToolPreparation>(response, cancellationToken);
     }
+
+    public async Task<PlannerOperationTimeStatistics> GetOperationTimeStatisticsAsync(
+        string caseId, string caseOperationId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(OperationTimeStatisticsPath(caseId, caseOperationId), cancellationToken);
+        return await ReadSuccessAsync<PlannerOperationTimeStatistics>(response, cancellationToken);
+    }
+
+    public async Task<PlannerOperationTimeStatistics> ApplyOperationTimeAsync(
+        string caseId, string caseOperationId, string kind, string source, string machineId, int expectedVersion,
+        string clientId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, OperationTimeStatisticsPath(caseId, caseOperationId) + "/apply", clientId);
+        request.Content = JsonContent.Create(new { kind, source, machineId, expectedVersion }, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerOperationTimeStatistics>(response, cancellationToken);
+    }
+
+    private static string OperationTimeStatisticsPath(string caseId, string caseOperationId) =>
+        $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(caseOperationId)}/time-statistics";
 
     public async Task<PlannerSpindleLibrary> GetSpindleLibraryAsync(CancellationToken cancellationToken = default)
     {
@@ -3678,6 +3715,18 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Content = JsonContent.Create(pause, options: JsonOptions);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<BatchOperationExecution>(response, cancellationToken);
+    }
+
+    public async Task<PlannerWorkflowStatusReport> ReportWorkflowStatusAsync(
+        string batchOperationId, string status, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post,
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/workflow-status", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(new { status }, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerWorkflowStatusReport>(response, cancellationToken);
     }
 
     public async Task<ManualOperationReport> RecordManualOperationReportAsync(
