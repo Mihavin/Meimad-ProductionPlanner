@@ -11,7 +11,9 @@ Meimad Metals, internal).
 | CodeMirror | 5.65.21 (MIT, `vendor/codemirror/LICENSE`) |
 | three.js | 0.185.1 (MIT, `vendor/three/LICENSE`) |
 
-Do not edit these files. Meimad-specific behavior lives outside this folder:
+Do not edit these files. One local exception: `machines/haas-umc-500.json` carries the factory's
+measured MRZP (owner change 2026-09-30, `verified: true`); a sync must keep those values or the
+upstream placeholder returns. Meimad-specific behavior lives outside this folder:
 
 - `shared/Meimad.Planner.NcEngine/Scripts/bootstrap.js` — CommonJS loader and the
   `node:path` (win32), read-only `node:fs` and `Buffer` shims the engine needs in V8.

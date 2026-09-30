@@ -27,11 +27,11 @@
     "C": { "type": "rotary", "min": null, "max": null, "rapidRate": 3000, "wrap": true }
   },
   "mrzp": {
-    "x": -305,
-    "y": -203,
-    "z": -460,
+    "x": -259.5627,
+    "y": -200.5454,
+    "z": -434.8587,
     "rotaryCenterDistance": 0,
-    "verified": false,
+    "verified": true,
     "source": "Placeholder at the travel centre. Replace with the machine's Settings 255 (X), 256 (Y), 257 (Z) and 254 (5-axis rotary centre distance)."
   },
   "rotaryConvention": {
