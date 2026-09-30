@@ -597,7 +597,7 @@ function execute(main, options = {}) {
   // A stop halts after the flat lines emitted so far (afterLine of them).
   function stopAt(kind, message) {
     const at = origin();
-    return { afterLine: out.lines.length, kind, message: message || "", line: at.line, unit: at.unit || null, unitLine: at.unitLine || null };
+    return { afterLine: out.lines.length, kind, message: message || "", line: at.line, unit: at.unit || null, unitLine: at.unitLine || null, step: blocks };
   }
 
   function uniqueSequence(key, number) {

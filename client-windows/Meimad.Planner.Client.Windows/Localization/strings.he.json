@@ -4739,5 +4739,13 @@
   "Local": "מקומי",
   "Common": "משותף",
   "vacant": "ריק",
-  "read": "נקרא"
+  "read": "נקרא",
+  "Next: called from row {row}": "הבא: נקראת משורה {row}",
+  "No further calls": "אין קריאות נוספות",
+  "Before row {row}": "לפני שורה {row}",
+  "After row {row}": "אחרי שורה {row}",
+  "Before {unit} row {row}": "לפני {unit} שורה {row}",
+  "After {unit} row {row}": "אחרי {unit} שורה {row}",
+  "execution {n} of {m}": "ביצוע {n} מתוך {m}",
+  "Single step: run the next block of the program, or of the called program, then stop (single block)": "צעד בודד: הרץ את הבלוק הבא של התוכנית או של התוכנית הנקראת ועצור (בלוק בודד)"
 }

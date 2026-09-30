@@ -4739,5 +4739,13 @@
   "Local": "Локальная",
   "Common": "Общая",
   "vacant": "пусто",
-  "read": "прочитано"
+  "read": "прочитано",
+  "Next: called from row {row}": "Далее: вызов из строки {row}",
+  "No further calls": "Вызовов больше нет",
+  "Before row {row}": "Перед строкой {row}",
+  "After row {row}": "После строки {row}",
+  "Before {unit} row {row}": "Перед {unit} строкой {row}",
+  "After {unit} row {row}": "После {unit} строки {row}",
+  "execution {n} of {m}": "выполнение {n} из {m}",
+  "Single step: run the next block of the program, or of the called program, then stop (single block)": "Покадрово: выполнить следующий кадр программы или вызванной программы и остановиться (покадровый режим)"
 }

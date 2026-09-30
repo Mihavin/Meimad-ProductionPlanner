@@ -1465,3 +1465,21 @@ Open points:
 - The tree lists what the program text calls; a macro that computes its program number (G65 P#1) is shown as computed and its target appears once it runs.
 
 **Tests:** `NcEngineMacroExecutionTests` (tree with memory macros behind an untaken branch, attached subprogram, same-file program, computed call; mill trace levels; lathe trace order and system reads), client `PlaybackCoreTests` (breakpoints, row targets, variables per level/step) and `MacroVariablesTests`; the page glue was checked in headless Edge (tree list, gutter breakpoints in both editors, halt, row follow with tool filter, variables payload). Not verified: the WebView2 page and the WPF window inside the running client.
+
+## NC viewer: row-by-row single step, next called program, breakpoints and variables of all programs (2026-09-30)
+
+**Owner feedback (after 0.1.169):**
+> the Subprogram window should show the active called subprogram, the single step should step in the subprogram. Show the active or next be called macro program in Subprogram window. Option of break point should be active also in main program. The Macro Variables table should show all used variables, include memory subprograms
+
+**Implemented:**
+- Single step now follows the engine's executed-row trace instead of the drawn segments: every executed row is a step (macro statements, calls, M99, rows of called programs at any depth), landing after the row's own move or, for a row without motion, where the tool stands when it runs. A breakpoint row is reached before it runs, a stop row after; the next step then runs it. A halt while playback runs lands single step on the halted row, so stepping continues from a stop or breakpoint. Halts on rows already stepped past at the same playback position are not repeated by Run (`haltsUpTo`).
+- The called-program pane shows the active row of the called program while stepping or running inside it, with the calling row marked in the NC program (amber), and previews the next program to be called (with its calling row) while the tool is in the main program, from the start and after Stop.
+- Breakpoints toggle on the row number as well as the dot column, and with F9 on the cursor row, in both editors; the NC program's markers are re-rendered after the renderer replaces the text, and the editor is attached through a MutationObserver if it appears late.
+- The macro variables list is the union of the executed variables and every `#n` named in the program text and in every called program's text (`referencedVariables`), so a Renishaw macro's variables appear even when its branch never ran; the window's position reads "Before/After row n" while stepping. Engine stops carry the executed-block step so halts at one playback position keep the control's order.
+
+**Decisions made while implementing (reversible):**
+- Single step includes rows without motion (like SBM = 1 on a FANUC); there is no separate "skip macro statements" mode.
+- Landing after a row puts the tool at the end of the row's move; landing before a breakpoint row puts it at the start.
+- The next-call preview shows the first called program of the tree when nothing further is called from the current position.
+
+**Tests:** rewritten `PlaybackCoreTests` (execution order and current row, step targets, caller and next call, halts in execution order with passed halts, variables before/after a step per level); the page glue was checked in headless Edge (breakpoints from the pane's line numbers and F9 in the main editor, six steps into the macro up to its breakpoint, the M01 skipped with optional stop off, Run halting on the main-program breakpoint without repeating the M01, variables at the stepped row). Not verified: the WebView2 page inside the running client.

@@ -505,6 +505,7 @@ function installMillHooks() {
       const inside = depth > 1;
       this.meimadStops.push({
         executionIndex: this.segments.length,
+        step: millTrace(this).step,
         kind,
         message: this.lastComment || "",
         line: inside ? this.stack[1]?.callLine ?? frame.index + 1 : frame.index + 1,
@@ -560,8 +561,26 @@ function flatToExecution(segments, lineCount) {
 function latheStops(prepared, toExecution) {
   return prepared.stops.map((stop) => ({
     executionIndex: toExecution(stop.afterLine),
+    step: stop.step,
     kind: stop.kind, message: stop.message, line: stop.line, unit: stop.unit, unitLine: stop.unitLine
   }));
+}
+
+const MAX_REFERENCED_VARIABLES = 4000;
+
+// Every #n a program text names outside comments: the macro variables window lists them even
+// when the executed branch never touched them (a Renishaw macro's variables, for example).
+function referencedVariables(texts) {
+  const ids = new Set();
+  for (const text of texts) {
+    const code = String(text || "").replace(/\([^)]*\)?/g, " ");
+    for (const match of code.matchAll(/#\s*(\d+)/g)) {
+      const id = Number(match[1]);
+      if (id > 0 && id < 100000) ids.add(id);
+      if (ids.size >= MAX_REFERENCED_VARIABLES) return ids;
+    }
+  }
+  return ids;
 }
 
 // The trace in the viewer's form: rows { key: [[position, level, step], ...] }, writes [[position,
@@ -855,6 +874,10 @@ function parsePreview(requestJson) {
   // The viewer lists every called program; the tree reads the called files, so analysis skips it.
   model.meimadCallTree = callTree(request, machine, prepared);
   model.meimadUnits = Object.fromEntries(prepared.units);
+  if (model.meimadTrace) {
+    const texts = [request.text, ...[...prepared.units.values()].map((unit) => unit.text)];
+    model.meimadTrace.used = [...new Set([...model.meimadTrace.used, ...referencedVariables(texts)])].sort((left, right) => left - right);
+  }
   if (!installMillHooks() && model.kind === "mill") {
     model.warnings = ["Program stops and called-program panes are unavailable: the mill interpreter could not be hooked.", ...(model.warnings || [])];
   }

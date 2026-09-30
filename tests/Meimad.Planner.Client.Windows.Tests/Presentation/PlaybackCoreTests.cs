@@ -6,7 +6,8 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 
 /// <summary>
 /// The NC viewer's playback rules (NcViewer/meimad-playback-core.js) run in V8: program stops
-/// with the optional stop switch, single block stepping and the called-program pane.
+/// with the optional stop switch, breakpoints, row-by-row single step through called programs,
+/// the called-program pane and the macro variables at a position.
 /// </summary>
 public sealed class PlaybackCoreTests : IDisposable
 {
@@ -23,6 +24,33 @@ public sealed class PlaybackCoreTests : IDisposable
         ];
         const stops = [{ executionIndex: 3, kind: "M01", line: 6, message: "CHECK" }, { executionIndex: 5, kind: "M00", line: 8, unit: "O9010.nc", unitLine: 3 }];
         const t = P.buildTimeline(segments);
+        """;
+
+    // A mill program: rows 3-4 move, row 5 sets #1, row 6 calls O9810 (X10. -> #24) whose row 2
+    // sets #100, row 3 moves and row 4 returns; row 7 is M01, row 8 moves, row 9 is M30. The trace
+    // is what the engine records: [position, level, step] per row execution.
+    private const string Program = """
+        const segments = [
+          { line: 3, tool: 1, estimatedSeconds: 1, meimadLocals: 1 },
+          { line: 4, tool: 1, estimatedSeconds: 2, meimadLocals: 1 },
+          { line: 6, tool: 1, sourceUnit: "O9810.nc", sourceLine: 3, callDepth: 1, estimatedSeconds: 1, meimadLocals: 2 },
+          { line: 8, tool: 2, estimatedSeconds: 2, meimadLocals: 1 }
+        ];
+        const units = { "O9810.nc": { text: "O9810", inFile: false } };
+        const stops = [{ executionIndex: 3, step: 10, kind: "M01", line: 7, message: "CHECK" }];
+        const trace = {
+          rows: {
+            "main|3": [[0, 1, 3]], "main|4": [[1, 1, 4]], "main|5": [[2, 1, 5]], "main|6": [[2, 1, 6]],
+            "O9810.nc|2": [[2, 2, 7]], "O9810.nc|3": [[2, 2, 8]], "O9810.nc|4": [[3, 2, 9]],
+            "main|7": [[3, 1, 10]], "main|8": [[3, 1, 11]], "main|9": [[4, 1, 12]]
+          },
+          writes: [[2, 1, 5, 1, "main|5", 5], [2, 24, 10, 2, "main|6", 6], [2, 100, 10, 0, "O9810.nc|2", 7]],
+          systemReads: [[3, 5001, 10]],
+          used: [1, 24, 100, 149, 5001]
+        };
+        const t = P.buildTimeline(segments);
+        const list = P.executionList(trace);
+        const isMainOwn = (entry) => entry.unit === "main";
         """;
 
     private readonly V8ScriptEngine engine = new();
@@ -68,28 +96,6 @@ public sealed class PlaybackCoreTests : IDisposable
     }
 
     [Fact]
-    public void Single_step_runs_one_block_and_halts_on_a_stop_block_first()
-    {
-        var result = Run(Model + """
-            const first = P.nextStep(t, stops, 0, true);
-            const mid = P.nextStep(t, stops, 1, true);            // inside the first block: to its end
-            const beforeStop = P.nextStep(t, stops, 4, true);     // the M01 block is a step of its own
-            const afterStop = P.nextStep(t, stops, 4, true, 3);   // acknowledged: the next block runs
-            const skipped = P.nextStep(t, stops, 4, false);       // optional stop off: no halt
-            const end = P.nextStep(t, stops, 7, true);
-            return { first: first.seconds, mid: mid.seconds, beforeStop: [beforeStop.seconds, beforeStop.stop.kind],
-                     afterStop: afterStop.seconds, skipped: skipped.seconds, end: end === undefined };
-            """);
-
-        Assert.Equal(2, result.GetProperty("first").GetDouble());
-        Assert.Equal(2, result.GetProperty("mid").GetDouble());
-        Assert.Equal("[4,\"M01\"]", result.GetProperty("beforeStop").GetRawText());
-        Assert.Equal(5, result.GetProperty("afterStop").GetDouble());
-        Assert.Equal(5, result.GetProperty("skipped").GetDouble());
-        Assert.True(result.GetProperty("end").GetBoolean());
-    }
-
-    [Fact]
     public void Called_program_rows_come_from_the_segment()
     {
         var result = Run(Model + """
@@ -100,73 +106,99 @@ public sealed class PlaybackCoreTests : IDisposable
         Assert.Equal("{\"unit\":\"O9010.nc\",\"line\":3,\"callerLine\":8,\"depth\":1}", result.GetProperty("call").GetRawText());
     }
 
-    private const string Trace = """
-        const units = { "O9010.nc": { text: "O9010" } };
-        const trace = {
-          rows: { "main|5": [[0, 1, 3]], "main|20": [[3, 1, 6], [5, 1, 9]], "O9010.nc|3": [[5, 2, 8]], "main|8": [[4, 2, 7]] },
-          writes: [[-1, 500, 1, 0, "initial", 0], [3, 1, 5, 1, "main|20", 6], [4, 1, 9, 2, "main|8", 7], [5, 1, 6, 1, "main|20", 9], [5, 100, 2, 0, "O9010.nc|3", 8]],
-          systemReads: [[3, 5001, 10], [5, 5001, 20]],
-          used: [1, 100, 500, 5001]
-        };
-        """;
-
     [Fact]
-    public void Breakpoints_halt_before_every_execution_of_their_row()
+    public void Executed_rows_are_ordered_and_the_current_one_follows_the_playback_position()
     {
-        var result = Run(Model + Trace + """
-            const list = P.halts(stops, ["main|20", "O9010.nc|3"], trace);
-            const crossed = P.stopCrossed(list, 0, 3, false, segments.length);
-            return { list: list.map((h) => [h.executionIndex, h.kind]), crossed: [crossed.executionIndex, crossed.kind], text: P.stopText(crossed),
-                     called: P.stopText(list.find((h) => h.kind === "BREAK" && h.unit === "O9010.nc")) };
-            """);
-
-        Assert.Equal("[[3,\"M01\"],[3,\"BREAK\"],[5,\"M00\"],[5,\"BREAK\"],[5,\"BREAK\"]]", result.GetProperty("list").GetRawText());
-        Assert.Equal("[3,\"BREAK\"]", result.GetProperty("crossed").GetRawText());   // the M01 is skipped with optional stop off
-        Assert.Equal("Breakpoint at row 20. Press Run to continue.", result.GetProperty("text").GetString());
-        Assert.Equal("Breakpoint at O9010.nc row 3. Press Run to continue.", result.GetProperty("called").GetString());
-    }
-
-    [Fact]
-    public void The_tool_goes_to_the_end_of_a_rows_move_or_where_a_macro_row_runs_and_cycles_through_executions()
-    {
-        var result = Run(Model + Trace + """
-            const move = P.rowTarget(t, segments, trace, units, "main|5", undefined);
-            const macro = P.rowTarget(t, segments, trace, units, "main|20", undefined);
-            const again = P.rowTarget(t, segments, trace, units, "main|20", macro);
-            const called = P.rowTarget(t, segments, trace, units, "O9010.nc|3", undefined);
-            return { move: [move.seconds, move.moves, move.tool === undefined], macro: [macro.seconds, macro.position, macro.count],
-                     again: [again.seconds, again.choice], called: [called.seconds, called.moves], none: P.rowTarget(t, segments, trace, units, "main|99") === undefined };
-            """);
-
-        Assert.Equal("[2,true,true]", result.GetProperty("move").GetRawText());       // row 5: end of its two-segment block
-        Assert.Equal("[4,3,2]", result.GetProperty("macro").GetRawText());            // row 20 (no motion) runs before segment 3
-        Assert.Equal("[6,1]", result.GetProperty("again").GetRawText());              // its second execution
-        Assert.Equal("[7,true]", result.GetProperty("called").GetRawText());          // O9010.nc row 3 draws segment 5
-        Assert.True(result.GetProperty("none").GetBoolean());
-    }
-
-    [Fact]
-    public void Variable_values_follow_the_position_the_macro_level_and_the_row_execution()
-    {
-        var result = Run(Trace + """
-            const at = (context) => Object.fromEntries(P.variablesAt(trace, context).map((row) => [row.variable, [row.value, row.scope, row.setAt]]));
+        var result = Run(Program + """
             return {
-              start: at({ position: 0, level: 1 }),
-              inMacro: at({ position: 4, level: 2 }),
-              back: at({ position: 5, level: 1 }),
-              afterFirstRun: at({ position: 3, level: 1, step: 6 })
+              order: list.map((entry) => entry.key),
+              drawingRow4: P.executionAt(list, 1, false),
+              beforeRow4Moves: P.executionAt(list, 1, true),
+              drawingMacroMove: P.executionAt(list, 2, false),
+              beforeStart: P.executionAt(list, 0, true)
             };
             """);
 
-        var start = result.GetProperty("start");
-        Assert.Equal("[\"vacant\",\"Local\",\"\"]", start.GetProperty("#1").GetRawText());
-        Assert.Equal("[\"1\",\"Common\",\"Initial # vars\"]", start.GetProperty("#500").GetRawText());
-        Assert.Equal("[\"9\",\"Local\",\"row 8\"]", result.GetProperty("inMacro").GetProperty("#1").GetRawText());   // the macro level's own #1
-        Assert.Equal("[\"10\",\"System\",\"read\"]", result.GetProperty("inMacro").GetProperty("#5001").GetRawText());
-        Assert.Equal("[\"6\",\"Local\",\"row 20\"]", result.GetProperty("back").GetProperty("#1").GetRawText());
-        Assert.Equal("[\"2\",\"Common\",\"O9010.nc row 3\"]", result.GetProperty("back").GetProperty("#100").GetRawText());
-        Assert.Equal("[\"20\",\"System\",\"read\"]", result.GetProperty("back").GetProperty("#5001").GetRawText());
-        Assert.Equal("[\"5\",\"Local\",\"row 20\"]", result.GetProperty("afterFirstRun").GetProperty("#1").GetRawText());
+        Assert.Equal("[\"main|3\",\"main|4\",\"main|5\",\"main|6\",\"O9810.nc|2\",\"O9810.nc|3\",\"O9810.nc|4\",\"main|7\",\"main|8\",\"main|9\"]",
+            result.GetProperty("order").GetRawText());
+        Assert.Equal(1, result.GetProperty("drawingRow4").GetInt32());
+        Assert.Equal(0, result.GetProperty("beforeRow4Moves").GetInt32());     // row 4 has not run yet
+        Assert.Equal(5, result.GetProperty("drawingMacroMove").GetInt32());     // O9810.nc row 3 emits segment 2
+        Assert.Equal(-1, result.GetProperty("beforeStart").GetInt32());
+    }
+
+    [Fact]
+    public void A_step_lands_after_a_rows_move_or_where_a_macro_statement_runs()
+    {
+        var result = Run(Program + """
+            const target = (index) => { const s = P.stepTarget(t, segments, list, index); return [s.seconds, s.moves, s.tool ?? null]; };
+            return { row3: target(0), row5: target(2), macroRow3: target(5), m30: target(9),
+                     caller: P.callerRow(list, 5, isMainOwn), next: P.nextCall(list, -1, isMainOwn), afterMacro: P.nextCall(list, 6, isMainOwn) === undefined };
+            """);
+
+        Assert.Equal("[1,true,1]", result.GetProperty("row3").GetRawText());        // end of its move
+        Assert.Equal("[3,false,1]", result.GetProperty("row5").GetRawText());       // #1=5.: where the tool is (before segment 2)
+        Assert.Equal("[4,true,1]", result.GetProperty("macroRow3").GetRawText());   // the macro's move
+        Assert.Equal("[6,false,2]", result.GetProperty("m30").GetRawText());        // the end
+        Assert.Equal(6, result.GetProperty("caller").GetInt32());                    // O9810 is called from row 6
+        var next = result.GetProperty("next");
+        Assert.Equal(4, next.GetProperty("index").GetInt32());                       // the first called row, O9810.nc row 2
+        Assert.Equal(6, next.GetProperty("callerRow").GetInt32());
+        Assert.True(result.GetProperty("afterMacro").GetBoolean());
+    }
+
+    [Fact]
+    public void Breakpoints_and_stops_halt_in_execution_order_and_are_not_repeated_after_a_step()
+    {
+        var result = Run(Program + """
+            const all = P.halts(stops, ["O9810.nc|3", "main|8"], trace);
+            const onM01 = P.haltsUpTo(list, 7, all, units, false);
+            const onM01Optional = P.haltsUpTo(list, 7, all, units, true);
+            const onRow8 = P.haltsUpTo(list, 8, all, units, false);
+            return {
+              order: all.map((h) => [h.executionIndex, h.kind, P.haltKey(h, units)]),
+              m01Here: onM01.here.length, m01Passed: [...onM01.passed].map((h) => h.kind),
+              m01OptionalHere: onM01Optional.here.map((h) => h.kind),
+              row8Here: onRow8.here.map((h) => h.kind), row8Passed: [...onRow8.passed].map((h) => h.kind),
+              runFromRow4: P.stopCrossed(all, 1, 3, false, segments.length).key,
+              runAfterM01: P.stopCrossed(all, 2, 3, false, segments.length, onM01.passed).key,
+              m01Row: P.haltExecution(list, stops[0], units),
+              text: P.stopText(all[0])
+            };
+            """);
+
+        Assert.Equal("[[2,\"BREAK\",\"O9810.nc|3\"],[3,\"M01\",\"main|7\"],[3,\"BREAK\",\"main|8\"]]", result.GetProperty("order").GetRawText());
+        Assert.Equal(0, result.GetProperty("m01Here").GetInt32());                      // optional stop off: no halt on row 7
+        Assert.Equal("[\"M01\"]", result.GetProperty("m01Passed").GetRawText());         // but Run must not stop on it later
+        Assert.Equal("[\"M01\"]", result.GetProperty("m01OptionalHere").GetRawText());
+        Assert.Equal("[\"BREAK\"]", result.GetProperty("row8Here").GetRawText());
+        Assert.Equal("[\"M01\",\"BREAK\"]", result.GetProperty("row8Passed").GetRawText());
+        Assert.Equal("O9810.nc|3", result.GetProperty("runFromRow4").GetString());        // the macro's breakpoint comes first
+        Assert.Equal("main|8", result.GetProperty("runAfterM01").GetString());            // the M01 is skipped, row 8's breakpoint halts
+        Assert.Equal(7, result.GetProperty("m01Row").GetInt32());
+        Assert.Equal("Breakpoint at O9810.nc row 3. Press Run to continue.", result.GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public void Variable_values_follow_the_step_and_the_macro_level()
+    {
+        var result = Run(Program + """
+            const at = (context) => Object.fromEntries(P.variablesAt(trace, context).map((row) => [row.variable, [row.value, row.scope, row.setAt]]));
+            const before = (index) => ({ position: list[index].position, level: list[index].level, step: list[index].step - 1 });
+            const after = (index) => ({ position: list[index].position, level: list[index].level, step: list[index].step });
+            return { beforeMacroRow2: at(before(4)), afterMacroRow2: at(after(4)), end: at(after(9)), playback: at({ position: 3, level: 1 }) };
+            """);
+
+        var beforeMacro = result.GetProperty("beforeMacroRow2");
+        Assert.Equal("[\"vacant\",\"Local\",\"\"]", beforeMacro.GetProperty("#1").GetRawText());       // the main program's #1 is another level
+        Assert.Equal("[\"10\",\"Local\",\"row 6\"]", beforeMacro.GetProperty("#24").GetRawText());     // the G65 argument
+        Assert.Equal("[\"vacant\",\"Common\",\"\"]", beforeMacro.GetProperty("#100").GetRawText());
+        Assert.Equal("[\"10\",\"Common\",\"O9810.nc row 2\"]", result.GetProperty("afterMacroRow2").GetProperty("#100").GetRawText());
+        var end = result.GetProperty("end");
+        Assert.Equal("[\"5\",\"Local\",\"row 5\"]", end.GetProperty("#1").GetRawText());
+        Assert.Equal("[\"vacant\",\"Local\",\"\"]", end.GetProperty("#24").GetRawText());
+        Assert.Equal("[\"vacant\",\"Common\",\"\"]", end.GetProperty("#149").GetRawText());             // named by a macro that never ran
+        Assert.Equal("[\"10\",\"System\",\"read\"]", result.GetProperty("playback").GetProperty("#5001").GetRawText());
     }
 
     private JsonElement Run(string body)

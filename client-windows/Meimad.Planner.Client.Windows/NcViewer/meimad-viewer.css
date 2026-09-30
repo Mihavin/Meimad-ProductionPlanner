@@ -346,3 +346,11 @@ body.meimad-read-only .CodeMirror-cursor {
   max-width: 260px;
   font-size: 10px;
 }
+
+/* Single step: the stepped row of the NC program, or the row that called the stepped program. */
+.CodeMirror-linebackground.meimad-step-line {
+  border-top: 1px solid rgba(242, 204, 96, 0.4);
+  border-bottom: 1px solid rgba(242, 204, 96, 0.25);
+  background: linear-gradient(90deg, rgba(242, 204, 96, 0.24), rgba(242, 204, 96, 0.04));
+  box-shadow: inset 3px 0 #f2cc60;
+}
