@@ -213,8 +213,9 @@ public sealed class NcEngineRuntime : IDisposable
         Guarded(() => engine.Evaluate(code), cancellationToken);
 
     /// <summary>
-    /// The program as the interpreter reads it (dialect translation, inlined lathe subprograms)
-    /// with its line map, as JSON (tests and diagnostics).
+    /// The program as the interpreter reads it (dialect translation; for lathes the executed custom
+    /// macro program with its stops and print output) with its line map, as JSON (tests and
+    /// diagnostics).
     /// </summary>
     internal JsonElement PrepareForTesting(NcEnginePreviewRequest request)
     {
@@ -223,8 +224,10 @@ public sealed class NcEngineRuntime : IDisposable
             text = NcPlaceholderText.ForEngine(request.Text),
             machineSelection = request.MachineSelection,
             dialect = request.Dialect,
+            settings = SettingsJson(request.Settings),
             programMemory = request.ProgramMemory,
-            documentDirectory = request.DocumentDirectory
+            documentDirectory = request.DocumentDirectory,
+            machineParametersText = request.MachineParametersText ?? BundledMachineParameters()
         }, NcEngineInfo.Json);
         return Deserialize<JsonElement>(Call("prepare", json));
     }

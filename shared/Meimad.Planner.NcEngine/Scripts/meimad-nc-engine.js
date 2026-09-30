@@ -11,16 +11,22 @@
 // The machine registry is the vendored one plus the Meimad definitions in meimad/machines and
 // meimad/controls (Mazak Variaxis i-500, Okuma Genos L200E-M, Haas ST-25Y, Haas VF-3SS, generic
 // FANUC 0i-MC mills). Programs for controls that the interpreters do not read natively are
-// translated first (meimad-dialects.js); lathe subprogram calls, which the lathe interpreter does
-// not resolve, are inlined from the program folder or the machine's program memory folder
-// (meimad-subprograms.js). Both keep a line map so every segment, issue and message reports the
-// row of the original program.
+// translated first (meimad-dialects.js); lathe programs are executed by the Meimad custom macro
+// executor (meimad-macro.js: variables, WHILE/IF/GOTO, G65/G66/M98/M97/M99 and custom macro
+// calls), because the lathe interpreter reads only simple assignments and IF..GOTO. Both keep a
+// line map so every segment, issue and message reports the row of the original program. The mill
+// interpreter executes macros itself; mill-hooks below add the stops (M00/M01/#3006), the called
+// program of every segment and FANUC custom macro calls by G/M/T codes, without changing the
+// vendored files. The viewer model carries the stops (meimadStops), the called programs'
+// texts (meimadUnits) and macro print output (meimadPrints).
 //
 // The tool-table rules mirror desktop/main.js of the upstream desktop application, which is
 // not vendored because it is Electron code.
 
 const path = require("node:path");
 const { parseProgramForMachine, toolDefinitionsForMachine } = require("../src/program-model");
+const { parseHaasMillProgram } = require("../src/haas-mill");
+const { initialiseVariables } = require("../src/macro");
 const { parseCncParameters } = require("../src/machine-parameters");
 const { createSubprogramResolver } = require("../src/subprograms");
 const {
@@ -40,7 +46,7 @@ const {
 } = require("../src/tool-table");
 const transport = require("../media/model-transport");
 const dialects = require("./meimad-dialects");
-const subprograms = require("./meimad-subprograms");
+const macro = require("./meimad-macro");
 
 const MM_PER_INCH = 25.4;
 const RAPID_KINDS = new Set(["rapid", "home", "tool-change", "g30"]);
@@ -135,13 +141,25 @@ function machineFor(text, selection) {
 // The program's folder is searched by file name (O1001.nc, 1001.nc, ...) and then, like a memory
 // folder, by the O number each file declares, so a subprogram released as "pocket.nc" with O1001
 // is found the way the Planner's release detection finds it; the machine's memory folder follows.
-function subprogramResolverFor(request) {
+// Every program a resolver finds is recorded in `units` (name -> { text, path, location }) so the
+// viewer can show a called program next to the main one.
+function subprogramResolverFor(request, units) {
   return (machine) => {
     const memory = machine && request.programMemory ? request.programMemory[machine.id] : undefined;
     const folders = [];
     if (typeof request.documentDirectory === "string" && request.documentDirectory.trim()) folders.push(request.documentDirectory);
     if (typeof memory === "string" && memory.trim()) folders.push(memory);
-    return createSubprogramResolver(request.documentDirectory || undefined, { memoryFolders: folders });
+    const resolver = createSubprogramResolver(request.documentDirectory || undefined, { memoryFolders: folders });
+    if (!units || typeof resolver !== "function") return resolver;
+    const recording = function (target) {
+      const found = resolver.call(this, target);
+      if (found && !units.has(found.name)) {
+        units.set(found.name, { name: found.name, text: String(found.source ?? ""), path: found.path || null, location: found.location || null, inFile: false });
+      }
+      return found;
+    };
+    for (const key of Object.keys(resolver)) recording[key] = resolver[key];
+    return recording;
   };
 }
 
@@ -161,8 +179,8 @@ function runtimeSettings(request) {
 const LATHE_DWELL_BLOCK = /^\s*(?:N\d+\s*)?G0*4(?![0-9.])\s*(?:[XUP]\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*)*;?\s*$/i;
 
 // The lathe interpreter does not implement G04: "G4 X1.5" would be drawn and timed as a feed
-// move to X1.5. A dwell-only block becomes a comment (same line), and staticLatheDwellSeconds
-// adds the dwell time from the text before this change.
+// move to X1.5. A dwell-only block becomes a comment (same line); the macro executor counts the
+// dwell time of every executed G04 block.
 function neutralizeLatheDwell(lines) {
   return lines.map((line) => {
     const code = line.replace(/\([^)]*\)?/g, " ").replace(/;.*$/, "");
@@ -170,32 +188,32 @@ function neutralizeLatheDwell(lines) {
   });
 }
 
-// The lathe interpreter does not time G04. Count programmed dwells (X/U seconds, P
-// milliseconds) the way the previous Meimad parser did, outside comments.
-function staticLatheDwellSeconds(lines) {
-  let seconds = 0;
-  for (const raw of lines) {
-    const code = raw.replace(/\([^)]*\)?/g, " ").replace(/;.*$/, "").toUpperCase();
-    if (!/\bG0*4(?![0-9.])/.test(code)) continue;
-    const word = (letter) => {
-      const match = new RegExp(`${letter}\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))`).exec(code);
-      return match ? Number(match[1]) : undefined;
-    };
-    const direct = word("X") ?? word("U");
-    const milliseconds = word("P");
-    if (Number.isFinite(direct) && direct >= 0) seconds += direct;
-    else if (Number.isFinite(milliseconds) && milliseconds >= 0) seconds += milliseconds / 1000;
-  }
-  return seconds;
-}
-
 function identityMap(map) {
   return map.every((entry, index) => entry.line === index + 1 && !entry.unit);
 }
 
-// The program as the interpreter reads it: translated for the machine's control, with lathe
-// subprograms inlined and lathe dwells neutralized. Returns { text, map, notes, lineCount,
-// dwellSeconds, external, translation }.
+// The lathe interpreter stops macro execution after 20000 blocks unless the parameter profile
+// says otherwise; the executed program has no loops left, so every flat line runs once.
+function latheParameters(profile, lineCount) {
+  const limit = Math.max(20000, lineCount + 1000);
+  return {
+    ...(profile || {}),
+    settings: { ...(profile?.settings || {}), "macro.maximumExecutionSteps": limit, "macro.maximumLineVisits": limit }
+  };
+}
+
+function initialVariablesMap(request) {
+  try {
+    return initialiseVariables(runtimeSettings(request).initialVariables);
+  } catch {
+    return new Map();
+  }
+}
+
+// The program as the interpreter reads it: translated for the machine's control and, for lathes,
+// executed by the custom macro executor (calls, loops and variables resolved) with dwells
+// neutralized. Returns { text, map, notes, lineCount, dwellSeconds, external, translation, stops,
+// prints, units }.
 function prepareSource(request, machine) {
   const source = String(request.text || "");
   const sourceLines = source.split("\n");
@@ -206,14 +224,28 @@ function prepareSource(request, machine) {
   let map = translated.map;
   let external = [];
   let dwellSeconds = 0;
+  let stops = [];
+  let prints = [];
+  const units = new Map();
   if (machine?.type === "lathe") {
-    const resolve = subprogramResolverFor(request)(machine);
-    const expanded = subprograms.expand({ lines, map }, resolve, (text) => dialects.translate(text, machine).lines);
-    lines = expanded.lines;
-    map = expanded.map;
-    external = expanded.external;
-    notes.push(...expanded.notes);
-    dwellSeconds = staticLatheDwellSeconds(lines);
+    const resolve = subprogramResolverFor(request, units)(machine);
+    const executed = macro.execute({ lines, map }, {
+      resolve,
+      translate: (text) => dialects.translate(text, machine),
+      dialect: String(machine.control || "").startsWith("haas") ? "haas" : "fanuc",
+      initialVariables: initialVariablesMap(request),
+      parameters: machineParameters(request.machineParametersText),
+      workOffsets: sanitizeWorkOffsets(request.workOffsets || {}, registry())?.[machine.id],
+      blockDelete: request.blockDelete === true
+    });
+    lines = executed.lines;
+    map = executed.map;
+    external = executed.external;
+    notes.push(...executed.notes);
+    dwellSeconds = executed.dwellSeconds;
+    stops = executed.stops;
+    prints = executed.prints;
+    for (const [name, unit] of executed.units) if (!units.has(name)) units.set(name, unit);
     lines = neutralizeLatheDwell(lines);
   }
   return {
@@ -224,7 +256,10 @@ function prepareSource(request, machine) {
     lineCount: sourceLines.length,
     dwellSeconds,
     external,
-    translation
+    translation,
+    stops,
+    prints,
+    units
   };
 }
 
@@ -246,6 +281,7 @@ function remapSegment(map, segment) {
   if (entry?.unit) {
     result.sourceUnit = entry.unit;
     result.sourceLine = entry.unitLine;
+    result.callDepth = entry.depth || 1;
   } else if (Number.isFinite(segment.sourceLine)) {
     result.sourceLine = remapLine(map, segment.sourceLine);
   }
@@ -285,22 +321,178 @@ function remapModel(model, prepared) {
   return model;
 }
 
+// ----- mill hooks ----------------------------------------------------------------------------------
+//
+// The mill interpreter class is not exported. A probe program whose M98 reaches the resolver
+// hands over the instance (the resolver runs as its method), and three methods of its prototype
+// are wrapped once: executeLine records program stops and rewrites FANUC custom macro calls,
+// emitSegment tags segments run inside a called program of the same file, and buildModel puts
+// the stops and in-file program names on the model. If the probe fails the mill preview works as
+// before, without stops or call panes.
+
+let millHooks;
+
+function stripMillComments(raw) {
+  return String(raw).replace(/\([^)]*\)?/g, " ").replace(/;.*$/, " ").toUpperCase();
+}
+
+function parameterNumber(parameters, number) {
+  const entry = parameters?.[String(number)];
+  const value = typeof entry === "object" && entry !== null ? Number(entry.value) : Number(entry);
+  return Number.isFinite(value) ? value : 0;
+}
+
+// Custom macro calls by G/M/T code (FANUC parameters 6050-6089, 6001#5) as a block rewrite.
+function millCustomCall(interpreter, raw) {
+  if (!interpreter.fanuc || interpreter.stack.some((frame) => frame.meimadCustom)) return undefined;
+  const parameters = interpreter.parameters;
+  if (!parameters) return undefined;
+  const code = stripMillComments(raw);
+  for (let index = 0; index < 10; index += 1) {
+    const g = parameterNumber(parameters, 6050 + index);
+    if (g > 0 && new RegExp(`(?<![A-Z#\\d.])G0*${g}(?![\\d.])`).test(code)) {
+      return code.replace(new RegExp(`(?<![A-Z#\\d.])G0*${g}(?![\\d.])`), `G65 P${9010 + index}`);
+    }
+    const m = parameterNumber(parameters, 6080 + index);
+    if (m > 0 && new RegExp(`(?<![A-Z#\\d.])M0*${m}(?![\\d.])`).test(code)) {
+      return code.replace(new RegExp(`(?<![A-Z#\\d.])M0*${m}(?![\\d.])`), `G65 P${9020 + index}`);
+    }
+  }
+  for (let index = 0; index < 9; index += 1) {
+    const m = parameterNumber(parameters, 6071 + index);
+    if (m > 0 && new RegExp(`(?<![A-Z#\\d.])M0*${m}(?![\\d.])`).test(code)) {
+      return code.replace(new RegExp(`(?<![A-Z#\\d.])M0*${m}(?![\\d.])`), `M98 P${9001 + index}`);
+    }
+  }
+  return undefined;
+}
+
+function inFileLabel(frame) {
+  const code = stripMillComments(frame.unit.lines[frame.entryIndex] || "").trim().replace(/^\/\d?/, "");
+  const program = code.match(/^O\s*(\d+)/);
+  if (program) return `O${program[1].padStart(4, "0")}`;
+  const sequence = code.match(/^N\s*(\d+)/);
+  return sequence ? `N${sequence[1]}` : "Subprogram";
+}
+
+function installMillHooks() {
+  if (millHooks !== undefined) return millHooks;
+  millHooks = false;
+  const probeMachine = [...registry().machines.values()].find((machine) => machine.type === "mill");
+  let prototype;
+  try {
+    parseHaasMillProgram("O1000\nM98 P4321\nM30\n", {
+      machine: probeMachine,
+      resolveSubprogram() {
+        prototype = Object.getPrototypeOf(this);
+        return undefined;
+      }
+    });
+  } catch {
+    prototype = undefined;
+  }
+  if (!prototype || typeof prototype.executeLine !== "function" || typeof prototype.emitSegment !== "function" ||
+      typeof prototype.buildModel !== "function") {
+    return millHooks;
+  }
+  const executeLine = prototype.executeLine;
+  const emitSegment = prototype.emitSegment;
+  const buildModel = prototype.buildModel;
+  prototype.executeLine = function meimadExecuteLine(raw) {
+    this.meimadStops ||= [];
+    this.meimadUnits ||= new Map();
+    const frame = this.frame;
+    const depth = this.stack.length;
+    const stopsBefore = this.stats.stopCount;
+    const errorsBefore = this.errors.length;
+    const rewritten = millCustomCall(this, raw);
+    executeLine.call(this, rewritten ?? raw);
+    if (rewritten !== undefined && this.stack.length > depth) this.frame.meimadCustom = true;
+    const stopped = this.stats.stopCount > stopsBefore;
+    const alarm = this.stopRequested && this.errors.length > errorsBefore && /#3000/.test(String(raw));
+    if (stopped || alarm) {
+      const code = stripMillComments(raw);
+      const kind = alarm ? "ALARM" : /#\s*3006\s*=/.test(code) ? "#3006" : /(?<![A-Z#\d.])M0*1(?![\d.])/.test(code) ? "M01" : "M00";
+      const inside = depth > 1;
+      this.meimadStops.push({
+        executionIndex: this.segments.length,
+        kind,
+        message: this.lastComment || "",
+        line: inside ? this.stack[1]?.callLine ?? frame.index + 1 : frame.index + 1,
+        unit: inside ? (frame.unit.external ? frame.unit.name : inFileLabel(frame)) : null,
+        unitLine: inside ? frame.index + 1 : null
+      });
+    }
+  };
+  prototype.emitSegment = function meimadEmitSegment(...args) {
+    const segment = emitSegment.apply(this, args);
+    if (segment && this.stack.length > 1) {
+      const frame = this.frame;
+      segment.callDepth = this.stack.length - 1;
+      if (!frame.unit.external) {
+        // A program or M97 block of the same file: the main editor keeps the calling row and
+        // the call pane shows the called rows.
+        const label = inFileLabel(this.stack[this.stack.length - 1]);
+        segment.sourceUnit = label;
+        segment.sourceLine = frame.index + 1;
+        segment.line = this.stack[1]?.callLine || segment.line;
+        this.meimadUnits ||= new Map();
+        if (!this.meimadUnits.has(label)) {
+          this.meimadUnits.set(label, { name: label, text: null, path: null, location: "this program", inFile: true });
+        }
+      }
+    }
+    return segment;
+  };
+  prototype.buildModel = function meimadBuildModel(...args) {
+    const model = buildModel.apply(this, args);
+    model.meimadStops = this.meimadStops || [];
+    model.meimadInFileUnits = [...(this.meimadUnits || new Map()).values()];
+    return model;
+  };
+  millHooks = true;
+  return millHooks;
+}
+
+// Lathe stops follow flat lines; a stop is before the first segment of a later flat line.
+function latheStops(model, prepared) {
+  const segments = model.segments || [];
+  return prepared.stops.map((stop) => {
+    let executionIndex = segments.findIndex((segment) => Number(segment.line) > stop.afterLine);
+    if (executionIndex < 0) executionIndex = segments.length;
+    return { executionIndex, kind: stop.kind, message: stop.message, line: stop.line, unit: stop.unit, unitLine: stop.unitLine };
+  });
+}
+
 // The machine is resolved from the original program (translation removes the codes detection
 // reads), so the interpreter is given the machine id; the model then reports the viewer's own
 // selection ("auto" or an id) and reason, as the machine list in the viewer expects.
 function parseModel(request, choice) {
   const machine = machineFor(String(request.text || ""), choice.selection);
+  if (machine?.type === "mill") installMillHooks();
   const prepared = prepareSource(request, machine);
+  const lathe = machine?.type === "lathe";
   const model = parseProgramForMachine(prepared.text, {
     registry: registry(),
     machineSelection: machine ? machine.id : choice.selection,
     settings: runtimeSettings(request),
-    machineParameters: machineParameters(request.machineParametersText),
+    machineParameters: lathe
+      ? latheParameters(machineParameters(request.machineParametersText), prepared.text.split("\n").length)
+      : machineParameters(request.machineParametersText),
     machineParameterPath: request.machineParameterPath || undefined,
     toolTable: request.toolTable || undefined,
     workOffsets: sanitizeWorkOffsets(request.workOffsets || {}, registry()),
-    subprogramResolverFor: subprogramResolverFor(request)
+    blockDelete: request.blockDelete === true,
+    subprogramResolverFor: subprogramResolverFor(request, prepared.units)
   });
+  const stops = lathe ? latheStops(model, prepared) : (model.meimadStops || []);
+  const remappedStops = stops.map((stop) => (prepared.changed && !lathe
+    ? { ...stop, line: remapLine(prepared.map, stop.line) }
+    : stop));
+  for (const unit of model.meimadInFileUnits || []) {
+    if (!prepared.units.has(unit.name)) prepared.units.set(unit.name, unit);
+  }
+  delete model.meimadInFileUnits;
   const requested = String(request.machineSelection || AUTO_MACHINE_ID);
   const explicit = requested !== AUTO_MACHINE_ID && registry().machines.has(requested);
   if (model.machineSelection) {
@@ -309,6 +501,9 @@ function parseModel(request, choice) {
     model.machineSelection.reason = choice.reason || model.machineSelection.reason;
   }
   remapModel(model, prepared);
+  model.meimadStops = remappedStops;
+  model.meimadUnits = Object.fromEntries(prepared.units);
+  model.meimadPrints = prepared.prints;
   model.meimad = prepared;
   return model;
 }
@@ -379,9 +574,6 @@ function analyze(requestJson) {
   let engineToolChangeSeconds;
   if (lathe) {
     dwellSeconds = prepared.dwellSeconds;
-    if (dwellSeconds > 0) {
-      notes.push("Lathe G04 dwell is counted from the program text (loops and macro branches are not expanded for dwell).");
-    }
     toolChangeCount = Number(meta.turretIndexCount) || 0;
     engineToolChangeSeconds = Number(meta.turretSeconds) || 0;
   } else {
@@ -444,6 +636,9 @@ function parsePreview(requestJson) {
   const prepared = model.meimad;
   delete model.meimad;
   const machine = registry().machines.get(model.machineDefinition?.id);
+  if (!installMillHooks() && model.kind === "mill") {
+    model.warnings = ["Program stops and called-program panes are unavailable: the mill interpreter could not be hooked.", ...(model.warnings || [])];
+  }
   model.toolTable = model.toolTable || {};
   model.toolTable.sourcePath = request.toolTableSourcePath || model.toolTable.sourcePath;
   model.toolTable.aiStatus = aiStatusForMeimad();
@@ -692,7 +887,9 @@ function prepare(requestJson) {
     lines: prepared.text.split("\n"),
     map: prepared.map,
     notes: prepared.notes,
-    subprograms: prepared.external
+    subprograms: prepared.external,
+    stops: prepared.stops,
+    prints: prepared.prints
   });
 }
 

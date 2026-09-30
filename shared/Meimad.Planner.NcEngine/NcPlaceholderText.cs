@@ -8,9 +8,9 @@ namespace Meimad.Planner.NcEngine;
 /// <list type="bullet">
 /// <item><c>[[MEIMAD:KEY]]</c> tokens are Server-owned placeholders, not NC words: a standalone
 /// placeholder line becomes a comment and an inline token in a comment becomes plain text.</item>
-/// <item>Print-channel statements (<c>DPRNT</c>, <c>BPRNT</c>, and Okuma <c>PUT</c> / <c>WRITE</c>)
-/// never move the machine. The mill interpreter already skips them; the lathe interpreter would
-/// misread <c>DPRNT[...]</c> as a macro expression, so they become comments.</item>
+/// <item>Okuma print statements (<c>PUT</c> / <c>WRITE</c>) never move the machine and no
+/// interpreter reads them, so they become comments. <c>DPRNT</c> / <c>BPRNT</c> stay: the mill
+/// interpreter skips them and the lathe macro executor formats their output.</item>
 /// </list>
 /// </summary>
 public static partial class NcPlaceholderText
@@ -51,9 +51,9 @@ public static partial class NcPlaceholderText
     [GeneratedRegex(@"\[\[MEIMAD:(?<key>[A-Z][A-Z0-9_]*)\]\]", RegexOptions.CultureInvariant)]
     private static partial Regex Token();
 
-    [GeneratedRegex(@"DPRNT|BPRNT|PUT|WRITE", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"PUT|WRITE", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex PrintKeyword();
 
-    [GeneratedRegex(@"^\s*(?:/\s*)?(?:N\d+\s*)?(?:DPRNT\s*\[|BPRNT\s*\[|PUT\s+['A-Z]|WRITE\s+[A-Z]\s*;?\s*$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^\s*(?:/\s*)?(?:N\d+\s*)?(?:PUT\s+['A-Z]|WRITE\s+[A-Z]\s*;?\s*$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex PrintStatement();
 }

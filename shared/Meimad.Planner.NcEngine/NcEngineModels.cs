@@ -9,8 +9,10 @@ public static class NcEngineInfo
     public const string UpstreamVersion = "0.17.0";
 
     /// <summary>Revision of the Meimad adapter and mapping; bump when analysis output changes.</summary>
-    /// <remarks>m2: Meimad machine definitions, dialect translations, lathe subprogram inlining.</remarks>
-    public const int AdapterRevision = 2;
+    /// <remarks>m2: Meimad machine definitions, dialect translations, lathe subprogram inlining.
+    /// m3: lathe programs run through the custom macro executor (loops, calls with local
+    /// variables, system variables, custom macro calls; dwell counted per executed block).</remarks>
+    public const int AdapterRevision = 3;
 
     /// <summary>Stored as the NC analysis parser version, e.g. <c>nc-engine/0.17.0+m1</c>.</summary>
     public static string AnalysisVersion => $"nc-engine/{UpstreamVersion}+m{AdapterRevision}";

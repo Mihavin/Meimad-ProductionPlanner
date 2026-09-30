@@ -61,7 +61,9 @@ public sealed class NcEngineRuntimeTests : IDisposable
         Assert.Contains(lines, line => line.StartsWith("G71 P", StringComparison.Ordinal));      // LAP -> two-block G71
         Assert.Contains(lines, line => line.StartsWith("G70 P", StringComparison.Ordinal));      // G87 -> G70
         Assert.Contains("T0101", lines);                                                           // six-digit T word
-        Assert.Contains("IF [#501 EQ 1] GOTO 90001", lines);                                       // VC and named label (NLAP1 = 90000, NEND = 90001)
+        // VC1=1 and IF [VC1 EQ 1] NEND are executed: the jump to NEND skips G00 X200.
+        Assert.DoesNotContain("G00 X200", lines);
+        Assert.Contains("N90001 M02", lines);                                                      // named label NEND = 90001
         Assert.Contains(lines, line => line.StartsWith("(M98 P500 -> O0500.MIN x2)", StringComparison.Ordinal));
         Assert.All(map, entry => Assert.InRange(entry.GetProperty("line").GetInt32(), 1, program.Split('\n').Length));
         // Both LAP blocks report the row of the single G85 line; inlined rows report the CALL line.
@@ -302,7 +304,7 @@ public sealed class NcEngineRuntimeTests : IDisposable
         Assert.Equal(text.Split('\n').Length, prepared.Length);
         Assert.Equal("(PART: MEIMAD-PART_NAME)", prepared[1]);
         Assert.Equal("(MEIMAD VERIFICATION_HOOK)", prepared[2]);
-        Assert.Equal("(DPRNT[MEIMAD-PART_NAME])", prepared[3]);
+        Assert.Equal("DPRNT[MEIMAD-PART_NAME]", prepared[3]);   // the macro executor formats DPRNT output
         Assert.Equal("(PUT 'X')", prepared[4]);
         Assert.Equal("(WRITE C)", prepared[5]);
         Assert.Equal("G0 X0", prepared[6]);

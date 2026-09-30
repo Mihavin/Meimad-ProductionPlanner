@@ -78,11 +78,31 @@
         <div class="editor-meta" aria-live="polite">
           <span id="editorLineCount">1 line</span>
           <span id="editorEncoding">UTF-8</span>
+          <button id="meimadCallShow" class="meimad-pane-button" type="button" hidden
+                  title="Show the macro or subprogram the program calls below the NC program">Called program</button>
         </div>
       </header>
       <div id="editorHost" class="editor-host">
         <textarea id="ncEditor" aria-label="NC program source" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
       </div>
+      <div id="meimadCallSplitter" class="meimad-call-splitter" role="separator" aria-orientation="horizontal"
+           aria-label="Resize the NC program and the called program" aria-valuemin="15" aria-valuemax="85" aria-valuenow="55"
+           tabindex="0" hidden><span aria-hidden="true"></span></div>
+      <section id="meimadCallPane" class="meimad-call-pane" aria-labelledby="meimadCallHeading" hidden>
+        <header class="pane-header">
+          <div>
+            <span class="pane-kicker">CALLED PROGRAM</span>
+            <h2 id="meimadCallHeading" translate="no"></h2>
+          </div>
+          <div class="editor-meta" aria-live="polite">
+            <span id="meimadCallInfo"></span>
+            <button id="meimadCallHide" class="meimad-pane-button" type="button" title="Hide the called program">Hide</button>
+          </div>
+        </header>
+        <div id="meimadCallHost" class="editor-host">
+          <textarea id="meimadCallEditor" aria-label="Called macro or subprogram source" readonly spellcheck="false"></textarea>
+        </div>
+      </section>
     </section>
 
     <div
@@ -139,6 +159,10 @@
             <button id="runButton" class="run-button" type="button">Run</button>
             <button id="pauseButton" type="button" disabled>Pause</button>
             <button id="restartButton" type="button">Restart</button>
+            <button id="meimadStepButton" type="button" title="Single step: run the next block, then stop (single block)">Single step</button>
+            <button id="meimadStopButton" type="button" title="Stop: end the playback and return to the program start (reset)">Stop</button>
+            <button id="meimadOptionalStopButton" class="meimad-toggle" type="button" aria-pressed="false"
+                    title="Optional stop: when on, playback stops at M01 blocks. M00 and #3006 always stop.">Optional stop: Off</button>
           </div>
           <label class="speed-control">Speed
             <span><input id="speedSlider" type="range" min="1" max="100" step="1" value="10"><output id="speedValue">10x</output></span>
@@ -155,6 +179,7 @@
           <div id="viewerStatus" class="viewer-status" hidden></div>
           <div id="tooltip" class="tooltip" hidden></div>
           <div id="playbackHud" class="playback-hud" aria-live="polite">Ready | 0:00 / 0:00</div>
+          <div id="meimadStopNotice" class="meimad-stop-notice" role="status" aria-live="assertive" hidden></div>
           <div id="meimadProgress" class="meimad-progress" hidden role="progressbar" aria-live="polite"><div id="meimadProgressBar" class="meimad-progress-bar"></div><span id="meimadProgressText" class="meimad-progress-text"></span></div>
         </section>
         <aside class="preview-sidebar">
@@ -551,5 +576,7 @@
   <script src="./meimad-material.js"></script>
   <script src="./meimad-simulation.js"></script>
   <script src="./meimad-tool-assembly.js"></script>
+  <script src="./meimad-playback-core.js"></script>
+  <script src="./meimad-playback.js"></script>
 </body>
 </html>

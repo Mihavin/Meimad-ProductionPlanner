@@ -4,7 +4,7 @@ namespace Meimad.Planner.NcEngine;
 
 /// <summary>
 /// The external subprograms an NC program calls and the program number an NC file declares, read
-/// the way the NC engine resolves them (meimad-subprograms.js and the engine's src/subprograms.js):
+/// the way the NC engine resolves them (meimad-macro.js and the engine's src/subprograms.js):
 /// <c>M98 P…</c> and <c>G65 P…</c> call a program by number (a FANUC <c>M98 P</c> with eight digits
 /// is a four-digit repeat count followed by the program number); <c>M97 P…</c> calls a local N block
 /// and needs no file. A file's number is the O (or ":") number on its first code line, else a

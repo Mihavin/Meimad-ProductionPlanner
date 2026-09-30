@@ -1417,3 +1417,29 @@ Open points:
 - `ShiftRotationValidatorTests`, `ShiftRosterApiTests` (roster read/save/clear, stale-change conflict, permission, guards, employee-only use), `ShiftRotationMigrationTests`, migration version tests.
 - Client `ShiftRosterViewModelTests` (save with versions, repeat last week, viewer, Sunday week, rotation form parsing).
 - Not verified: the WPF main-window startup test times out against the live Server that requires sign-in, before and after this change, so the new tab's layout was not rendered by a test.
+
+## NC viewer: called programs, single step, stops and macro execution (2026-09-30)
+
+**Owner request:**
+> In NC viewer, if Macro programm called, show the macro program in separate window (split the Gcode horizontally). Add Single step, Stop and Optional stop buttons. Ensure all macro commands are supported and executed as well.
+
+**Implemented:**
+- NC engine (`shared/Meimad.Planner.NcEngine`):
+  - `meimad-macro.js`, a custom macro executor for lathe programs, replaces the static subprogram inlining (`meimad-subprograms.js` is removed). It executes variables (#1-#33 per macro level, #100-#199 and #500-#999, vacant #0, `#[...]` indirect), system variables (modal #4001-#4130, positions #5001-#5065, work offsets #5201-#5335, tool offsets #2001-#2999, timers and date, part counts), `WHILE`/`DO`/`END`, endless `DO`, `IF`..`GOTO`/`THEN`, `GOTO` (also to a computed sequence), block delete, `G65` (argument specifications I and II), `G66`/`G66.1`/`G67`, `M98` (with `L` and the FANUC eight-digit `P`), `M97`, `M99`/`M99 P`, FANUC custom macro calls by G codes (parameters 6050-6059), M codes (6071-6089) and T codes (6001#5), `#3000` alarms, `#3006` stops, `DPRNT`/`BPRNT` output and `POPEN`/`PCLOS`/`SETVN`. The lathe interpreter draws the flat result; sequence numbers stay unique so a roughing cycle in a loop or a repeated subprogram keeps its own contour.
+  - Mill programs keep the vendored mill interpreter, which executes the same macro set. The adapter wraps three prototype methods at run time (no vendored file changes) to report `M00`/`M01`/`#3006`/`#3000` stops, tag every segment with its called program and row, keep the calling row in the main editor for called programs of the same file, and run FANUC custom macro calls by G/M codes.
+  - The viewer model carries `meimadStops` (the segment each stop halts before), `meimadUnits` (called programs' texts) and `meimadPrints`. The host no longer turns `DPRNT`/`BPRNT` into comments.
+  - `NcEngineInfo.AdapterRevision` 3: lathe analyses change (loops and calls are executed, dwell is counted per executed block), so stored release analyses are recalculated once.
+- Windows NC viewer page:
+  - The source column splits horizontally when the program calls another program: the called program (read-only CodeMirror) follows playback and toolpath selection; Hide / Called program and a resizable splitter.
+  - **Single step**, **Stop** and **Optional stop** (remembered on this PC) in the playback bar, with a stop notice in the 3D view. The rules are in `meimad-playback-core.js`; `meimad-playback.js` drives the vendored playback through `cncPreviewSeek` and the 3D wrapper's playback and new selection events.
+
+**Decisions made while implementing (reversible):**
+- **Stop** ends playback and rewinds to the program start (reset); the existing **Pause** stays the feed hold.
+- `M00`, `#3006` and a `#3000` alarm always stop playback; `M01` stops only with **Optional stop** on, which starts off.
+- In single step, a stop block is its own step, as on the control in single block mode.
+- A macro reading a tool offset (#2001-#2999) gets 0 with a note, because the preview does not know the control's offset memory; work offsets come from the viewer's saved home offsets.
+
+**Tests:**
+- `NcEngineMacroExecutionTests`: lathe loops/calls/locals/system variables/prints/stops, a roughing cycle in a loop, custom G-code macro calls from parameters, mill stops and call tagging (Haas NGC and FANUC); updated `NcEngineRuntimeTests` (the Okuma IF is executed, DPRNT reaches the engine).
+- Client `PlaybackCoreTests` (V8): block timeline, M01 with and without optional stop, M00, single step halting on a stop block, call rows.
+- The page glue was checked in headless Edge with the published page scripts and a fake viewer hook (split pane, macro row marker, M00 halt, Stop, single steps, Hide). Not verified: the WebView2 page inside the running client.

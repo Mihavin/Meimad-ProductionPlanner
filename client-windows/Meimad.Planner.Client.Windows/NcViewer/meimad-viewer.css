@@ -251,3 +251,77 @@ body.meimad-read-only .CodeMirror-cursor {
 .meimad-tool-room-table td { padding: 3px 6px; white-space: nowrap; }
 .meimad-tool-room-table td:nth-child(7) { white-space: normal; }
 .meimad-tool-room-unused td { opacity: 0.5; }
+
+/* Called program: the source column splits horizontally below the NC program. */
+.editor-pane.meimad-call-open {
+  grid-template-rows: 46px minmax(60px, var(--meimad-main-rows, 55fr)) 6px minmax(80px, var(--meimad-call-rows, 45fr));
+}
+
+.meimad-call-pane {
+  display: grid;
+  grid-template-rows: 38px minmax(0, 1fr);
+  min-height: 0;
+  border-top: 1px solid var(--app-border);
+}
+
+.meimad-call-pane .pane-header {
+  background: #16202b;
+}
+
+.meimad-call-pane .pane-kicker {
+  color: var(--app-warning);
+}
+
+.meimad-call-splitter {
+  position: relative;
+  min-height: 0;
+  cursor: row-resize;
+  background: #10161e;
+  touch-action: none;
+}
+
+.meimad-call-splitter:hover,
+.meimad-call-splitter:focus-visible {
+  background: var(--app-accent);
+}
+
+.meimad-call-splitter span {
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 34px;
+  height: 2px;
+  border-radius: 2px;
+  background: #435064;
+  transform: translateX(-50%);
+}
+
+.meimad-pane-button {
+  padding: 2px 8px;
+  font-size: 10px;
+}
+
+/* Optional stop: the state is in the text ("On"/"Off") and aria-pressed, colour only repeats it. */
+.meimad-toggle.meimad-toggle-on {
+  border-color: rgba(242, 204, 96, 0.75);
+  color: #f2cc60;
+}
+
+.meimad-stop-notice {
+  position: absolute;
+  left: 14px;
+  bottom: 46px;
+  max-width: calc(100% - 28px);
+  padding: 7px 10px;
+  border: 1px solid rgba(242, 204, 96, 0.8);
+  border-radius: 4px;
+  background: rgba(13, 17, 23, 0.92);
+  color: #f2cc60;
+  font: 12px/1.35 var(--vscode-font-family, "Segoe UI", sans-serif);
+  pointer-events: none;
+}
+
+.meimad-stop-notice[data-kind="ALARM"] {
+  border-color: rgba(255, 107, 101, 0.85);
+  color: var(--app-danger);
+}

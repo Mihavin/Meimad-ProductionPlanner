@@ -3,7 +3,8 @@
 // the upstream viewer unmodified: the THREE namespace handed to it records the scene, the content
 // group, the camera and the renderer it creates, and the returned API is wrapped so the Meimad
 // simulation (meimad-simulation.js) learns about every model, playback, tool pose and filter
-// change. window.meimadViewer3d exposes the captured objects and an event hook.
+// change and selection (meimad-playback.js follows the selected row into a called program).
+// window.meimadViewer3d exposes the captured objects and an event hook.
 import { createToolpathViewer as createUpstreamViewer, SEGMENT_STYLES } from "../media/viewer3d.js";
 
 export { SEGMENT_STYLES };
@@ -98,7 +99,10 @@ export function createToolpathViewer(options) {
       upstream.setPlayback(playback);
       emit("playback", playback);
     },
-    setSelection: (line, executionIndex) => upstream.setSelection(line, executionIndex),
+    setSelection(line, executionIndex) {
+      upstream.setSelection(line, executionIndex);
+      emit("selection", line, executionIndex);
+    },
     setToolPose(pose) {
       upstream.setToolPose(pose);
       emit("toolPose", pose);
