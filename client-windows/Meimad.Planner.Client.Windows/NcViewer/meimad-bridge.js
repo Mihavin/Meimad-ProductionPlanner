@@ -170,6 +170,8 @@
         exportStl: (base64, options) => invoke("meimadExportStl", base64, options || {})
       }),
       onMode: onChannel("meimad:mode"),
+      variables: (payload) => send("meimad:variables", payload),
+      onVariablesClosed: onChannel("meimad:variables-closed"),
       localization: () => invoke("meimadLocalization"),
       translate: (texts) => invoke("meimadTranslate", texts),
       onLocalization: onChannel("meimad:localization")

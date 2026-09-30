@@ -1443,3 +1443,25 @@ Open points:
 - `NcEngineMacroExecutionTests`: lathe loops/calls/locals/system variables/prints/stops, a roughing cycle in a loop, custom G-code macro calls from parameters, mill stops and call tagging (Haas NGC and FANUC); updated `NcEngineRuntimeTests` (the Okuma IF is executed, DPRNT reaches the engine).
 - Client `PlaybackCoreTests` (V8): block timeline, M01 with and without optional stop, M00, single step halting on a stop block, call rows.
 - The page glue was checked in headless Edge with the published page scripts and a fake viewer hook (split pane, macro row marker, M00 halt, Stop, single steps, Hide). Not verified: the WebView2 page inside the running client.
+
+## NC viewer: subprogram tree, breakpoints, tool at the selected row, macro variables window (2026-09-30)
+
+**Owner request:**
+> need to show all subprograms (and sub sub...) - all Renishow macros and O9013 ... O4999 etc from the machine memory and attached subprograms. Need macro variables table, opened in external window, shows all used variables values. Add option to add brake point in code, also subprograms. Selecting row in Gcode should point the tool in the row position and show the current tool tool path
+
+**Implemented:**
+- NC engine:
+  - `meimadCallTree` (viewer preview only): every program called at any depth, found by a static scan (`meimad-macro.js scanCalls`: G65/G66, M98 by number or name, custom G/M/T calls) resolved like the executor (same file, program folder with release subprograms, machine program memory folder); nested programs are listed even when the executed branch never calls them; computed and missing calls are marked; each program is expanded once. Their texts join `meimadUnits`.
+  - `meimadTrace`: every executed row (`main|row` for the program's own file, `<file>|row` for a called file) with its playback position, local-variable level and executed-block step; every variable write with its level and row (G65/G66 arguments included); system variable reads with their values; the used variables. The lathe executor records it directly; the mill interpreter through run-time hooks on `getVariable`, `setVariable`, `pushFrame` and `executeLine`. Segments carry `meimadLocals`. Analysis output is unchanged (no adapter revision).
+- Windows NC viewer:
+  - Called-program list (indented tree) in the call pane header.
+  - Breakpoint gutter in the NC program and called-program editors; playback halts before each execution of a breakpoint row, with a notice; single step treats it like a stop.
+  - **Tool follows row** (on by default, remembered): selecting a row seeks the playback to the row (end of its move, or its position for a statement without motion; again = next execution) and sets the tool filter to the row's tool.
+  - **Macro variables** opens `MacroVariablesWindow` (WPF, owned by the viewer, filterable) fed by the page through the `meimad:variables` channel; it updates with playback and row selection and tells the page when it closes.
+
+**Decisions made while implementing (reversible):**
+- Breakpoints live for the viewer session (not saved with the program).
+- Selecting a row with Tool follows row on narrows the tool filter to that row's tool; *All cutting tools* restores the full view.
+- The tree lists what the program text calls; a macro that computes its program number (G65 P#1) is shown as computed and its target appears once it runs.
+
+**Tests:** `NcEngineMacroExecutionTests` (tree with memory macros behind an untaken branch, attached subprogram, same-file program, computed call; mill trace levels; lathe trace order and system reads), client `PlaybackCoreTests` (breakpoints, row targets, variables per level/step) and `MacroVariablesTests`; the page glue was checked in headless Edge (tree list, gutter breakpoints in both editors, halt, row follow with tool filter, variables payload). Not verified: the WebView2 page and the WPF window inside the running client.

@@ -257,6 +257,28 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
             $"The revision folder already has a different file with this name:{Environment.NewLine}{path}{Environment.NewLine}Replace it?",
             "NC Viewer", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 
+    private MacroVariablesWindow? macroVariables;
+
+    void INcViewerHostUi.ShowMacroVariables(NcViewerMacroVariables variables)
+    {
+        if (macroVariables is null)
+        {
+            if (!variables.Open) return;
+            macroVariables = new MacroVariablesWindow { Owner = this, Left = Left + Math.Max(0, ActualWidth - 560), Top = Top + 80 };
+            macroVariables.Closed += (_, _) =>
+            {
+                macroVariables = null;
+                ((INcViewerHostUi)this).PostToPage("{\"kind\":\"event\",\"channel\":\"meimad:variables-closed\",\"payload\":null}");
+            };
+            macroVariables.Show();
+        }
+        else if (variables.Open)
+        {
+            macroVariables.Activate();
+        }
+        macroVariables.Display(variables);
+    }
+
     public void UpdateTitle(string documentName, bool dirty) =>
         Title = $"{documentName}{(dirty ? " *" : string.Empty)} - NC Viewer - {request.ContextTitle}";
 }

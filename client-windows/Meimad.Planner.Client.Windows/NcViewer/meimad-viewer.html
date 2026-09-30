@@ -95,6 +95,8 @@
             <h2 id="meimadCallHeading" translate="no"></h2>
           </div>
           <div class="editor-meta" aria-live="polite">
+            <select id="meimadCallList" class="meimad-call-list" translate="no" aria-label="Called programs"
+                    title="Every program this program calls, at any depth: programs of this file, the program's folder and the machine's program memory folder"></select>
             <span id="meimadCallInfo"></span>
             <button id="meimadCallHide" class="meimad-pane-button" type="button" title="Hide the called program">Hide</button>
           </div>
@@ -142,6 +144,7 @@
           <label class="check meimad-sim" title="Cut the stock with the tool during playback; shows the finished part while playback is idle"><input id="meimadMaterialToggle" type="checkbox"> Material removal</label>
           <label class="meimad-sim" title="Cell size of the stock grid in mm; smaller is finer and slower">Resolution<input id="meimadResolution" type="number" min="0.02" max="10" step="0.05" placeholder="auto"></label>
           <label class="check meimad-sim" title="Run starts at the NC row selected in the editor"><input id="meimadFromRow" type="checkbox" checked> From selected row</label>
+          <label class="check" title="Selecting a row puts the tool where the row runs and shows only that tool's toolpath; selecting it again goes to its next execution"><input id="meimadFollowRow" type="checkbox" checked> Tool follows row</label>
           <div class="view-controls" role="group" aria-label="View direction">
             <button type="button" data-view="lathe" data-for="lathe" title="X-Z view (1)">XZ</button>
             <button type="button" data-view="iso" title="Isometric view (1)">Iso</button>
@@ -163,6 +166,7 @@
             <button id="meimadStopButton" type="button" title="Stop: end the playback and return to the program start (reset)">Stop</button>
             <button id="meimadOptionalStopButton" class="meimad-toggle" type="button" aria-pressed="false"
                     title="Optional stop: when on, playback stops at M01 blocks. M00 and #3006 always stop.">Optional stop: Off</button>
+            <button id="meimadVariablesButton" type="button" title="Open the macro variables window: the value of every variable the program uses at the playback position or the selected row">Macro variables</button>
           </div>
           <label class="speed-control">Speed
             <span><input id="speedSlider" type="range" min="1" max="100" step="1" value="10"><output id="speedValue">10x</output></span>

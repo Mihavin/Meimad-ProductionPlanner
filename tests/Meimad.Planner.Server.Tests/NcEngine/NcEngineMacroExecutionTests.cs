@@ -163,6 +163,70 @@ public sealed class NcEngineMacroExecutionTests : IDisposable
         Assert.Equal(0, preview.Summary.ErrorCount);
     }
 
+    [Fact]
+    public void Every_called_program_at_any_depth_is_listed_from_the_folder_the_memory_and_the_file()
+    {
+        var memory = Path.Combine(folder, "memory");
+        var program = Path.Combine(folder, "program");
+        Directory.CreateDirectory(memory);
+        Directory.CreateDirectory(program);
+        runtime.SetReadableFolders([folder]);
+        File.WriteAllText(Path.Combine(memory, "O9810.nc"), "O9810 (PROTECTED POSITIONING)\n#100=#24\nIF [#26 EQ #0] GOTO 10\nG65 P9724\nN10 G1 X#24 Y#25 F2000.\nM99\n");
+        File.WriteAllText(Path.Combine(memory, "O9724.nc"), "O9724\nG65 P9723\nM99\n");
+        File.WriteAllText(Path.Combine(memory, "O9723.nc"), "O9723\n#149=1\nM99\n");
+        File.WriteAllText(Path.Combine(program, "O4999.nc"), "O4999 (ATTACHED)\nG0 Z20.\nM99\n");
+        var text = string.Join("\n", "%", "O1000", "G21 G17 G90 G94", "T1 M6", "G54 G0 X0 Y0", "G43 Z50. H1 S3000 M3",
+            "#1=5.", "G65 P9810 X10. Y5.", "M98 P4999", "#2=#1+1", "M98 P2000", "G65 P#1", "G0 X50. Y50.", "M30",
+            "O2000", "G0 X20. Y20.", "M98 P4999", "M99", "%");
+
+        var preview = runtime.ParsePreview(new NcEnginePreviewRequest(text, "fanuc-0i-mc-vmc-3axis", DocumentDirectory: program,
+            ProgramMemory: new Dictionary<string, string> { ["fanuc-0i-mc-vmc-3axis"] = memory }));
+
+        using var packed = JsonDocument.Parse(preview.Packed);
+        var model = packed.RootElement.GetProperty("model");
+        var tree = model.GetProperty("meimadCallTree").EnumerateArray()
+            .Select(node => (node.GetProperty("label").GetString(), node.GetProperty("depth").GetInt32(), node.GetProperty("parent").GetString()))
+            .ToArray();
+        // O9724 and O9723 never run (the IF jumps over the call) but are listed under O9810.
+        Assert.Equal(
+        [
+            ("O9810", 1, "main"), ("O9724", 2, "O9810.nc"), ("O9723", 3, "O9724.nc"),
+            ("O4999", 1, "main"), ("O2000", 1, "main"), ("O4999", 2, "O2000"), ("G65 with a computed program number", 1, "main")
+        ], tree);
+        var units = model.GetProperty("meimadUnits");
+        Assert.Contains("#149=1", units.GetProperty("O9723.nc").GetProperty("text").GetString(), StringComparison.Ordinal);
+        Assert.Equal("folder", model.GetProperty("meimadCallTree")[3].GetProperty("location").GetString());
+
+        // The trace: row executions, local variables per macro level and the used variables.
+        var trace = model.GetProperty("meimadTrace");
+        var writes = trace.GetProperty("writes").EnumerateArray().Select(write => (
+            Id: write[1].GetInt32(), Level: write[3].GetInt32(), Key: write[4].GetString())).ToArray();
+        Assert.Contains((1, 1, "main|7"), writes);
+        Assert.Contains((24, 2, "main|8"), writes);               // the G65 argument opens level 2
+        Assert.Contains((100, 0, "O9810.nc|2"), writes);
+        Assert.Contains(26, trace.GetProperty("used").EnumerateArray().Select(value => value.GetInt32()));
+        Assert.True(trace.GetProperty("rows").TryGetProperty("O9810.nc|5", out _));
+        Assert.True(trace.GetProperty("rows").TryGetProperty("main|16", out _));  // O2000 rows are rows of this file
+    }
+
+    [Fact]
+    public void Lathe_trace_orders_rows_and_writes_and_reads_system_variables()
+    {
+        var text = "G18 G21 G99\nT0101\nG0 X60. Z2.\n#1=1\nWHILE [#1 LE 2] DO1\nG1 X[60.-#1*5] F0.2\n#1=#1+1\nEND1\n#2=#5001\nM30\n";
+
+        var preview = runtime.ParsePreview(new NcEnginePreviewRequest(text, Lathe));
+
+        using var packed = JsonDocument.Parse(preview.Packed);
+        var trace = packed.RootElement.GetProperty("model").GetProperty("meimadTrace");
+        var loopRow = trace.GetProperty("rows").GetProperty("main|6").EnumerateArray().ToArray();
+        Assert.Equal(2, loopRow.Length);                               // the loop row ran twice
+        Assert.True(loopRow[1][0].GetInt32() > loopRow[0][0].GetInt32());
+        var writes = trace.GetProperty("writes").EnumerateArray().Where(write => write[1].GetInt32() == 1).Select(write => write[2].GetDouble()).ToArray();
+        Assert.Equal([1d, 2d, 3d], writes);
+        var read = trace.GetProperty("systemReads").EnumerateArray().Single(entry => entry[1].GetInt32() == 5001);
+        Assert.Equal(50d, read[2].GetDouble());                        // X after the second pass
+    }
+
     public void Dispose()
     {
         runtime.Dispose();

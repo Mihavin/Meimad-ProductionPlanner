@@ -18,7 +18,9 @@
 // interpreter executes macros itself; mill-hooks below add the stops (M00/M01/#3006), the called
 // program of every segment and FANUC custom macro calls by G/M/T codes, without changing the
 // vendored files. The viewer model carries the stops (meimadStops), the called programs'
-// texts (meimadUnits) and macro print output (meimadPrints).
+// texts (meimadUnits), macro print output (meimadPrints), the execution trace (meimadTrace: the
+// playback position of every executed row, variable writes per macro level and system variable
+// reads) and every program the program calls at any depth (meimadCallTree).
 //
 // The tool-table rules mirror desktop/main.js of the upstream desktop application, which is
 // not vendored because it is Electron code.
@@ -226,6 +228,7 @@ function prepareSource(request, machine) {
   let dwellSeconds = 0;
   let stops = [];
   let prints = [];
+  let trace;
   const units = new Map();
   if (machine?.type === "lathe") {
     const resolve = subprogramResolverFor(request, units)(machine);
@@ -245,6 +248,7 @@ function prepareSource(request, machine) {
     dwellSeconds = executed.dwellSeconds;
     stops = executed.stops;
     prints = executed.prints;
+    trace = executed.trace;
     for (const [name, unit] of executed.units) if (!units.has(name)) units.set(name, unit);
     lines = neutralizeLatheDwell(lines);
   }
@@ -259,7 +263,8 @@ function prepareSource(request, machine) {
     translation,
     stops,
     prints,
-    units
+    units,
+    trace
   };
 }
 
@@ -285,6 +290,7 @@ function remapSegment(map, segment) {
   } else if (Number.isFinite(segment.sourceLine)) {
     result.sourceLine = remapLine(map, segment.sourceLine);
   }
+  if (Number.isFinite(entry?.locals)) result.meimadLocals = entry.locals;
   if (Array.isArray(segment.points)) result.points = segment.points.map((point) => remapPoint(map, point));
   for (const key of ["start", "end"]) {
     if (segment[key] && Number.isFinite(segment[key].sourceLine)) result[key] = remapPoint(map, segment[key]);
@@ -331,6 +337,10 @@ function remapModel(model, prepared) {
 // before, without stops or call panes.
 
 let millHooks;
+const MAX_TRACE_ROWS = 300000;
+const MAX_TRACE_PER_ROW = 2000;
+const MAX_TRACE_WRITES = 100000;
+const MAX_TRACE_READS = 20000;
 
 function stripMillComments(raw) {
   return String(raw).replace(/\([^)]*\)?/g, " ").replace(/;.*$/, " ").toUpperCase();
@@ -375,6 +385,27 @@ function inFileLabel(frame) {
   return sequence ? `N${sequence[1]}` : "Subprogram";
 }
 
+// Execution trace of the mill interpreter, kept on the instance by the hooks below.
+function millTrace(interpreter) {
+  if (!interpreter.meimadTrace) {
+    interpreter.meimadTrace = {
+      rows: new Map(), rowCount: 0, writes: [], systemReads: [], lastRead: new Map(), used: new Set(),
+      localsIds: new WeakMap(), nextLocals: 1, step: 0
+    };
+  }
+  return interpreter.meimadTrace;
+}
+
+function millLocalsId(trace, map) {
+  if (!map) return 0;
+  if (!trace.localsIds.has(map)) trace.localsIds.set(map, trace.nextLocals++);
+  return trace.localsIds.get(map);
+}
+
+function millRowKey(frame, row = frame.index + 1) {
+  return `${frame.unit.external ? frame.unit.name : "main"}|${row}`;
+}
+
 function installMillHooks() {
   if (millHooks !== undefined) return millHooks;
   millHooks = false;
@@ -398,10 +429,68 @@ function installMillHooks() {
   const executeLine = prototype.executeLine;
   const emitSegment = prototype.emitSegment;
   const buildModel = prototype.buildModel;
+  const getVariable = prototype.getVariable;
+  const setVariable = prototype.setVariable;
+  const pushFrame = prototype.pushFrame;
+  if (typeof getVariable === "function" && typeof setVariable === "function" && typeof pushFrame === "function") {
+    prototype.getVariable = function meimadGetVariable(rawId) {
+      const value = getVariable.call(this, rawId);
+      const trace = millTrace(this);
+      const id = this.canonicalVariable(Number(rawId));
+      trace.used.add(id);
+      if (id > 33 && !this.globals.has(id) && value !== undefined && trace.lastRead.get(id) !== value &&
+          trace.systemReads.length < MAX_TRACE_READS) {
+        trace.lastRead.set(id, value);
+        trace.systemReads.push([this.segments.length, id, value]);
+      }
+      return value;
+    };
+    prototype.setVariable = function meimadSetVariable(rawId, value, initial = false) {
+      setVariable.call(this, rawId, value, initial);
+      const trace = millTrace(this);
+      const id = this.canonicalVariable(Number(rawId));
+      const kept = id <= 33 || (value === null ? !this.globals.has(id) : this.globals.get(id) === value);
+      if (!kept || trace.writes.length >= MAX_TRACE_WRITES) return;
+      trace.used.add(id);
+      trace.writes.push([
+        initial ? -1 : this.segments.length, id, value,
+        id <= 33 ? millLocalsId(trace, this.locals()) : 0,
+        initial || !this.frame ? "initial" : millRowKey(this.frame),
+        initial ? 0 : trace.step
+      ]);
+    };
+    prototype.pushFrame = function meimadPushFrame(unit, index, options) {
+      const caller = this.frame;
+      const pushed = pushFrame.call(this, unit, index, options);
+      const trace = millTrace(this);
+      const locals = this.frame?.locals;
+      if (pushed && caller && locals && locals !== caller.locals && !trace.localsIds.has(locals)) {
+        // G65/G66 arguments open the new level's local variables (the caller row is before its index).
+        const key = millRowKey(caller, caller.index);
+        const level = millLocalsId(trace, locals);
+        for (const [id, value] of locals) {
+          if (trace.writes.length < MAX_TRACE_WRITES) trace.writes.push([this.segments.length, id, value, level, key, trace.step]);
+          trace.used.add(id);
+        }
+      }
+      return pushed;
+    };
+  }
   prototype.executeLine = function meimadExecuteLine(raw) {
     this.meimadStops ||= [];
     this.meimadUnits ||= new Map();
     const frame = this.frame;
+    if (frame && String(raw).trim()) {
+      const trace = millTrace(this);
+      trace.step += 1;
+      const key = millRowKey(frame);
+      let list = trace.rows.get(key);
+      if (!list) trace.rows.set(key, (list = []));
+      if (list.length < MAX_TRACE_PER_ROW && trace.rowCount < MAX_TRACE_ROWS) {
+        list.push([this.segments.length, millLocalsId(trace, frame.locals), trace.step]);
+        trace.rowCount += 1;
+      }
+    }
     const depth = this.stack.length;
     const stopsBefore = this.stats.stopCount;
     const errorsBefore = this.errors.length;
@@ -426,6 +515,7 @@ function installMillHooks() {
   };
   prototype.emitSegment = function meimadEmitSegment(...args) {
     const segment = emitSegment.apply(this, args);
+    if (segment) segment.meimadLocals = millLocalsId(millTrace(this), this.locals());
     if (segment && this.stack.length > 1) {
       const frame = this.frame;
       segment.callDepth = this.stack.length - 1;
@@ -448,20 +538,140 @@ function installMillHooks() {
     const model = buildModel.apply(this, args);
     model.meimadStops = this.meimadStops || [];
     model.meimadInFileUnits = [...(this.meimadUnits || new Map()).values()];
+    model.meimadMillTrace = this.meimadTrace;
     return model;
   };
   millHooks = true;
   return millHooks;
 }
 
-// Lathe stops follow flat lines; a stop is before the first segment of a later flat line.
-function latheStops(model, prepared) {
-  const segments = model.segments || [];
-  return prepared.stops.map((stop) => {
-    let executionIndex = segments.findIndex((segment) => Number(segment.line) > stop.afterLine);
-    if (executionIndex < 0) executionIndex = segments.length;
-    return { executionIndex, kind: stop.kind, message: stop.message, line: stop.line, unit: stop.unit, unitLine: stop.unitLine };
+// Lathe positions are counts of flat lines; the playback position after N flat lines is the first
+// segment drawn from a later flat line.
+function flatToExecution(segments, lineCount) {
+  const positions = new Array(lineCount + 2);
+  let index = 0;
+  for (let line = 0; line <= lineCount + 1; line += 1) {
+    while (index < segments.length && Number(segments[index].line) <= line) index += 1;
+    positions[line] = index;
+  }
+  return (afterLine) => (afterLine < 0 ? -1 : positions[Math.min(Math.max(0, afterLine), lineCount + 1)]);
+}
+
+function latheStops(prepared, toExecution) {
+  return prepared.stops.map((stop) => ({
+    executionIndex: toExecution(stop.afterLine),
+    kind: stop.kind, message: stop.message, line: stop.line, unit: stop.unit, unitLine: stop.unitLine
+  }));
+}
+
+// The trace in the viewer's form: rows { key: [[position, level, step], ...] }, writes [[position,
+// id, value, level, rowKey, step]], systemReads [[position, id, value]], used [ids]. The step is
+// the executed block count, which orders rows and writes at the same playback position. Lathe
+// positions are converted from flat lines; mill main-file rows follow the program's rows after a
+// translation.
+function viewerTrace(raw, toExecution, rowMap) {
+  if (!raw) return { rows: {}, writes: [], systemReads: [], used: [] };
+  const position = toExecution || ((value) => value);
+  const key = (value) => {
+    if (!rowMap || typeof value !== "string" || !value.startsWith("main|")) return value;
+    return `main|${remapLine(rowMap, Number(value.slice(5)))}`;
+  };
+  const rows = {};
+  for (const [rowKey, list] of raw.rows) {
+    const mapped = key(rowKey);
+    (rows[mapped] ||= []).push(...list.map(([at, level, step]) => [position(at), level, step]));
+  }
+  return {
+    rows,
+    writes: raw.writes.map(([at, id, value, level, rowKey, step]) => [position(at), id, value, level, key(rowKey), step]),
+    systemReads: raw.systemReads.map(([at, id, value]) => [position(at), id, value]),
+    used: [...raw.used].sort((left, right) => left - right)
+  };
+}
+
+// ----- subprogram tree ------------------------------------------------------------------------------
+
+const MAX_TREE_NODES = 500;
+const MAX_TREE_DEPTH = 12;
+
+function millParameters(machine) {
+  const entries = Object.entries(machine?.parameters || {}).map(([number, value]) =>
+    [number, { value: typeof value === "object" && value !== null ? Number(value.value) : Number(value) }]);
+  return { fanuc: Object.fromEntries(entries) };
+}
+
+// Every program the program calls, at any depth, found without running it: programs of the same
+// file, the program's folder (release subprograms land there) and the machine's program memory
+// folder (Renishaw and other macros). Depth-first, each called program listed once per caller.
+function callTree(request, machine, prepared) {
+  if (!machine) return [];
+  const units = prepared.units;
+  const resolve = subprogramResolverFor(request, units)(machine);
+  const haas = String(machine.control || "").startsWith("haas");
+  const parameters = machine.type === "lathe" ? machineParameters(request.machineParametersText) : millParameters(machine);
+  const translate = (text) => dialects.translate(String(text ?? ""), machine);
+  const main = translate(request.text);
+  const inFile = new Map();
+  const headers = [];
+  main.lines.forEach((raw, index) => {
+    const code = dialects.stripComments(raw).toUpperCase().trim().replace(/^\/\d?/, "");
+    const header = code.match(/^O\s*(\d+)/) || code.match(/^:\s*(\d+)/);
+    if (header) headers.push({ number: Number(header[1]), index });
   });
+  headers.forEach((header, position) => {
+    if (position === 0 && header.index <= 3) return;
+    if (!inFile.has(header.number)) {
+      inFile.set(header.number, { start: header.index, end: headers[position + 1]?.index ?? main.lines.length });
+    }
+  });
+  const mainEnd = headers.find((header, position) => position > 0 || header.index > 3)?.index ?? main.lines.length;
+  const nodes = [];
+  const expanded = new Set();
+  const label = (target) => (typeof target === "number" ? `O${String(target).padStart(4, "0")}` : String(target));
+
+  const visit = (lines, originRow, parent, depth) => {
+    for (const call of macro.scanCalls(lines, parameters, haas)) {
+      if (nodes.length >= MAX_TREE_NODES) return;
+      const row = originRow(call.row);
+      if (call.target === null) {
+        nodes.push({ name: `${call.kind} P?`, label: `${call.kind} with a computed program number`, parent, depth, rows: [row], computed: true, missing: true });
+        continue;
+      }
+      let name;
+      let node;
+      let child;
+      const local = typeof call.target === "number" ? inFile.get(call.target) : undefined;
+      if (local) {
+        name = label(call.target);
+        if (!units.has(name)) units.set(name, { name, text: null, path: null, location: "this program", inFile: true });
+        node = { name, label: name, location: "this program", path: null, inFile: true };
+        child = { lines: main.lines.slice(local.start, local.end), origin: (value) => main.map[local.start + value - 1]?.line ?? local.start + value };
+      } else {
+        const found = resolve ? resolve(call.target) : undefined;
+        if (!found) {
+          name = label(call.target);
+          node = { name, label: name, location: null, path: null, missing: true };
+        } else {
+          name = found.name;
+          const translated = translate(found.source);
+          node = { name, label: label(call.target), location: found.location || null, path: found.path || null };
+          child = { lines: translated.lines, origin: (value) => translated.map[value - 1]?.line ?? value };
+        }
+      }
+      const existing = nodes.find((candidate) => candidate.name === name && candidate.parent === parent);
+      if (existing) {
+        if (!existing.rows.includes(row)) existing.rows.push(row);
+        continue;
+      }
+      nodes.push({ ...node, parent, depth, rows: [row], repeated: expanded.has(name) });
+      if (child && !expanded.has(name) && depth < MAX_TREE_DEPTH) {
+        expanded.add(name);
+        visit(child.lines, child.origin, name, depth + 1);
+      }
+    }
+  };
+  visit(main.lines.slice(0, mainEnd), (value) => main.map[value - 1]?.line ?? value, "main", 1);
+  return nodes;
 }
 
 // The machine is resolved from the original program (translation removes the codes detection
@@ -485,7 +695,12 @@ function parseModel(request, choice) {
     blockDelete: request.blockDelete === true,
     subprogramResolverFor: subprogramResolverFor(request, prepared.units)
   });
-  const stops = lathe ? latheStops(model, prepared) : (model.meimadStops || []);
+  const toExecution = lathe ? flatToExecution(model.segments || [], prepared.text.split("\n").length) : undefined;
+  const stops = lathe ? latheStops(prepared, toExecution) : (model.meimadStops || []);
+  const trace = lathe
+    ? viewerTrace(prepared.trace, toExecution)
+    : viewerTrace(model.meimadMillTrace, undefined, prepared.changed ? prepared.map : undefined);
+  delete model.meimadMillTrace;
   const remappedStops = stops.map((stop) => (prepared.changed && !lathe
     ? { ...stop, line: remapLine(prepared.map, stop.line) }
     : stop));
@@ -502,6 +717,7 @@ function parseModel(request, choice) {
   }
   remapModel(model, prepared);
   model.meimadStops = remappedStops;
+  model.meimadTrace = trace;
   model.meimadUnits = Object.fromEntries(prepared.units);
   model.meimadPrints = prepared.prints;
   model.meimad = prepared;
@@ -636,6 +852,9 @@ function parsePreview(requestJson) {
   const prepared = model.meimad;
   delete model.meimad;
   const machine = registry().machines.get(model.machineDefinition?.id);
+  // The viewer lists every called program; the tree reads the called files, so analysis skips it.
+  model.meimadCallTree = callTree(request, machine, prepared);
+  model.meimadUnits = Object.fromEntries(prepared.units);
   if (!installMillHooks() && model.kind === "mill") {
     model.warnings = ["Program stops and called-program panes are unavailable: the mill interpreter could not be hooked.", ...(model.warnings || [])];
   }

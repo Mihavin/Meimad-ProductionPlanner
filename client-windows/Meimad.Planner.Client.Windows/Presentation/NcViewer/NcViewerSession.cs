@@ -782,7 +782,26 @@ internal sealed class NcViewerSession : IDisposable
             case "preview:message":
                 HandlePreviewMessage(payload);
                 break;
+            case "meimad:variables":
+                if (MacroVariables(payload) is { } variables) ui.ShowMacroVariables(variables);
+                break;
         }
+    }
+
+    /// <summary>The page's macro variables table, or null when the payload is not one.</summary>
+    internal static NcViewerMacroVariables? MacroVariables(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object) return null;
+        static string Text(JsonElement element, string name) =>
+            element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : string.Empty;
+        var rows = payload.TryGetProperty("rows", out var list) && list.ValueKind == JsonValueKind.Array
+            ? list.EnumerateArray()
+                .Where(row => row.ValueKind == JsonValueKind.Object)
+                .Take(5000)
+                .Select(row => new NcViewerMacroVariable(Text(row, "variable"), Text(row, "value"), Text(row, "scope"), Text(row, "setAt")))
+                .ToArray()
+            : [];
+        return new NcViewerMacroVariables(OptionFlag(payload, "open"), Text(payload, "position"), rows);
     }
 
     private void HandlePreviewMessage(JsonElement message)

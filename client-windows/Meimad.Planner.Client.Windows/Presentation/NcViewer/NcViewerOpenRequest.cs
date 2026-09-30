@@ -206,4 +206,11 @@ internal interface INcViewerHostUi
     /// <summary>Asks before a different file of the same name in a revision folder is replaced.</summary>
     bool ConfirmReplaceFile(string path);
     void UpdateTitle(string documentName, bool dirty);
+    /// <summary>Opens (<see cref="NcViewerMacroVariables.Open"/>) or updates the macro variables window.</summary>
+    void ShowMacroVariables(NcViewerMacroVariables variables) { }
 }
+
+/// <summary>The viewer page's macro variables table at one position.</summary>
+internal sealed record NcViewerMacroVariables(bool Open, string Position, IReadOnlyList<NcViewerMacroVariable> Rows);
+
+internal sealed record NcViewerMacroVariable(string Variable, string Value, string Scope, string SetAt);

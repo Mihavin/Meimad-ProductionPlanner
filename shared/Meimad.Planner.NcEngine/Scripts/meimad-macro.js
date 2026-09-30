@@ -21,12 +21,18 @@
 // interpreter then draws. Every flat line keeps its origin: the row of the main program that
 // ran (or called) it and, inside a called program, that program's name, row and call depth.
 // Program stops (M00, M01, #3006) are reported with the flat line they follow so the viewer can
-// halt playback there. Sequence numbers are kept unique in the flat program, so a roughing cycle
+// halt playback there. The trace records, against the flat lines, every executed row (for
+// breakpoints and "tool at the selected row"), every variable write with its macro level, and the
+// system variables the program read, so the viewer can show variable values at any position. Sequence numbers are kept unique in the flat program, so a roughing cycle
 // in a loop or in a subprogram called twice still finds its own contour.
 
 const { evaluateExpression } = require("../src/macro");
 
 const MAX_DEPTH = 14;
+const MAX_TRACE_ROWS = 300000;
+const MAX_TRACE_PER_ROW = 2000;
+const MAX_TRACE_WRITES = 100000;
+const MAX_TRACE_READS = 20000;
 const MAX_BLOCKS = 500000;
 const MAX_LINES = 200000;
 const UNIQUE_SEQUENCE_BASE = 700000;
@@ -256,6 +262,29 @@ function execute(main, options = {}) {
   const sequenceNumbers = { used: new Set(), last: new Map(), pending: new Map(), next: UNIQUE_SEQUENCE_BASE };
   let stopped = false;
   let blocks = 0;
+  const trace = { rows: new Map(), rowCount: 0, writes: [], systemReads: [], lastRead: new Map(), used: new Set() };
+  const localsIds = new WeakMap();
+  let nextLocalsId = 1;
+  const localsId = (map) => {
+    if (!map) return 0;
+    if (!localsIds.has(map)) localsIds.set(map, nextLocalsId++);
+    return localsIds.get(map);
+  };
+  // Rows of the main file (also its in-file programs) are "main|row"; a called file's are "name|row".
+  const rowKey = (entry) => (entry.unit.external ? `${entry.unit.name}|${entry.unit.origin(entry.index)}` : `main|${entry.unit.origin(entry.index)}`);
+  function traceRow(entry) {
+    if (trace.rowCount >= MAX_TRACE_ROWS) return;
+    const key = rowKey(entry);
+    let list = trace.rows.get(key);
+    if (!list) trace.rows.set(key, (list = []));
+    if (list.length >= MAX_TRACE_PER_ROW) return;
+    list.push([out.lines.length, localsId(entry.locals), blocks]);
+    trace.rowCount += 1;
+  }
+  function traceWrite(id, value, level, key, afterLine = out.lines.length) {
+    trace.used.add(id);
+    if (trace.writes.length < MAX_TRACE_WRITES) trace.writes.push([afterLine, id, value, level, key, afterLine < 0 ? 0 : blocks]);
+  }
 
   const rowLabel = () => {
     const current = frame();
@@ -327,12 +356,19 @@ function execute(main, options = {}) {
 
   const variableView = {
     get(id) {
+      trace.used.add(id);
       if (id >= 1 && id <= 33) {
         const value = frame()?.locals.get(id);
         return value === undefined ? undefined : value;
       }
       const system = id >= 2000 && id < 6000 ? readSystem(id) : undefined;
-      if (system !== undefined) return system === null ? undefined : system;
+      if (system !== undefined) {
+        if (trace.lastRead.get(id) !== system && trace.systemReads.length < MAX_TRACE_READS) {
+          trace.lastRead.set(id, system);
+          trace.systemReads.push([out.lines.length, id, system]);
+        }
+        return system === null ? undefined : system;
+      }
       return globals.get(id);
     }
   };
@@ -341,11 +377,15 @@ function execute(main, options = {}) {
 
   function writeVariable(id, value, comment) {
     if (!Number.isInteger(id) || id <= 0) throw new Error(`#${id} cannot be written`);
+    const current = frame();
     if (id <= 33) {
-      if (value === null) frame().locals.delete(id);
-      else frame().locals.set(id, value);
+      if (value === null) current.locals.delete(id);
+      else current.locals.set(id, value);
+      traceWrite(id, value, localsId(current.locals), rowKey(current));
       return;
     }
+    const readOnly = (id >= 4001 && id <= 4400) || (id >= 5001 && id <= 5080) || id === 3011 || id === 3012;
+    if (id !== 3000 && id !== 3006 && id !== 3003 && id !== 3004 && !readOnly) traceWrite(id, value, 0, rowKey(current));
     switch (id) {
       case 3000:
         stopped = true;
@@ -441,6 +481,11 @@ function execute(main, options = {}) {
     }
     const shown = location.unit.external ? location.unit.name : name;
     emitComment(`(${callText} -> ${shown}${repeat > 1 ? ` x${repeat}` : ""}${argumentsText ? ` ${argumentsText}` : ""})`);
+    if (locals && locals !== caller.locals) {
+      // G65/G66 arguments open the new level's local variables.
+      for (const [id, value] of locals) traceWrite(id, value, localsId(locals), rowKey(caller));
+      localsId(locals);
+    }
     caller.index += 1;
     caller.jumped = true;
     const programNumber = location.number ?? caller.programNumber;
@@ -530,8 +575,8 @@ function execute(main, options = {}) {
     const current = frame();
     if (!current) return { line: 1 };
     const unitLine = current.unit.origin(current.index);
-    if (stack.length === 1) return { line: unitLine };
-    return { line: current.mainLine, unit: current.name, unitLine, depth: stack.length - 1 };
+    if (stack.length === 1) return { line: unitLine, locals: localsId(current.locals) };
+    return { line: current.mainLine, unit: current.name, unitLine, depth: stack.length - 1, locals: localsId(current.locals) };
   }
 
   function emit(text) {
@@ -984,6 +1029,7 @@ function execute(main, options = {}) {
       return;
     }
     current.headerSeen = true;
+    traceRow(current);
     let sequence;
     const numbered = code.match(/^N\s*(\d+)\s*/);
     if (numbered) {
@@ -1000,7 +1046,10 @@ function execute(main, options = {}) {
 
   stack.push({ unit: mainUnit, index: 0, entryIndex: 0, kind: "main", locals: new Map(), repeat: 1, loops: [], headerSeen: false, jumped: false, programNumber: 0 });
   if (options.initialVariables instanceof Map) {
-    for (const [id, value] of options.initialVariables) if (Number(id) >= 1 && Number(id) <= 33) stack[0].locals.set(Number(id), value);
+    for (const [id, value] of options.initialVariables) {
+      if (Number(id) >= 1 && Number(id) <= 33) stack[0].locals.set(Number(id), value);
+      traceWrite(Number(id), value, Number(id) <= 33 ? localsId(stack[0].locals) : 0, "initial", -1);
+    }
   }
   while (stack.length && !stopped) {
     const current = frame();
@@ -1027,7 +1076,61 @@ function execute(main, options = {}) {
     if (frame() === current && !current.jumped) current.index += 1;
   }
   out.executedBlockCount = blocks;
+  out.trace = {
+    rows: trace.rows,
+    writes: trace.writes,
+    systemReads: trace.systemReads,
+    used: [...trace.used].sort((a, b) => a - b)
+  };
   return out;
 }
 
-module.exports = { execute, splitWords, customCalls };
+// ----- static call scan ----------------------------------------------------------------------------
+
+// The programs a program text calls, without running it (the viewer's subprogram tree): G65,
+// G66/G66.1 and M98 by number (the FANUC eight-digit P too) or by name, and custom macro calls by
+// G/M/T codes. A call whose P is computed (P#1) is reported with target null.
+function scanCalls(lines, parameters, haas) {
+  const custom = customCalls(parameters);
+  const calls = [];
+  (lines || []).forEach((raw, index) => {
+    const code = stripComments(raw).toUpperCase().replace(/^\/\d?/, "").trim();
+    if (!code || /^(?:#|IF|WHILE|GOTO|END|DO)/.test(code.replace(/^N\s*\d+\s*/, ""))) return;
+    let words;
+    try {
+      words = splitWords(code.replace(/^N\s*\d+\s*/, ""));
+    } catch {
+      return;
+    }
+    const numbers = (letter) => words.filter((word) => word.letter === letter).map((word) => word.text);
+    const g = numbers("G").map(Number);
+    const m = numbers("M").map(Number);
+    const p = words.find((word) => word.letter === "P");
+    const literal = p && /^\d+$/.test(p.text);
+    const row = index + 1;
+    if (g.includes(65) || g.includes(66) || g.includes(66.1)) {
+      calls.push({ kind: g.includes(65) ? "G65" : "G66", target: literal ? Number(p.text) : null, row });
+      return;
+    }
+    if (m.includes(98)) {
+      if (literal) {
+        const digits = p.text.length > 4 && !haas ? p.text.padStart(8, "0").slice(4) : p.text;
+        calls.push({ kind: "M98", target: Number(digits), row });
+      } else if (!p) {
+        const name = commentOf(raw);
+        calls.push({ kind: "M98", target: name || null, row });
+      } else {
+        calls.push({ kind: "M98", target: null, row });
+      }
+      return;
+    }
+    const customG = g.find((value) => custom.gMacros.has(value));
+    if (customG !== undefined) calls.push({ kind: "G65", target: custom.gMacros.get(customG), row });
+    const customM = m.find((value) => custom.mMacros.has(value) || custom.mSubprograms.has(value));
+    if (customM !== undefined) calls.push({ kind: "G65", target: custom.mMacros.get(customM) ?? custom.mSubprograms.get(customM), row });
+    if (custom.tCall && words.some((word) => word.letter === "T")) calls.push({ kind: "M98", target: 9000, row });
+  });
+  return calls;
+}
+
+module.exports = { execute, splitWords, customCalls, scanCalls };

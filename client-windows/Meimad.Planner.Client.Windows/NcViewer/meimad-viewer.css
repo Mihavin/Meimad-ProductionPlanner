@@ -325,3 +325,24 @@ body.meimad-read-only .CodeMirror-cursor {
   border-color: rgba(255, 107, 101, 0.85);
   color: var(--app-danger);
 }
+
+/* Breakpoints: a red dot in their own gutter; the tooltip names them. */
+.meimad-breakpoint-gutter {
+  width: 14px;
+  cursor: pointer;
+}
+
+.meimad-breakpoint {
+  display: inline-block;
+  width: 14px;
+  color: var(--app-danger);
+  font-size: 11px;
+  line-height: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.meimad-call-list {
+  max-width: 260px;
+  font-size: 10px;
+}
