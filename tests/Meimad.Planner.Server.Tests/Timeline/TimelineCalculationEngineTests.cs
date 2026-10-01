@@ -1287,6 +1287,38 @@ public sealed class TimelineCalculationEngineTests
     }
 
     [Fact]
+    public void Reported_actual_start_outranks_due_date_and_manual_priority_for_setup_contention()
+    {
+        // Machine 14 is due sooner and even pinned, but Machine 15's setup was really reported
+        // started; the single setup worker goes to Machine 15 first.
+        var notStarted = new TimelineOperationInput(
+            "op-a-machine-14", TimeSpan.FromHours(1), TimeSpan.Zero,
+            PriorityWorkFinishDate: new DateOnly(2026, 10, 22), PriorityOrderNumber: "SO-1",
+            ManualPriority: 1);
+        var started = new TimelineOperationInput(
+            "op-z-machine-15", TimeSpan.FromHours(1), TimeSpan.Zero,
+            PriorityWorkFinishDate: new DateOnly(2027, 3, 18), PriorityOrderNumber: "SO-99",
+            ActualStartedAt: Utc(8));
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-14", [notStarted]), Backlog("machine-15", [started])],
+            [
+                new TimelineMachineCalendar("machine-14", [Window(8, 17)], ["milling"]),
+                new TimelineMachineCalendar("machine-15", [Window(8, 17)], ["milling"])
+            ],
+            SetupCalendar(Window(8, 17)), [], [],
+            [new TimelineResourceCalendar("setup-1", TimelineResourceRole.SetupWorker,
+                [Window(8, 17)], ["milling"])]));
+
+        Assert.Empty(result.Conflicts);
+        Assert.Equal(Utc(8), Assert.Single(result.Operations, value => value.OperationId == started.OperationId).StartsAt);
+        var delayed = Assert.Single(result.Operations, value => value.OperationId == notStarted.OperationId);
+        Assert.Equal(Utc(9), delayed.StartsAt);
+        Assert.Contains(delayed.WaitingIntervals, interval =>
+            interval.Detail!.Contains("already started", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Lower_manual_priority_wins_and_null_priority_falls_back_to_due_date()
     {
         var priorityTwo = new TimelineOperationInput(

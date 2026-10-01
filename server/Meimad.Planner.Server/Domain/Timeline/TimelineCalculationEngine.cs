@@ -2195,10 +2195,23 @@ internal sealed class TimelineCalculationEngine
         return right.HasValue ? 1 : 0;
     }
 
+    // Work that has really started outranks every planned priority: the setupist is already at that
+    // Machine, so the forecast must not hand the worker to a Machine that has not started. Between
+    // two started operations the earlier reported start wins.
+    private static int CompareActualStarts(DateTimeOffset? left, DateTimeOffset? right)
+    {
+        if (left.HasValue && right.HasValue) return left.Value.CompareTo(right.Value);
+        if (left.HasValue) return -1;
+        return right.HasValue ? 1 : 0;
+    }
+
     private static int CompareOperationPriorities(
         TimelineOperationInput left,
         TimelineOperationInput right)
     {
+        var actualComparison = CompareActualStarts(left.ActualStartedAt, right.ActualStartedAt);
+        if (actualComparison != 0) return actualComparison;
+
         var manualComparison = CompareManualPriorities(left.ManualPriority, right.ManualPriority);
         if (manualComparison != 0) return manualComparison;
 
@@ -2225,7 +2238,9 @@ internal sealed class TimelineCalculationEngine
         var blockers = occupations
             .Where(value => value.Intervals.Any(interval =>
                 interval.EndsAt > earliest && interval.StartsAt < allocation.FinishesAt))
-            .OrderBy(value => value.ManualPriority.HasValue ? 0 : 1)
+            .OrderBy(value => value.ActualStartedAt.HasValue ? 0 : 1)
+            .ThenBy(value => value.ActualStartedAt)
+            .ThenBy(value => value.ManualPriority.HasValue ? 0 : 1)
             .ThenBy(value => value.ManualPriority)
             .ThenBy(value => value.PriorityWorkFinishDate.HasValue ? 0 : 1)
             .ThenBy(value => value.PriorityWorkFinishDate)
@@ -2243,6 +2258,11 @@ internal sealed class TimelineCalculationEngine
             TimelineResourceRole.RegularWorker => "a regular worker for load/unload",
             _ => "a worker"
         };
+        if (CompareActualStarts(winner.ActualStartedAt, operation.ActualStartedAt) < 0)
+        {
+            return $"Waiting for {roleLabel}; operation '{winner.OperationId}' received the resource first because it has already started on the shop floor (reported {winner.ActualStartedAt:yyyy-MM-dd HH:mm} UTC).";
+        }
+
         if (CompareManualPriorities(winner.ManualPriority, operation.ManualPriority) < 0)
         {
             return $"Waiting for {roleLabel}; operation '{winner.OperationId}' received the resource first because its manual priority {winner.ManualPriority} was set ahead by the planner.";
@@ -2278,7 +2298,8 @@ internal sealed class TimelineCalculationEngine
                 operation.OperationId,
                 operation.PriorityWorkFinishDate,
                 operation.PriorityOrderNumber,
-                operation.ManualPriority));
+                operation.ManualPriority,
+                operation.ActualStartedAt));
         }
     }
 
@@ -2793,7 +2814,8 @@ internal sealed class TimelineCalculationEngine
         string OperationId,
         DateOnly? PriorityWorkFinishDate,
         string? PriorityOrderNumber,
-        int? ManualPriority = null);
+        int? ManualPriority = null,
+        DateTimeOffset? ActualStartedAt = null);
 
     private sealed record Allocation(
         IReadOnlyList<InstantWindow> Intervals,

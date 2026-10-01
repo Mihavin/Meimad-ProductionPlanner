@@ -337,7 +337,13 @@ internal sealed class TimelineProjectionService
                         operation.ExternalDelayAfter,
                         externalWorkingDayDelays.GetValueOrDefault(operation.OperationId),
                         operation.ProductionCycleQuantity,
-                        ManualPriority: operation.ManualPriority))
+                        ManualPriority: operation.ManualPriority,
+                        ActualStartedAt: operation.Status == "in_progress"
+                            && operation.ActualStart.HasValue
+                            && operation.ActualMachineId is not null
+                            && string.Equals(operation.ActualMachineId, operation.MachineId, StringComparison.Ordinal)
+                                ? operation.ActualStart
+                                : null))
                     .ToArray()))
             .OrderBy(backlog => machinesById.TryGetValue(backlog.MachineId, out var machine)
                 ? machine.Number

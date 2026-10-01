@@ -41,7 +41,8 @@ internal sealed record TimelineOperationInput(
     TimeSpan ExternalDelayAfter = default,
     TimelineWorkingDayDelay? ExternalWorkingDayDelay = null,
     int? ProductionCycleQuantity = null,
-    int? ManualPriority = null);
+    int? ManualPriority = null,
+    DateTimeOffset? ActualStartedAt = null);
 
 internal sealed record TimelineWorkingDayDelay(
     int Days,
