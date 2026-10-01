@@ -41,6 +41,8 @@
     </DockPanel>
     <DockPanel Grid.Row="1" Margin="0,0,0,8">
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+        <Button Content="Print…" Click="Print_Click" IsEnabled="{Binding CanPrint}" Margin="0,0,8,0"
+                ToolTip="Print the saved roster in black and white, landscape, one page per week (a long roster continues on further pages)." />
         <Button Content="Repeat last week" Command="{Binding CopyPreviousWeekCommand}" Margin="0,0,8,0"
                 ToolTip="Set this week's days to last week's shifts. Nothing is saved until you press Save." />
         <Button Content="Discard" Command="{Binding DiscardCommand}" Margin="0,0,8,0" ToolTip="Forget the unsaved changes and reload the roster" />

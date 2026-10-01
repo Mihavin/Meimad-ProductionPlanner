@@ -51,6 +51,9 @@ internal sealed class ShiftRosterViewModel : INotifyPropertyChanged
 
     public bool IsBusy => isBusy;
 
+    /// <summary>Printing reads the saved roster, so it waits until unsaved changes are saved or discarded.</summary>
+    public bool CanPrint => api is not null && !isBusy && Rows.Count > 0 && !HasChanges;
+
     public bool HasChanges => Rows.Any(row => row.Cells.Any(cell => cell.IsChanged));
 
     public string WeekTitle =>
@@ -181,6 +184,41 @@ internal sealed class ShiftRosterViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Reads <paramref name="weekCount"/> consecutive saved weeks, starting with the displayed one,
+    /// for printing. Returns null (with the reason in Status) when the Server cannot be read.
+    /// </summary>
+    internal async Task<IReadOnlyList<ShiftRosterPrintWeek>?> ReadWeeksForPrintAsync(int weekCount)
+    {
+        if (api is not { } client || isBusy) return null;
+        SetBusy(true);
+        try
+        {
+            var weeks = new List<ShiftRosterPrintWeek>();
+            for (var index = 0; index < weekCount; index++)
+            {
+                var start = weekStart.AddDays(7 * index);
+                var snapshot = await client.GetShiftRosterAsync(start, start.AddDays(6));
+                var calendars = snapshot.Calendars.ToDictionary(calendar => calendar.WorkingCalendarId, StringComparer.Ordinal);
+                var rows = snapshot.Employees
+                    .Where(employee => calendars.ContainsKey(employee.WorkingCalendarId))
+                    .Select(employee => new ShiftRosterRow(employee, calendars[employee.WorkingCalendarId]))
+                    .ToArray();
+                weeks.Add(new ShiftRosterPrintWeek(start, rows));
+            }
+            return weeks;
+        }
+        catch (Exception exception) when (exception is PlannerApiException or HttpRequestException or TaskCanceledException)
+        {
+            Status = exception.Message;
+            return null;
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
     private async Task MoveAsync(int days)
     {
         weekStart = weekStart.AddDays(days);
@@ -216,6 +254,7 @@ internal sealed class ShiftRosterViewModel : INotifyPropertyChanged
         SaveCommand.RaiseCanExecuteChanged();
         DiscardCommand.RaiseCanExecuteChanged();
         CopyPreviousWeekCommand.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(CanPrint));
     }
 
     private bool Set<T>(ref T field, T value, [CallerMemberName] string? name = null)
@@ -228,6 +267,9 @@ internal sealed class ShiftRosterViewModel : INotifyPropertyChanged
 
     private void OnPropertyChanged(string? name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
+
+/// <summary>One saved week of the roster, read for printing.</summary>
+internal sealed record ShiftRosterPrintWeek(DateOnly WeekStart, IReadOnlyList<ShiftRosterRow> Rows);
 
 /// <summary>One employee's week in the Shift Roster.</summary>
 internal sealed class ShiftRosterRow
