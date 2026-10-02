@@ -7,6 +7,17 @@
 // window.meimadViewer3d exposes the captured objects and an event hook.
 import { createToolpathViewer as createUpstreamViewer, SEGMENT_STYLES } from "../media/viewer3d.js";
 
+// Segment kinds of the Okuma OSP executor (meimad-okuma.js). An Okuma cycle is drawn and listed
+// in the legend under its own name; the FANUC cycle kinds of the upstream table (G71 rough pass,
+// G76 thread cut, ...) are never used for an Okuma program.
+Object.assign(SEGMENT_STYLES, {
+  "lap-rough": { color: "#d2a8ff", width: 2, label: "LAP rough pass (G85/G86)" },
+  "lap-contour": { color: "#b78cff", width: 2, label: "LAP rough contour follow" },
+  "lap-finish": { color: "#ff9f43", width: 2, label: "LAP finish contour (G87)" },
+  "osp-thread": { color: "#2dd4bf", width: 2, label: "Thread cut (G31-G35, G71/G72, G88)" },
+  "osp-groove": { color: "#f778ba", width: 2, label: "Groove / drill peck (G73/G74)" }
+});
+
 export { SEGMENT_STYLES };
 
 export function createToolpathViewer(options) {

@@ -6,16 +6,16 @@
   "manufacturer": "Okuma",
   "interpreter": "fanuc-lathe",
   "machineType": "lathe",
-  "reference": "Okuma OSP-P200L Programming Manual (lathe) G/M code tables, LAP (G80-G88), compound thread cycles (G71/G72), grooving cycles (G73/G74); interpreted through the FANUC lathe interpreter after the Meimad OSP-to-FANUC translation",
+  "reference": "Okuma OSP-P200L/P20L Programming Manual LE33-013 (lathe): G/M code tables, math functions, automatic chamfering, direct taper angle, fixed cycles (G31-G35, G71-G74, G77/G78), LAP (G80-G88), User Task. Programs are run by the Meimad Okuma OSP executor (meimad-okuma.js) with OSP rules; every cycle is expanded into plain moves, so the lathe interpreter only draws and times G00/G01/G02/G03.",
   "blockEnd": ";",
   "comment": "()",
   "translation": "okuma-osp-lathe",
   "macro": {
-    "dialect": "okuma-user-task-2",
-    "notes": "User Task 2: common variables VC1-VC200 (translated to #501+), local variables, IF [...] Nlabel / GOTO Nlabel branching (translated to FANUC IF GOTO with numeric sequence numbers), CALL Oxxxx / RTS subprograms (translated to M98/M99), PUT / WRITE C output (ignored).",
+    "dialect": "okuma-user-task",
+    "notes": "User Task: common variables V1-V200, local variables (names of 2 to 4 characters), expressions in address words (X19.03-0.6, Z=V1+2), IF [..] N.. / IF [..] GOTO N.. / IF name N.. / GOTO N.., CALL O.. Q.. with variable settings and RTS are executed. MODIN/MODOUT and the I/O statements (PUT, GET, READ, WRITE) are not simulated; system variables read as 0.",
     "controlFlow": [
       "GOTO",
-      "IF GOTO",
+      "IF",
       "CALL",
       "RTS"
     ],
@@ -24,11 +24,17 @@
       "COS",
       "TAN",
       "ATAN",
+      "ATAN2",
       "SQRT",
       "ABS",
+      "BIN",
+      "BCD",
       "ROUND",
       "FIX",
       "FUP",
+      "DROUND",
+      "DFIX",
+      "DFUP",
       "MOD"
     ]
   },
@@ -57,8 +63,8 @@
       "addresses": {
         "X": "Diameter",
         "Z": "Z",
-        "U": "Incremental diameter",
-        "W": "Incremental Z"
+        "A": "Taper angle from +Z",
+        "C": "C-axis"
       },
       "preview": "motion"
     },
@@ -69,12 +75,12 @@
       "addresses": {
         "X": "Diameter",
         "Z": "Z",
-        "U": "Incremental diameter",
-        "W": "Incremental Z",
+        "A": "Taper angle from +Z (with X or Z)",
         "F": "Feed",
         "C": "C-axis"
       },
-      "preview": "motion"
+      "preview": "motion",
+      "notes": "A with one coordinate gives the other; an A-only block is closed by the next block's X Z A."
     },
     {
       "code": "G02",
@@ -83,13 +89,13 @@
       "addresses": {
         "X": "Diameter",
         "Z": "Z",
-        "R": "Radius",
+        "L": "Radius",
         "I": "Radial centre offset",
         "K": "Z centre offset",
         "F": "Feed"
       },
       "preview": "motion",
-      "notes": "Drawn in the G18 Z-X plane only."
+      "notes": "L selects the arc shorter than 180 degrees; CALRG selects the longer one."
     },
     {
       "code": "G03",
@@ -98,7 +104,7 @@
       "addresses": {
         "X": "Diameter",
         "Z": "Z",
-        "R": "Radius",
+        "L": "Radius",
         "I": "Radial centre offset",
         "K": "Z centre offset",
         "F": "Feed"
@@ -113,7 +119,7 @@
         "F": "Seconds"
       },
       "preview": "state",
-      "notes": "OSP dwell time is F (seconds); the Meimad adapter converts it."
+      "notes": "OSP dwell time is F (seconds); it is added to the cycle time."
     },
     {
       "code": "G13",
@@ -153,42 +159,38 @@
     },
     {
       "code": "G20",
-      "group": 6,
-      "name": "Home position command",
+      "group": 0,
+      "name": "Home position return",
       "addresses": {},
       "preview": "not-expanded",
-      "notes": "OSP G20 is a home-position move, not inch input."
+      "notes": "Machine-dependent move; not drawn."
     },
     {
       "code": "G21",
-      "group": 6,
-      "name": "ATC home position command",
+      "group": 0,
+      "name": "ATC home position return",
       "addresses": {},
       "preview": "not-expanded",
-      "notes": "OSP G21 is not metric input."
+      "notes": "Machine-dependent move; not drawn."
     },
     {
       "code": "G22",
       "group": 0,
-      "name": "Torque skip",
+      "name": "Torque skip command",
       "addresses": {},
       "preview": "not-expanded"
     },
     {
       "code": "G28",
       "group": 0,
-      "name": "Torque limit cancel",
-      "addresses": {
-        "U": "Axis",
-        "W": "Axis"
-      },
-      "preview": "state",
-      "notes": "The preview forgets the current position after G28."
+      "name": "Torque limit command cancel",
+      "addresses": {},
+      "preview": "state"
     },
     {
       "code": "G29",
       "group": 0,
-      "name": "Torque limit",
+      "name": "Torque limit command",
       "addresses": {},
       "preview": "state"
     },
@@ -196,12 +198,8 @@
       "code": "G30",
       "group": 0,
       "name": "Skip cycle",
-      "addresses": {
-        "U": "X axis",
-        "W": "Z axis"
-      },
-      "preview": "not-expanded",
-      "notes": "Uses the configured G30 X/Z preview position."
+      "addresses": {},
+      "preview": "not-expanded"
     },
     {
       "code": "G31",
@@ -213,7 +211,7 @@
         "F": "Lead"
       },
       "preview": "cycle",
-      "notes": "Shown by the Meimad adapter as one thread pass."
+      "notes": "One thread pass per block: rapid to X, thread to Z at lead F (taper I or A), retract and return. Following blocks repeat the cycle with a new X."
     },
     {
       "code": "G32",
@@ -225,7 +223,7 @@
         "F": "Lead"
       },
       "preview": "cycle",
-      "notes": "Shown by the Meimad adapter as one thread pass."
+      "notes": "One end-face thread pass per block: rapid to Z, thread to X at lead F (taper K or A), retract and return."
     },
     {
       "code": "G33",
@@ -237,21 +235,23 @@
         "F": "Lead"
       },
       "preview": "cycle",
-      "notes": "Shown by the Meimad adapter as one thread pass."
+      "notes": "One thread pass per block: rapid to X, thread to Z at lead F (taper I or A), retract and return. Following blocks repeat the cycle with a new X."
     },
     {
       "code": "G34",
       "group": 0,
       "name": "Variable lead thread, increasing",
       "addresses": {},
-      "preview": "not-expanded"
+      "preview": "motion",
+      "notes": "Drawn as a thread move at the lead F; the lead variation E is not timed."
     },
     {
       "code": "G35",
       "group": 0,
       "name": "Variable lead thread, decreasing",
       "addresses": {},
-      "preview": "not-expanded"
+      "preview": "motion",
+      "notes": "Drawn as a thread move at the lead F; the lead variation E is not timed."
     },
     {
       "code": "G40",
@@ -283,7 +283,8 @@
         "X": "Zero offset",
         "Z": "Zero offset"
       },
-      "preview": "state"
+      "preview": "state",
+      "notes": "G50 S sets the maximum spindle speed; G50 X Z shifts the zero so the present position takes the given values (with G91: by the given amount)."
     },
     {
       "code": "G62",
@@ -327,7 +328,7 @@
         "Q": "Multi-start count"
       },
       "preview": "cycle",
-      "notes": "Converted by the Meimad adapter to the FANUC G76 two-block cycle."
+      "notes": "Expanded by the Okuma executor: thread height H, first depth D, finishing allowance U, infeed pattern M73 (default), M74 or M75, taper I or A, lead F/J. The infeed angle B and chamfer L are not drawn."
     },
     {
       "code": "G72",
@@ -342,7 +343,7 @@
         "F": "Pitch"
       },
       "preview": "cycle",
-      "notes": "Converted by the Meimad adapter to the FANUC G76 two-block cycle."
+      "notes": "Expanded by the Okuma executor: thread height H, first depth D, finishing allowance W, infeed pattern M73 (default), M74 or M75, taper K or A, lead F/J."
     },
     {
       "code": "G73",
@@ -358,7 +359,7 @@
         "F": "Feed"
       },
       "preview": "cycle",
-      "notes": "Converted by the Meimad adapter to the FANUC G75 peck grooving cycle."
+      "notes": "Expanded by the Okuma executor: pecks of D with a retraction DA, full withdrawal every L, approach I, shift K between grooves up to Z, dwell E."
     },
     {
       "code": "G74",
@@ -375,7 +376,7 @@
         "F": "Feed"
       },
       "preview": "cycle",
-      "notes": "Converted by the Meimad adapter to the FANUC G74 peck drilling cycle."
+      "notes": "Expanded by the Okuma executor: pecks of D with a retraction DA, full withdrawal every L, approach K, shift I between grooves up to X, dwell E."
     },
     {
       "code": "G75",
@@ -384,8 +385,8 @@
       "addresses": {
         "L": "Chamfer size"
       },
-      "preview": "state",
-      "notes": "Chamfer modifier on a G01 block; the corner itself is not drawn."
+      "preview": "motion",
+      "notes": "C-chamfer of size L on a square corner (one of X or Z in the block). With an angle A the corner is drawn sharp."
     },
     {
       "code": "G76",
@@ -394,58 +395,64 @@
       "addresses": {
         "L": "Corner radius"
       },
-      "preview": "state",
-      "notes": "Rounding modifier on a G01 block; the corner itself is not drawn."
+      "preview": "motion",
+      "notes": "Rounding of radius L on a square corner (one of X or Z in the block). With an angle A the corner is drawn sharp."
     },
     {
       "code": "G77",
       "group": 0,
       "name": "Tapping compound fixed cycle",
       "addresses": {},
-      "preview": "not-expanded"
+      "preview": "cycle",
+      "notes": "Drawn as a feed in and out along Z at the lead F."
     },
     {
       "code": "G78",
       "group": 0,
       "name": "Tapping cycle, reversed thread",
       "addresses": {},
-      "preview": "not-expanded"
+      "preview": "cycle",
+      "notes": "Drawn as a feed in and out along Z at the lead F."
     },
     {
       "code": "G80",
-      "group": 10,
+      "group": 0,
       "name": "End of shape designation (LAP)",
       "addresses": {},
       "preview": "cycle",
-      "notes": "LAP contour end; the Meimad adapter converts LAP cycles to FANUC G71/G72/G70."
+      "notes": "Ends a contour definition."
     },
     {
       "code": "G81",
       "group": 0,
       "name": "Start of longitudinal shape designation (LAP)",
       "addresses": {},
-      "preview": "cycle"
+      "preview": "cycle",
+      "notes": "Starts a longitudinal contour definition. The definition is skipped where it stands and is run by G85/G86/G87/G88 N<sequence name>, wherever it is in the program."
     },
     {
       "code": "G82",
       "group": 0,
       "name": "Start of transverse shape designation (LAP)",
       "addresses": {},
-      "preview": "cycle"
+      "preview": "cycle",
+      "notes": "Starts a transverse contour definition. The definition is skipped where it stands and is run by G85/G86/G87/G88 N<sequence name>."
     },
     {
       "code": "G83",
-      "group": 10,
+      "group": 0,
       "name": "Start of blank material shape definition (LAP)",
       "addresses": {},
-      "preview": "not-expanded"
+      "preview": "not-expanded",
+      "notes": "LAP4 blank shape: not used; the cycle cuts from the AP starting point (AP mode I/II)."
     },
     {
       "code": "G84",
-      "group": 10,
+      "group": 0,
       "name": "Change of cutting conditions (LAP)",
       "addresses": {},
-      "preview": "state"
+      "preview": "not-expanded",
+      "notes": "Cutting-condition change points (XA/DA/FA, XB/DB/FB) are not applied; the cycle uses D and F of the G85 block."
     },
     {
       "code": "G85",
@@ -459,7 +466,7 @@
         "W": "Z finish stock"
       },
       "preview": "cycle",
-      "notes": "Converted by the Meimad adapter to FANUC G71 (G81 contour) or G72 (G82 contour)."
+      "notes": "Expanded by the Okuma executor (AP mode I): levels D apart from the AP starting point, each cut parallel to the axis up to the rough contour and along it up to the previous level, 0.1 relief, descending slopes level by level, and a last pass on the rough contour (finish allowances U, W)."
     },
     {
       "code": "G86",
@@ -473,7 +480,7 @@
         "W": "Z finish stock"
       },
       "preview": "cycle",
-      "notes": "Converted by the Meimad adapter to FANUC G73 pattern repeating."
+      "notes": "Expanded by the Okuma executor (AP mode II): the contour shifted toward the AP starting point, D closer every pass, last pass on the rough contour (U, W)."
     },
     {
       "code": "G87",
@@ -483,29 +490,30 @@
         "N": "Contour label"
       },
       "preview": "cycle",
-      "notes": "Converted by the Meimad adapter to FANUC G70."
+      "notes": "The contour definition is executed as programmed, with its feeds and G41/G42."
     },
     {
       "code": "G88",
       "group": 0,
       "name": "Continuous thread cutting cycle (LAP)",
       "addresses": {},
-      "preview": "not-expanded"
+      "preview": "cycle",
+      "notes": "Expanded by the Okuma executor (AP mode III): thread passes along the contour with H, D, U (W) and the infeed pattern M73/M74/M75."
     },
     {
       "code": "G90",
       "group": 3,
       "name": "Absolute programming",
       "addresses": {},
-      "preview": "state",
-      "notes": "The Meimad adapter rewrites incremental (G91) X/Z words to U/W for the interpreter."
+      "preview": "state"
     },
     {
       "code": "G91",
       "group": 3,
       "name": "Incremental programming",
       "addresses": {},
-      "preview": "state"
+      "preview": "state",
+      "notes": "X increments are diameter values."
     },
     {
       "code": "G94",

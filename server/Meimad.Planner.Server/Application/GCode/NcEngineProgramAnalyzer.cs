@@ -144,7 +144,7 @@ internal sealed class NcEngineProgramAnalyzer : INcProgramAnalyzer, IDisposable
         var unsupported = new List<string>();
         if (result.UnestimatedSegmentCount > 0) unsupported.Add("UNTIMED_MOTION");
         if (result.ResourceLimited) unsupported.Add("ENGINE_RESOURCE_LIMIT");
-        // Without the Okuma translation (an Okuma OSP viewer machine) OSP-only syntax is not simulated.
+        // Only the Okuma OSP executor (an Okuma OSP viewer machine) runs OSP syntax.
         if (string.Equals(dialect, NcDialects.OkumaOsp, StringComparison.Ordinal)
             && !string.Equals(result.Translation, "okuma-osp-lathe", StringComparison.Ordinal))
         {

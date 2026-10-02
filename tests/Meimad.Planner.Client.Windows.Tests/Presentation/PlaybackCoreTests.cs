@@ -201,6 +201,24 @@ public sealed class PlaybackCoreTests : IDisposable
         Assert.Equal("[\"10\",\"System\",\"read\"]", result.GetProperty("playback").GetProperty("#5001").GetRawText());
     }
 
+    [Fact]
+    public void Okuma_variables_are_listed_by_name_and_scope_not_as_fanuc_numbers()
+    {
+        // The Okuma executor's trace: ids with the names and scopes of V1 (common) and DIA (local).
+        var result = Run("""
+            const trace = {
+              rows: {}, systemReads: [], used: [10001, 20000],
+              writes: [[0, 10001, 0, 0, "main|1", 1], [4, 10001, 1, 0, "main|5", 6], [4, 20000, 12.5, 0, "main|6", 7]],
+              names: { 10001: "V1", 20000: "DIA" }, scopes: { 10001: "Common", 20000: "Local" }
+            };
+            const at = (context) => P.variablesAt(trace, context).map((row) => [row.variable, row.value, row.scope, row.setAt]);
+            return { start: at({ position: 0, level: 0 }), end: at({ position: 4, level: 0 }) };
+            """);
+
+        Assert.Equal("[[\"V1\",\"0\",\"Common\",\"row 1\"],[\"DIA\",\"vacant\",\"Local\",\"\"]]", result.GetProperty("start").GetRawText());
+        Assert.Equal("[[\"V1\",\"1\",\"Common\",\"row 5\"],[\"DIA\",\"12.5\",\"Local\",\"row 6\"]]", result.GetProperty("end").GetRawText());
+    }
+
     private JsonElement Run(string body)
     {
         var json = (string)engine.Evaluate("JSON.stringify((function () { const P = MeimadPlaybackCore; " + body + " })())");

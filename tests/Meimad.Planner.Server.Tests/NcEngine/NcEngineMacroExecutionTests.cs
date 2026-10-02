@@ -103,15 +103,54 @@ public sealed class NcEngineMacroExecutionTests : IDisposable
         var lines = runtime.PrepareForTesting(request).GetProperty("lines").EnumerateArray().Select(line => line.GetString()!).ToArray();
         var analysis = runtime.Analyze(new NcEngineAnalysisRequest(program, "FANUC_MACRO_B", Lathe));
 
-        var cycles = lines.Where(line => line.StartsWith("G71 P", StringComparison.Ordinal)).ToArray();
-        Assert.Equal(2, cycles.Length);
-        Assert.StartsWith("G71 P10 Q20", cycles[0], StringComparison.Ordinal);
-        Assert.DoesNotContain("P10 ", cycles[1], StringComparison.Ordinal); // the second pass names its own copies
-        Assert.Contains(lines, line => line.EndsWith("G0 X15.", StringComparison.Ordinal) && !line.StartsWith("N10 ", StringComparison.Ordinal));
+        // Every cycle names its own copy of the profile, with the variables of its pass.
+        var cycles = lines.Where(line => line.StartsWith("G71 P", StringComparison.Ordinal) || line.StartsWith("G70 P", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(4, cycles.Length);
+        Assert.Equal(4, cycles.Select(line => line.Split(' ')[1]).Distinct().Count());
+        Assert.DoesNotContain(cycles, line => line.Contains("P10 ", StringComparison.Ordinal));
+        Assert.Equal(2, lines.Count(line => line.StartsWith("N", StringComparison.Ordinal) && line.EndsWith("G0 X20.", StringComparison.Ordinal)));
+        Assert.Equal(2, lines.Count(line => line.StartsWith("N", StringComparison.Ordinal) && line.EndsWith("G0 X15.", StringComparison.Ordinal)));
         Assert.Equal(lines.Where(line => line.StartsWith("N", StringComparison.Ordinal)).Select(line => line.Split(' ')[0]).Distinct().Count(),
             lines.Count(line => line.StartsWith("N", StringComparison.Ordinal)));
         Assert.Empty(analysis.Errors);
         Assert.True(analysis.FeedSeconds > 0);
+    }
+
+    [Fact]
+    public void A_contour_cycle_finds_its_profile_behind_a_goto_and_the_profile_is_not_run_as_moves()
+    {
+        // The shop's FANUC style: GOTO jumps over the profile, and G70 reads it again later.
+        var program = string.Join("\n",
+            "G18 G21 G99", "T1111", "G50 S1800", "G96 S120 M3", "G0 X30 Z2",
+            "G71 U1.5 R0.5",
+            "G71 P100 Q200 U0.2 W0.05 F0.3",
+            "GOTO300",
+            "N100 G1 X-0.3 Z2",
+            "G1 Z0",
+            "G1 X12.6",
+            "G1 Z-8.45",
+            "N200 G1 X29",
+            "N300 G0 X30 Z2",
+            "G70 P100 Q200",
+            "G0 X100 Z50", "M30");
+        // The same cycle without the GOTO: the control resumes after the Q block.
+        var plain = program.Replace("GOTO300\n", string.Empty, StringComparison.Ordinal);
+
+        var lines = runtime.PrepareForTesting(new NcEnginePreviewRequest(program, Lathe)).GetProperty("lines").EnumerateArray().Select(line => line.GetString()!).ToArray();
+        var analysis = runtime.Analyze(new NcEngineAnalysisRequest(program, "FANUC_MACRO_B", Lathe));
+        var plainAnalysis = runtime.Analyze(new NcEngineAnalysisRequest(plain, "FANUC_MACRO_B", Lathe));
+
+        Assert.Empty(analysis.Errors);
+        Assert.Contains(analysis.Warnings, warning => warning.StartsWith("G71 type I", StringComparison.Ordinal));
+        Assert.Contains(analysis.Warnings, warning => warning.StartsWith("G70 finish: expanded", StringComparison.Ordinal));
+        // One copy of the profile per cycle, each behind a GOTO of the flat program.
+        Assert.Equal(2, lines.Count(line => line.EndsWith("G1 X12.6", StringComparison.Ordinal)));
+        Assert.Equal(2, lines.Count(line => line.StartsWith("GOTO ", StringComparison.Ordinal)));
+        Assert.DoesNotContain("N100 G1 X-0.3 Z2", lines);
+        Assert.True(analysis.SegmentCount > 20, $"segments: {analysis.SegmentCount}");
+        // With or without the GOTO the tool path is the same: the profile is never drawn as plain moves.
+        Assert.Equal(analysis.SegmentCount, plainAnalysis.SegmentCount);
+        Assert.Equal(analysis.FeedSeconds, plainAnalysis.FeedSeconds, 6);
     }
 
     [Fact]

@@ -23,8 +23,14 @@
 // Program stops (M00, M01, #3006) are reported with the flat line they follow so the viewer can
 // halt playback there. The trace records, against the flat lines, every executed row (for
 // breakpoints and "tool at the selected row"), every variable write with its macro level, and the
-// system variables the program read, so the viewer can show variable values at any position. Sequence numbers are kept unique in the flat program, so a roughing cycle
-// in a loop or in a subprogram called twice still finds its own contour.
+// system variables the program read, so the viewer can show variable values at any position.
+//
+// Contour cycles (G70/G71/G72/G73 with P and Q) read their profile from the program text, not
+// from the executed flow: a GOTO over the profile, a profile placed elsewhere in the program, a
+// cycle in a loop or in a subprogram called twice must all find the same blocks. Every such cycle
+// therefore carries a private copy of its profile in the flat program, numbered with sequence
+// numbers nothing else uses and wrapped in a GOTO so the interpreter does not run it as ordinary
+// moves. After G71/G72/G73 execution resumes after the Q block, as on the control.
 
 const { evaluateExpression } = require("../src/macro");
 
@@ -35,7 +41,7 @@ const MAX_TRACE_WRITES = 100000;
 const MAX_TRACE_READS = 20000;
 const MAX_BLOCKS = 500000;
 const MAX_LINES = 200000;
-const UNIQUE_SEQUENCE_BASE = 700000;
+const CONTOUR_SEQUENCE_BASE = 90000000;
 const TYPE_I_ARGUMENTS = {
   A: 1, B: 2, C: 3, I: 4, J: 5, K: 6, D: 7, E: 8, F: 9, H: 11, M: 13,
   Q: 17, R: 18, S: 19, T: 20, U: 21, V: 22, W: 23, X: 24, Y: 25, Z: 26
@@ -223,7 +229,8 @@ function customCalls(parameters) {
 //   blockDelete          true skips "/" blocks
 //   now                  Date for #3011 / #3012
 function execute(main, options = {}) {
-  const out = { lines: [], map: [], notes: [], external: [], stops: [], prints: [], units: new Map(), dwellSeconds: 0, callCount: 0, executedBlockCount: 0 };
+  // sequences: the sequence numbers of the profile copies -> the numbers the program wrote.
+  const out = { lines: [], map: [], notes: [], external: [], stops: [], prints: [], units: new Map(), sequences: new Map(), dwellSeconds: 0, callCount: 0, executedBlockCount: 0 };
   const noted = new Set();
   const note = (text) => {
     if (noted.has(text) || out.notes.length >= 40) return;
@@ -259,7 +266,7 @@ function execute(main, options = {}) {
   };
   const stack = [];
   const frame = () => stack[stack.length - 1];
-  const sequenceNumbers = { used: new Set(), last: new Map(), pending: new Map(), next: UNIQUE_SEQUENCE_BASE };
+  let nextContourSequence = CONTOUR_SEQUENCE_BASE;
   let stopped = false;
   let blocks = 0;
   const trace = { rows: new Map(), rowCount: 0, writes: [], systemReads: [], lastRead: new Map(), used: new Set() };
@@ -571,22 +578,22 @@ function execute(main, options = {}) {
 
   // ----- output -------------------------------------------------------------------------------
 
-  function origin() {
+  function origin(index) {
     const current = frame();
     if (!current) return { line: 1 };
-    const unitLine = current.unit.origin(current.index);
+    const unitLine = current.unit.origin(index ?? current.index);
     if (stack.length === 1) return { line: unitLine, locals: localsId(current.locals) };
     return { line: current.mainLine, unit: current.name, unitLine, depth: stack.length - 1, locals: localsId(current.locals) };
   }
 
-  function emit(text) {
+  function emit(text, index) {
     if (out.lines.length >= MAX_LINES) {
       note(`The executed program reached ${MAX_LINES.toLocaleString("en-US")} blocks; the preview stops there.`);
       stopped = true;
       return;
     }
     out.lines.push(text);
-    out.map.push(origin());
+    out.map.push(origin(index));
   }
 
   function emitComment(text) {
@@ -600,40 +607,76 @@ function execute(main, options = {}) {
     return { afterLine: out.lines.length, kind, message: message || "", line: at.line, unit: at.unit || null, unitLine: at.unitLine || null, step: blocks };
   }
 
-  function uniqueSequence(key, number) {
-    const pending = sequenceNumbers.pending.get(key);
-    if (pending !== undefined) {
-      sequenceNumbers.pending.delete(key);
-      sequenceNumbers.last.set(key, pending);
-      return pending;
-    }
-    let result = number;
-    if (sequenceNumbers.used.has(number)) {
-      while (sequenceNumbers.used.has(sequenceNumbers.next)) sequenceNumbers.next += 1;
-      result = sequenceNumbers.next;
-    }
-    sequenceNumbers.used.add(result);
-    sequenceNumbers.last.set(key, result);
-    return result;
+  // The profile blocks of a contour cycle: rows ns..nf of the program the cycle is in. The control
+  // searches the program for the sequence numbers, so the profile may lie before the cycle or
+  // behind a GOTO.
+  function contourRange(first, last) {
+    const current = frame();
+    const range = programRange(current.unit, current.index);
+    const inProgram = (number) => (current.unit.sequences.get(number) || []).filter((index) => index >= range.start && index < range.end);
+    const starts = inProgram(first);
+    const start = starts.find((index) => index > current.index) ?? starts[0];
+    if (start === undefined) return undefined;
+    const end = inProgram(last).find((index) => index >= start);
+    return end === undefined ? undefined : { start, end };
   }
 
-  // P/Q of a contour cycle name blocks of the same program: a block still ahead gets its number
-  // now, a block already executed keeps the number it was emitted with.
-  function contourReference(number) {
-    const current = frame();
-    const key = `${current.unit.key}:${programRange(current.unit, current.index).start}:${number}`;
-    const ahead = (current.unit.sequences.get(number) || []).some((index) => index > current.index &&
-      index < programRange(current.unit, current.index).end);
-    if (!ahead) return sequenceNumbers.last.get(key) ?? number;
-    if (sequenceNumbers.pending.has(key)) return sequenceNumbers.pending.get(key);
-    let result = number;
-    if (sequenceNumbers.used.has(number)) {
-      while (sequenceNumbers.used.has(sequenceNumbers.next)) sequenceNumbers.next += 1;
-      result = sequenceNumbers.next;
+  // One profile block with its macro expressions resolved, as the control reads it when the cycle
+  // starts. Statements that are not NC blocks cannot be part of a profile.
+  function contourBlock(raw, labels) {
+    const code = stripComments(raw).toUpperCase().replace(/^\/\d?/, "").trim().replace(/^N\s*\d+\s*/, "");
+    const parts = labels.map((label) => `N${label}`);
+    if (code && !/^(?:#|IF\b|WHILE\b|DO\s*\d|END\s*\d|GOTO\b|DPRNT|BPRNT|POPEN|PCLOS|SETVN)/.test(code)) {
+      for (const word of resolveWords(code)) {
+        if (word.value === null && !word.literal) continue;
+        parts.push(`${word.letter}${word.text}`);
+      }
     }
-    sequenceNumbers.used.add(result);
-    sequenceNumbers.pending.set(key, result);
-    return result;
+    return parts.join(" ");
+  }
+
+  // Emits a contour cycle block followed by its own copy of the profile:
+  //   G71 P<a> Q<b> ... / GOTO <c> / N<a> ... N<b> ... / N<c>
+  // Returns the row after the profile when the profile follows the cycle block.
+  function emitContourCycle(sequence, words) {
+    const current = frame();
+    const first = Math.round(valueOf(words, "P"));
+    const last = Math.round(valueOf(words, "Q"));
+    const range = contourRange(first, last);
+    const text = (p, q) => {
+      const parts = sequence === undefined ? [] : [`N${sequence}`];
+      for (const word of words) {
+        if (word.value === null && !word.literal) continue;
+        parts.push(word.letter === "P" ? `P${p}` : word.letter === "Q" ? `Q${q}` : `${word.letter}${word.text}`);
+      }
+      return parts.join(" ");
+    };
+    if (!range) {
+      emit(text(first, last));
+      note(`${rowLabel()}: the profile N${first}-N${last} of the cycle was not found in this program.`);
+      return undefined;
+    }
+    const numbers = [nextContourSequence, nextContourSequence + 1, nextContourSequence + 2];
+    nextContourSequence += 3;
+    out.sequences.set(numbers[0], first);
+    out.sequences.set(numbers[1], last);
+    // A one-block profile is both the first and the last block.
+    const single = range.start === range.end;
+    emit(text(numbers[0], single ? numbers[0] : numbers[1]));
+    emit(`GOTO ${numbers[2]}`);
+    for (let index = range.start; index <= range.end; index += 1) {
+      const labels = index === range.start ? [numbers[0]] : index === range.end ? [numbers[1]] : [];
+      let block;
+      try {
+        block = contourBlock(current.unit.lines[index], labels);
+      } catch (error) {
+        note(`${current.unit === mainUnit ? "Row" : `${current.unit.name} row`} ${current.unit.origin(index)}: ${error.message}`);
+        block = labels.map((label) => `N${label}`).join(" ");
+      }
+      if (block) emit(block, index);
+    }
+    emit(`N${numbers[2]}`);
+    return range.start > current.index ? range.end + 1 : undefined;
   }
 
   // ----- statements -----------------------------------------------------------------------------
@@ -751,21 +794,24 @@ function execute(main, options = {}) {
   }
 
   function emitBlock(sequence, words) {
-    const parts = [];
-    if (sequence !== undefined) {
-      const current = frame();
-      const key = `${current.unit.key}:${programRange(current.unit, current.index).start}:${sequence}`;
-      parts.push(`N${uniqueSequence(key, sequence)}`);
+    const cycle = words.find((word) => word.letter === "G" && CONTOUR_CYCLES.has(word.value));
+    if (cycle && Number.isFinite(valueOf(words, "P")) && Number.isFinite(valueOf(words, "Q"))) {
+      const resume = emitContourCycle(sequence, words);
+      trackState(words);
+      // G71/G72/G73 continue after the last profile block; G70 continues with the next block.
+      if (resume !== undefined && cycle.value !== 70) {
+        const current = frame();
+        current.index = resume;
+        current.jumped = true;
+      }
+      return;
     }
-    const contour = words.some((word) => word.letter === "G" && CONTOUR_CYCLES.has(word.value)) &&
-      has(words, "P") && has(words, "Q");
+    const parts = [];
+    // Sequence numbers stay as programmed: nothing in the flat program refers to them.
+    if (sequence !== undefined) parts.push(`N${sequence}`);
     for (const word of words) {
       if (word.value === null && !word.literal) continue;
-      if (contour && (word.letter === "P" || word.letter === "Q") && Number.isFinite(word.value)) {
-        parts.push(`${word.letter}${contourReference(Math.round(word.value))}`);
-      } else {
-        parts.push(`${word.letter}${word.text}`);
-      }
+      parts.push(`${word.letter}${word.text}`);
     }
     if (parts.length) emit(parts.join(" "));
     out.dwellSeconds += dwellSeconds(words);

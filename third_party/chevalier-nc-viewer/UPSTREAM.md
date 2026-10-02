@@ -19,15 +19,21 @@ upstream placeholder returns. Meimad-specific behavior lives outside this folder
   `node:path` (win32), read-only `node:fs` and `Buffer` shims the engine needs in V8.
 - `shared/Meimad.Planner.NcEngine/Scripts/meimad-nc-engine.js` — the adapter the .NET host
   calls (analysis, preview parse, tool table, NC-dialect interpreter choice).
-- `shared/Meimad.Planner.NcEngine/Scripts/meimad-dialects.js` — translations for controls the
-  interpreters do not read natively (Okuma OSP-P200L lathe, Haas lathe one-block cycles, Mazak
+- `shared/Meimad.Planner.NcEngine/Scripts/meimad-dialects.js` — translations for controls of the
+  FANUC G-code family the interpreters do not read natively (Haas lathe one-block cycles, Mazak
   Variaxis A tilt as B), with a line map back to the original program.
+- `shared/Meimad.Planner.NcEngine/Scripts/meimad-okuma.js` — the Okuma OSP-P200L lathe executor.
+  OSP is not a FANUC dialect and is never translated to FANUC cycles: the executor runs the
+  program with OSP rules and expands LAP (G85-G88), thread (G31-G33, G71/G72) and grooving
+  (G73/G74) cycles into plain G00-G03 moves, which is all the lathe interpreter sees of an Okuma
+  program.
 - `shared/Meimad.Planner.NcEngine/Scripts/meimad-macro.js` — the custom macro executor for lathe
   programs (the vendored lathe interpreter reads only simple assignments and IF..GOTO): local and
   common variables, system variables, WHILE/DO/END, IF..GOTO/THEN, GOTO, G65/G66/G66.1/G67,
   M98/M97/M99 with calls from the program folder or the machine's program memory folder, and
   FANUC custom macro calls by G/M/T codes. It hands the interpreter a flat program with a line map,
-  the program stops (M00/M01/#3006) and the DPRNT output. For mills, `meimad-nc-engine.js` wraps
+  the program stops (M00/M01/#3006) and the DPRNT output. A contour cycle (G70-G73 P Q) carries its
+  own copy of the profile behind a GOTO of the flat program, and G71-G73 resume after the Q block. For mills, `meimad-nc-engine.js` wraps
   three methods of the vendored mill interpreter's prototype at run time (never the file) to
   report program stops, the called program of every segment and the custom macro calls.
 - `shared/Meimad.Planner.NcEngine/Definitions/` — Meimad machine and control definitions
@@ -63,8 +69,13 @@ polyarc envelope (`step-*.js`, `polyarc-overlay.js`), tests, release binaries.
   statements; `meimad-macro.js` executes the program first (with the upstream
   `createSubprogramResolver` search order for called programs).
 - The lathe interpreter reads FANUC two-block cycles only; the mill tilt solver moves B/C only.
-  `meimad-dialects.js` rewrites Haas one-block cycles, Okuma OSP syntax and the Mazak A tilt.
-  Remove a translation when upstream reads that control natively.
+  `meimad-dialects.js` rewrites Haas one-block cycles and the Mazak A tilt. Remove a translation
+  when upstream reads that control natively.
+- The lathe interpreter does not skip the profile blocks after `G71`/`G72`/`G73` (it draws them
+  again as ordinary moves unless the program jumps over them) and treats `G90` as absolute
+  positioning (FANUC G-code system A single cycles `G90`/`G92`/`G94` are not expanded). The macro
+  executor handles the first; the second is open (implementation plan OD-041).
+- The lathe interpreter has no Okuma OSP support; `meimad-okuma.js` gives it plain moves only.
 - The settings dialog lists program-memory folders for mills only; `meimad-viewer.js` adds the
   same rows for lathes.
 

@@ -14,8 +14,8 @@
     "Okuma OSP-P200L Programming Manual (lathe): G/M code tables, LAP cycles, compound fixed cycles, User Task 2"
   ],
   "detection": {
-    "keywords": ["OKUMA", "GENOS", "OSP", "LAP"],
-    "codes": ["G85", "G86", "G87", "G180", "G181", "G31", "G95"]
+    "keywords": ["OKUMA", "GENOS", "OSP-P"],
+    "codes": ["G85", "G86", "G88"]
   },
   "axes": {
     "X": { "type": "linear", "min": -330, "max": 0, "rapidRate": 20000, "diameter": true },

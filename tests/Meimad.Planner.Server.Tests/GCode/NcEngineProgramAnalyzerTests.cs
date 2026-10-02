@@ -126,7 +126,7 @@ public sealed class NcEngineProgramAnalyzerTests : IDisposable
     }
 
     [Fact]
-    public async Task Okuma_lathe_programs_are_translated_on_the_okuma_lathe_and_estimated_with_confidence()
+    public async Task Okuma_lathe_programs_are_run_by_the_okuma_executor_and_estimated_with_confidence()
     {
         // OSP syntax: six-digit T word, G95 feed per revolution, LAP cycle with a named contour,
         // G04 F dwell, IF ... Nlabel branching.
@@ -155,12 +155,14 @@ public sealed class NcEngineProgramAnalyzerTests : IDisposable
 
         var analysis = await analyzer.AnalyzeAsync(Write("okuma.min", program), [Machine("OKUMA_OSP")], Now, CancellationToken.None);
 
-        Assert.StartsWith("Interpreted as Okuma GENOS L200E-M", analysis.Warnings[0], StringComparison.Ordinal);
+        Assert.StartsWith("Interpreted as Okuma GENOS L200E-M (okuma-osp)", analysis.Warnings[0], StringComparison.Ordinal);
         Assert.DoesNotContain("OKUMA_OSP_SYNTAX", analysis.UnsupportedConstructs);
         Assert.NotEqual(NcEstimateConfidence.Low, analysis.Confidence);
         Assert.Equal(1.5, analysis.DwellSeconds, 6);
         Assert.InRange(analysis.FeedMotionSeconds, 20, 600);
-        Assert.Contains(analysis.Warnings, warning => warning.Contains("LAP cycles are converted", StringComparison.Ordinal));
+        // LAP is expanded by the Okuma executor; nothing is converted to a FANUC cycle.
+        Assert.DoesNotContain(analysis.Warnings, warning => warning.Contains("FANUC", StringComparison.OrdinalIgnoreCase)
+            || warning.Contains("G71 type", StringComparison.Ordinal));
     }
 
     [Fact]

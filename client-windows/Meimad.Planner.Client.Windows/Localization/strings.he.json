@@ -4747,5 +4747,20 @@
   "Before {unit} row {row}": "לפני {unit} שורה {row}",
   "After {unit} row {row}": "אחרי {unit} שורה {row}",
   "execution {n} of {m}": "ביצוע {n} מתוך {m}",
-  "Single step: run the next block of the program, or of the called program, then stop (single block)": "צעד בודד: הרץ את הבלוק הבא של התוכנית או של התוכנית הנקראת ועצור (בלוק בודד)"
+  "Single step: run the next block of the program, or of the called program, then stop (single block)": "צעד בודד: הרץ את הבלוק הבא של התוכנית או של התוכנית הנקראת ועצור (בלוק בודד)",
+  "G85 LAP rough passes": "מעברי חספוס LAP ‏G85",
+  "G86 LAP copy passes": "מעברי העתקה LAP ‏G86",
+  "G87 LAP finish cycles": "מחזורי גימור LAP ‏G87",
+  "Thread passes (G31-G33, G71/G72, G88)": "מעברי הברגה (G31-G33, G71/G72, G88)",
+  "G73/G74 grooves / pecks": "חריצים / ניקורים G73/G74",
+  "G77/G78 tapping cycles": "מחזורי הברזה G77/G78",
+  "G50 zero shifts": "הזזות אפס G50",
+  "Program execution": "הרצת התוכנית",
+  "Okuma OSP executor (Meimad)": "מריץ Okuma OSP ‏(Meimad)",
+  "Rapid X / Z": "מעבר מהיר X / Z",
+  "LAP rough pass (G85/G86)": "מעבר חספוס LAP ‏(G85/G86)",
+  "LAP rough contour follow": "מעקב קונטור בחספוס LAP",
+  "LAP finish contour (G87)": "קונטור גימור LAP ‏(G87)",
+  "Thread cut (G31-G35, G71/G72, G88)": "חיתוך הברגה (G31-G35, G71/G72, G88)",
+  "Groove / drill peck (G73/G74)": "ניקור חריץ / קידוח (G73/G74)"
 }

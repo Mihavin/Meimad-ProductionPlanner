@@ -10,11 +10,19 @@
 //
 // The machine registry is the vendored one plus the Meimad definitions in meimad/machines and
 // meimad/controls (Mazak Variaxis i-500, Okuma Genos L200E-M, Haas ST-25Y, Haas VF-3SS, generic
-// FANUC 0i-MC mills). Programs for controls that the interpreters do not read natively are
-// translated first (meimad-dialects.js); lathe programs are executed by the Meimad custom macro
-// executor (meimad-macro.js: variables, WHILE/IF/GOTO, G65/G66/M98/M97/M99 and custom macro
-// calls), because the lathe interpreter reads only simple assignments and IF..GOTO. Both keep a
-// line map so every segment, issue and message reports the row of the original program. The mill
+// FANUC 0i-MC mills). Lathe programs take one of two separate paths, chosen by the machine's
+// control and never combined:
+//
+//   FANUC and Haas lathes   meimad-dialects.js rewrites Haas one-block cycles to the FANUC form, then
+//                           the custom macro executor (meimad-macro.js: variables, WHILE/IF/GOTO,
+//                           G65/G66/M98/M97/M99, custom macro calls, contour cycle profiles) runs
+//                           the program, because the lathe interpreter reads only simple assignments
+//                           and IF..GOTO.
+//   Okuma OSP lathes        meimad-okuma.js runs the OSP program with OSP rules and expands every
+//                           cycle (LAP G85-G88, thread G31-G33/G71/G72, grooving G73/G74) into plain
+//                           moves; no FANUC cycle, macro rule or FANUC parameter is applied.
+//
+// Both keep a line map so every segment, issue and message reports the row of the original program. The mill
 // interpreter executes macros itself; mill-hooks below add the stops (M00/M01/#3006), the called
 // program of every segment and FANUC custom macro calls by G/M/T codes, without changing the
 // vendored files. The viewer model carries the stops (meimadStops), the called programs'
@@ -49,6 +57,7 @@ const {
 const transport = require("../media/model-transport");
 const dialects = require("./meimad-dialects");
 const macro = require("./meimad-macro");
+const okuma = require("./meimad-okuma");
 
 const MM_PER_INCH = 25.4;
 const RAPID_KINDS = new Set(["rapid", "home", "tool-change", "g30"]);
@@ -64,6 +73,12 @@ const CONTROLS_BY_DIALECT = Object.freeze({
   MAZAK_MATRIX_EIA: { mill: ["mazak-matrix2-mill"], lathe: ["fanuc-0i-tf-lathe"] },
   OKUMA_OSP: { mill: ["fanuc-31i-b-plus-mill"], lathe: ["okuma-osp-p200l-lathe"] }
 });
+
+// The control definition key of machines whose programs the Okuma OSP executor runs.
+const OKUMA_OSP_LATHE = "okuma-osp-lathe";
+const isOkuma = (machine) => machine?.controlDefinition?.translation === OKUMA_OSP_LATHE;
+// Segment kinds the Okuma executor may rename to its own cycle kinds (rapids keep theirs).
+const CUTTING_KINDS = new Set(["feed", "arc-cw", "arc-ccw"]);
 
 let registryCache;
 let parameterCache;
@@ -103,10 +118,36 @@ function machineForControls(type, controls) {
   return undefined;
 }
 
+// Okuma OSP and FANUC/Haas lathe programs share G codes with different meanings (G71 is a thread
+// cycle on OSP and stock removal on FANUC; G87 is LAP finishing on OSP and a drilling cycle on
+// FANUC), so single codes cannot tell them apart. A detected lathe program goes to the Okuma
+// machine only on OSP syntax with no FANUC syntax, and leaves it when it has none.
+function latheByLanguage(text, detected) {
+  const okumaMachine = [...registry().machines.values()].find(isOkuma);
+  if (!okumaMachine) return undefined;
+  const { osp, other } = okuma.evidence(text);
+  if (!isOkuma(detected) && osp.length && !other.length) {
+    return { machine: okumaMachine, reason: `Detected Okuma OSP lathe program: ${osp.slice(0, 3).join(", ")}` };
+  }
+  if (isOkuma(detected) && (!osp.length || other.length > osp.length)) {
+    const machine = machineForControls("lathe", ["fanuc-0i-tf-lathe"]) ||
+      [...registry().machines.values()].find((candidate) => candidate.type === "lathe" && !isOkuma(candidate));
+    if (!machine) return undefined;
+    return {
+      machine,
+      reason: other.length
+        ? `Detected lathe program: ${other.slice(0, 3).join(", ")}`
+        : "Detected lathe program without Okuma OSP syntax"
+    };
+  }
+  return undefined;
+}
+
 // The explicit choice wins (the Meimad Machine's NC viewer machine, or the viewer's selection).
 // For "auto", a (MACHINE: ...) program comment wins, then the engine decides lathe or mill from
-// the program: a detected machine that reads the Meimad NC dialect is kept, otherwise the
-// dialect's preferred control picks the machine. Returns { selection, reason }.
+// the program (and Okuma OSP or FANUC from its syntax): a detected machine that reads the Meimad
+// NC dialect is kept, otherwise the dialect's preferred control picks the machine. Returns
+// { selection, reason }.
 function resolveSelection(request) {
   const machines = registry().machines;
   const requested = String(request.machineSelection || AUTO_MACHINE_ID);
@@ -115,22 +156,32 @@ function resolveSelection(request) {
   }
   const dialect = String(request.dialect || "").toUpperCase();
   const detection = detectMachineForSource(request.text, registry());
-  const detected = machines.get(detection.id);
+  let detected = machines.get(detection.id);
+  let detectionReason = detection.reason;
   // detectMachineForSource reports an explicit (MACHINE: ...) comment with this reason; its
   // confidence is also 1 for any one-sided evidence, so the reason is the only marker.
   const explicitTag = String(detection.reason || "").startsWith("Program comment");
+  if (detected?.type === "lathe" && !explicitTag) {
+    const language = latheByLanguage(request.text, detected);
+    if (language) {
+      detected = language.machine;
+      detectionReason = language.reason;
+    }
+  }
+  // The interpreter detects again from the text, so a corrected machine is passed by id.
+  const automatic = detected && detected.id !== detection.id ? detected.id : AUTO_MACHINE_ID;
   const unknownReason = requested !== AUTO_MACHINE_ID
-    ? `NC viewer machine "${requested}" is not installed; ${detection.reason}`
-    : detection.reason;
+    ? `NC viewer machine "${requested}" is not installed; ${detectionReason}`
+    : detectionReason;
   if (!dialect || !detected || explicitTag || !CONTROLS_BY_DIALECT[dialect]) {
-    return { selection: AUTO_MACHINE_ID, reason: unknownReason };
+    return { selection: automatic, reason: unknownReason };
   }
   const preferred = CONTROLS_BY_DIALECT[dialect][detected.type] || [];
   if (preferred.includes(detected.control)) {
-    return { selection: AUTO_MACHINE_ID, reason: unknownReason };
+    return { selection: automatic, reason: unknownReason };
   }
   const machine = machineForControls(detected.type, preferred);
-  if (!machine) return { selection: AUTO_MACHINE_ID, reason: unknownReason };
+  if (!machine) return { selection: automatic, reason: unknownReason };
   return { selection: machine.id, reason: `${unknownReason}; ${dialect} selects ${machine.name}` };
 }
 
@@ -204,6 +255,27 @@ function latheParameters(profile, lineCount) {
   };
 }
 
+// An Okuma lathe is timed from its own machine definition; the FANUC parameter export of another
+// machine (CNC-PARA.TXT) has no part in it.
+function okumaParameters(machine, lineCount) {
+  const limit = Math.max(20000, lineCount + 1000);
+  const rapids = ["X", "Z"].map((axis) => Number(machine.axes?.[axis]?.rapidRate)).filter((rate) => Number.isFinite(rate) && rate > 0);
+  return {
+    name: machine.name,
+    control: machine.controlDefinition?.name || machine.control,
+    reference: machine.controlDefinition?.reference || "",
+    fanuc: {},
+    settings: {
+      "axis.xProgramming": "diameter",
+      "motion.rapidRate": rapids.length ? Math.min(...rapids) : 15000,
+      "turret.indexSeconds": Number(machine.toolChanger?.changeSeconds) || 1,
+      "machine.tailstockPresent": false,
+      "macro.maximumExecutionSteps": limit,
+      "macro.maximumLineVisits": limit
+    }
+  };
+}
+
 function initialVariablesMap(request) {
   try {
     return initialiseVariables(runtimeSettings(request).initialVariables);
@@ -212,14 +284,39 @@ function initialVariablesMap(request) {
   }
 }
 
-// The program as the interpreter reads it: translated for the machine's control and, for lathes,
-// executed by the custom macro executor (calls, loops and variables resolved) with dwells
-// neutralized. Returns { text, map, notes, lineCount, dwellSeconds, external, translation, stops,
-// prints, units }.
+// The program as the interpreter reads it. An Okuma OSP lathe program is run by the Okuma
+// executor, which hands over plain moves; any other program is translated for the machine's
+// control and, for lathes, executed by the custom macro executor (calls, loops and variables
+// resolved) with dwells neutralized. Returns { text, map, notes, lineCount, dwellSeconds,
+// external, translation, stops, prints, units }.
 function prepareSource(request, machine) {
   const source = String(request.text || "");
   const sourceLines = source.split("\n");
   const translation = machine?.controlDefinition?.translation || null;
+  if (isOkuma(machine)) {
+    const units = new Map();
+    const executed = okuma.execute({ lines: sourceLines }, {
+      resolve: subprogramResolverFor(request, units)(machine),
+      initialVariables: runtimeSettings(request).initialVariables,
+      blockDelete: request.blockDelete === true
+    });
+    for (const [name, unit] of executed.units) if (!units.has(name)) units.set(name, unit);
+    return {
+      text: executed.lines.join("\n"),
+      map: executed.map,
+      changed: true,
+      notes: executed.notes,
+      lineCount: sourceLines.length,
+      dwellSeconds: executed.dwellSeconds,
+      external: executed.external,
+      translation,
+      stops: executed.stops,
+      prints: [],
+      units,
+      trace: executed.trace,
+      okuma: { cycles: executed.cycles, executedBlockCount: executed.executedBlockCount, sourceLines }
+    };
+  }
   const translated = dialects.translate(source, machine);
   const notes = [...translated.notes];
   let lines = translated.lines;
@@ -229,6 +326,7 @@ function prepareSource(request, machine) {
   let stops = [];
   let prints = [];
   let trace;
+  let sequences;
   const units = new Map();
   if (machine?.type === "lathe") {
     const resolve = subprogramResolverFor(request, units)(machine);
@@ -249,6 +347,7 @@ function prepareSource(request, machine) {
     stops = executed.stops;
     prints = executed.prints;
     trace = executed.trace;
+    sequences = executed.sequences;
     for (const [name, unit] of executed.units) if (!units.has(name)) units.set(name, unit);
     lines = neutralizeLatheDwell(lines);
   }
@@ -264,7 +363,8 @@ function prepareSource(request, machine) {
     stops,
     prints,
     units,
-    trace
+    trace,
+    sequences
   };
 }
 
@@ -291,6 +391,14 @@ function remapSegment(map, segment) {
     result.sourceLine = remapLine(map, segment.sourceLine);
   }
   if (Number.isFinite(entry?.locals)) result.meimadLocals = entry.locals;
+  if (entry?.cycle) {
+    // A move the Okuma executor generated for a cycle: its cycle, pass and kind.
+    result.cycle = entry.cycle;
+    result.cyclePass = entry.cyclePass;
+    result.cyclePassCount = entry.cyclePassCount;
+    result.cyclePhase = entry.cyclePhase;
+    if (entry.kind && CUTTING_KINDS.has(segment.kind)) result.kind = entry.kind;
+  }
   if (Array.isArray(segment.points)) result.points = segment.points.map((point) => remapPoint(map, point));
   for (const key of ["start", "end"]) {
     if (segment[key] && Number.isFinite(segment[key].sourceLine)) result[key] = remapPoint(map, segment[key]);
@@ -298,16 +406,40 @@ function remapSegment(map, segment) {
   return result;
 }
 
-function remapMessage(map, message) {
-  return typeof message === "string"
-    ? message.replace(/\b([Rr]ow) (\d+)\b/g, (match, word, number) => `${word} ${remapLine(map, Number(number))}`)
-    : message;
+// Messages name rows of the interpreter's text and the sequence numbers of the profile copies
+// the macro executor made; both are put back to what the program says.
+function remapMessage(map, message, sequences) {
+  if (typeof message !== "string") return message;
+  const rows = message.replace(/\b([Rr]ow) (\d+)\b/g, (match, word, number) => `${word} ${remapLine(map, Number(number))}`);
+  return sequences?.size
+    ? rows.replace(/\bN(\d{8})\b/g, (match, number) => (sequences.has(Number(number)) ? `N${sequences.get(Number(number))}` : match))
+    : rows;
+}
+
+// The text shown for a segment of an Okuma program: the program row it came from, with the cycle
+// pass for a generated move (the interpreter's own text is the plain move it drew).
+function okumaSegmentText(prepared, segment, entry) {
+  if (!entry) return segment.raw;
+  const unitText = entry.unit ? prepared.units.get(entry.unit)?.text : undefined;
+  const lines = typeof unitText === "string" ? unitText.split("\n") : prepared.okuma.sourceLines;
+  const row = String(lines[(entry.unit && typeof unitText === "string" ? entry.unitLine : entry.line) - 1] || "").replace(/\s+/g, " ").trim();
+  if (!entry.cycle) return row || segment.raw;
+  const pass = entry.cyclePassCount > 1 ? ` ${entry.cyclePass}/${entry.cyclePassCount}` : "";
+  return `${row} (${entry.cycle} ${entry.cyclePhase}${pass})`.trim();
 }
 
 // Lathe models describe the interpreter's text; move every row reference back to the program.
 function remapModel(model, prepared) {
   if (!prepared.changed) return model;
   const { map } = prepared;
+  if (prepared.okuma) {
+    for (const key of ["segments", "compensatedSegments"]) {
+      if (!Array.isArray(model[key])) continue;
+      model[key] = model[key].map((segment) => (segment && Number.isFinite(segment.line)
+        ? { ...segment, raw: okumaSegmentText(prepared, segment, map[Math.trunc(segment.line) - 1]) }
+        : segment));
+    }
+  }
   if (Array.isArray(model.segments)) model.segments = model.segments.map((segment) => remapSegment(map, segment));
   if (Array.isArray(model.compensatedSegments)) {
     model.compensatedSegments = model.compensatedSegments.map((segment) => remapSegment(map, segment));
@@ -316,8 +448,8 @@ function remapModel(model, prepared) {
     model.compensationIssues = model.compensationIssues.map((issue) =>
       issue && Number.isFinite(issue.line) ? { ...issue, line: remapLine(map, issue.line) } : issue);
   }
-  if (Array.isArray(model.warnings)) model.warnings = model.warnings.map((message) => remapMessage(map, message));
-  if (Array.isArray(model.errors)) model.errors = model.errors.map((message) => remapMessage(map, message));
+  if (Array.isArray(model.warnings)) model.warnings = model.warnings.map((message) => remapMessage(map, message, prepared.sequences));
+  if (Array.isArray(model.errors)) model.errors = model.errors.map((message) => remapMessage(map, message, prepared.sequences));
   if (model.meta) model.meta.lineCount = prepared.lineCount;
   // The sidebar rows were built from the interpreter's text; the line count is the program's.
   if (Array.isArray(model.statsRows)) {
@@ -604,7 +736,9 @@ function viewerTrace(raw, toExecution, rowMap) {
     rows,
     writes: raw.writes.map(([at, id, value, level, rowKey, step]) => [position(at), id, value, level, key(rowKey), step]),
     systemReads: raw.systemReads.map(([at, id, value]) => [position(at), id, value]),
-    used: [...raw.used].sort((left, right) => left - right)
+    used: [...raw.used].sort((left, right) => left - right),
+    // Named variables (Okuma V1, DIA1): the name and scope the viewer shows for an id.
+    ...(raw.names ? { names: raw.names, scopes: raw.scopes || {} } : {})
   };
 }
 
@@ -624,6 +758,7 @@ function millParameters(machine) {
 // folder (Renishaw and other macros). Depth-first, each called program listed once per caller.
 function callTree(request, machine, prepared) {
   if (!machine) return [];
+  if (isOkuma(machine)) return okumaCallTree(request, machine, prepared);
   const units = prepared.units;
   const resolve = subprogramResolverFor(request, units)(machine);
   const haas = String(machine.control || "").startsWith("haas");
@@ -693,6 +828,102 @@ function callTree(request, machine, prepared) {
   return nodes;
 }
 
+// The CALL O... tree of an Okuma OSP program: programs of the same file, then the program's
+// folder and the machine's program memory folder.
+function okumaCallTree(request, machine, prepared) {
+  const units = prepared.units;
+  const resolve = subprogramResolverFor(request, units)(machine);
+  const mainLines = String(request.text || "").split("\n");
+  const programs = okuma.programNames(mainLines);
+  const inFile = new Map();
+  programs.forEach((program, position) => {
+    if (position === 0 && program.index <= 3) return;
+    if (!inFile.has(program.name)) inFile.set(program.name, { start: program.index, end: programs[position + 1]?.index ?? mainLines.length });
+  });
+  const mainEnd = programs.find((program, position) => position > 0 || program.index > 3)?.index ?? mainLines.length;
+  const nodes = [];
+  const expanded = new Set();
+  const visit = (lines, originRow, parent, depth) => {
+    for (const call of okuma.scanCalls(lines)) {
+      if (nodes.length >= MAX_TREE_NODES) return;
+      const row = originRow(call.row);
+      const label = `O${call.target}`;
+      let name = label;
+      let node;
+      let child;
+      const local = inFile.get(call.target);
+      if (local) {
+        if (!units.has(name)) units.set(name, { name, text: null, path: null, location: "this program", inFile: true });
+        node = { name, label, location: "this program", path: null, inFile: true };
+        child = { lines: mainLines.slice(local.start, local.end), origin: (value) => local.start + value };
+      } else {
+        const targets = /^\d+$/.test(call.target) ? [Number(call.target), label] : [label, call.target];
+        let found;
+        for (const target of targets) {
+          found = resolve ? resolve(target) : undefined;
+          if (found) break;
+        }
+        if (!found) node = { name, label, location: null, path: null, missing: true };
+        else {
+          name = found.name;
+          node = { name, label, location: found.location || null, path: found.path || null };
+          child = { lines: String(found.source ?? "").split("\n"), origin: (value) => value };
+        }
+      }
+      const existing = nodes.find((candidate) => candidate.name === name && candidate.parent === parent);
+      if (existing) {
+        if (!existing.rows.includes(row)) existing.rows.push(row);
+        continue;
+      }
+      nodes.push({ ...node, parent, depth, rows: [row], repeated: expanded.has(name) });
+      if (child && !expanded.has(name) && depth < MAX_TREE_DEPTH) {
+        expanded.add(name);
+        visit(child.lines, child.origin, name, depth + 1);
+      }
+    }
+  };
+  visit(mainLines.slice(0, mainEnd), (value) => value, "main", 1);
+  return nodes;
+}
+
+// The sidebar rows of an Okuma lathe: its own cycles and machine data, none of the FANUC cycle
+// counters and parameter bits the lathe interpreter lists.
+function okumaRows(model, machine, prepared) {
+  const meta = model.meta || {};
+  const cycles = prepared.okuma.cycles || {};
+  const range = (axis, unit) => (axis && Number.isFinite(axis.min) && Number.isFinite(axis.max) ? `${axis.min} to ${axis.max} ${unit}` : "—");
+  model.statsRows = [
+    ["NC lines", prepared.lineCount],
+    ["Executed blocks", prepared.okuma.executedBlockCount || 0],
+    ["Path segments", meta.segmentCount || 0],
+    ["G85 LAP rough passes", cycles.roughPasses || 0],
+    ["G86 LAP copy passes", cycles.copyPasses || 0],
+    ["G87 LAP finish cycles", cycles.finishCycles || 0],
+    ["Thread passes (G31-G33, G71/G72, G88)", (cycles.threadPasses || 0) + (cycles.lapThreadPasses || 0)],
+    ["G73/G74 grooves / pecks", `${cycles.grooves || 0} / ${cycles.pecks || 0}`],
+    ["G77/G78 tapping cycles", cycles.taps || 0],
+    ["G50 zero shifts", cycles.zeroShifts || 0],
+    ["Estimated cycle", meta.estimatedCycleSeconds, "duration"],
+    ["Turret indexes", meta.turretIndexCount || 0],
+    ["Unestimated moves", meta.unestimatedSegmentCount || 0],
+    ["Compensated paths", meta.compensatedSegmentCount || 0],
+    ["Preview errors", (model.errors || []).length],
+    ["Tools found", (model.tools || []).length],
+    ["Units", meta.units || "mm"]
+  ];
+  model.machineRows = [
+    ["Machine", machine.name],
+    ["Control", machine.controlDefinition?.name || machine.control],
+    ["Program execution", "Okuma OSP executor (Meimad)"],
+    ["Kinematics", "Lathe: Z carriage, X cross-slide, turret; C spindle"],
+    ["X travel (dia)", range(machine.axes?.X, "mm")],
+    ["Z travel", range(machine.axes?.Z, "mm")],
+    ["Rapid X / Z", `${machine.axes?.X?.rapidRate ?? "—"} / ${machine.axes?.Z?.rapidRate ?? "—"} mm/min`],
+    ["Turret index", `${machine.toolChanger?.changeSeconds ?? "—"} s`],
+    ["Machine definition", machine.sourcePath || "—", "path"]
+  ];
+}
+
 // The machine is resolved from the original program (translation removes the codes detection
 // reads), so the interpreter is given the machine id; the model then reports the viewer's own
 // selection ("auto" or an id) and reason, as the machine list in the viewer expects.
@@ -701,14 +932,18 @@ function parseModel(request, choice) {
   if (machine?.type === "mill") installMillHooks();
   const prepared = prepareSource(request, machine);
   const lathe = machine?.type === "lathe";
+  const flatLineCount = prepared.text.split("\n").length;
   const model = parseProgramForMachine(prepared.text, {
     registry: registry(),
     machineSelection: machine ? machine.id : choice.selection,
-    settings: runtimeSettings(request),
-    machineParameters: lathe
-      ? latheParameters(machineParameters(request.machineParametersText), prepared.text.split("\n").length)
-      : machineParameters(request.machineParametersText),
-    machineParameterPath: request.machineParameterPath || undefined,
+    // The Okuma executor has resolved every variable; "Initial vars" are OSP names there.
+    settings: prepared.okuma ? { ...runtimeSettings(request), initialVariables: "" } : runtimeSettings(request),
+    machineParameters: prepared.okuma
+      ? okumaParameters(machine, flatLineCount)
+      : lathe
+        ? latheParameters(machineParameters(request.machineParametersText), flatLineCount)
+        : machineParameters(request.machineParametersText),
+    machineParameterPath: prepared.okuma ? machine.sourcePath || undefined : request.machineParameterPath || undefined,
     toolTable: request.toolTable || undefined,
     workOffsets: sanitizeWorkOffsets(request.workOffsets || {}, registry()),
     blockDelete: request.blockDelete === true,
@@ -734,6 +969,7 @@ function parseModel(request, choice) {
     model.machineSelection.detected = !explicit;
     model.machineSelection.reason = choice.reason || model.machineSelection.reason;
   }
+  if (prepared.okuma) okumaRows(model, machine, prepared);
   remapModel(model, prepared);
   model.meimadStops = remappedStops;
   model.meimadTrace = trace;
@@ -771,10 +1007,13 @@ function polylineLength(points, lathe) {
 function dialectNotes(request, machine) {
   const dialect = String(request.dialect || "").toUpperCase();
   const notes = [];
-  if (dialect === "OKUMA_OSP" && machine?.controlDefinition?.translation !== "okuma-osp-lathe") {
+  if (dialect === "OKUMA_OSP" && !isOkuma(machine)) {
     notes.push(machine?.type === "mill"
       ? "OKUMA_OSP mill programs are interpreted with the FANUC mill interpreter; OSP-only syntax (VC variables, CALL, named sequence labels) is not simulated and its motion is not timed."
-      : "OKUMA_OSP programs are interpreted with the FANUC-family interpreters; select the Okuma OSP lathe as the NC viewer machine to translate OSP syntax (LAP cycles, CALL/RTS, VC variables).");
+      : "This OKUMA_OSP program is shown on a FANUC-family lathe, whose interpreter does not read OSP syntax; select the Okuma OSP lathe as the NC viewer machine to run it with the Okuma executor (LAP cycles, CALL/RTS, V variables).");
+  }
+  if (dialect && dialect !== "OKUMA_OSP" && isOkuma(machine)) {
+    notes.push(`This ${dialect} program is shown on the Okuma OSP lathe, which reads OSP syntax only; FANUC or Haas cycles and macros are not simulated there.`);
   }
   return notes;
 }
@@ -822,13 +1061,14 @@ function analyze(requestJson) {
     machineId: model.machineDefinition?.id || null,
     machineName: model.machineDefinition?.name || null,
     machineType: model.machineDefinition?.type || null,
-    interpreter: model.machineDefinition?.control?.interpreter || null,
+    // The lathe interpreter only draws the moves of an Okuma program; the Okuma executor runs it.
+    interpreter: prepared.okuma ? "okuma-osp" : model.machineDefinition?.control?.interpreter || null,
     translation: prepared.translation,
     selectionReason: choice.reason || model.machineSelection?.reason || null,
     kind: model.kind || null,
     units: meta.units || "mm",
     lineCount: Number(meta.lineCount) || 0,
-    executedBlockCount: Number(meta.executedBlockCount) || 0,
+    executedBlockCount: prepared.okuma ? prepared.okuma.executedBlockCount : Number(meta.executedBlockCount) || 0,
     segmentCount: Number(meta.segmentCount) || (model.segments || []).length,
     feedSeconds,
     rapidDistanceMillimeters: rapidDistance,
@@ -860,7 +1100,7 @@ function latheMemoryRows(request, machine, prepared) {
   if (prepared.external.length) {
     rows.push(["Subprograms", prepared.external.map((entry) => `${entry.name} (${entry.location})`).join("; ")]);
   }
-  if (prepared.translation) rows.push(["Translation", `${prepared.translation} (Meimad)`]);
+  if (prepared.translation && !prepared.okuma) rows.push(["Translation", `${prepared.translation} (Meimad)`]);
   return rows;
 }
 
@@ -958,8 +1198,9 @@ function editableTable(table, machine, documentName) {
   };
 }
 
-// Tool words as the interpreter sees them (Okuma six-digit T words become four digits).
+// Tool words as the interpreter sees them (Okuma T nnttoo words become T ttoo).
 function toolInferenceText(request, machine) {
+  if (isOkuma(machine)) return okuma.toolText(String(request.text || ""));
   return dialects.translate(String(request.text || ""), machine).lines.join("\n");
 }
 

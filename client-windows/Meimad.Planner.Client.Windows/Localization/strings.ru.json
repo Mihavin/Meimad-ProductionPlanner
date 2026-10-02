@@ -4747,5 +4747,20 @@
   "Before {unit} row {row}": "Перед {unit} строкой {row}",
   "After {unit} row {row}": "После {unit} строки {row}",
   "execution {n} of {m}": "выполнение {n} из {m}",
-  "Single step: run the next block of the program, or of the called program, then stop (single block)": "Покадрово: выполнить следующий кадр программы или вызванной программы и остановиться (покадровый режим)"
+  "Single step: run the next block of the program, or of the called program, then stop (single block)": "Покадрово: выполнить следующий кадр программы или вызванной программы и остановиться (покадровый режим)",
+  "G85 LAP rough passes": "Черновых проходов LAP G85",
+  "G86 LAP copy passes": "Копировальных проходов LAP G86",
+  "G87 LAP finish cycles": "Чистовых циклов LAP G87",
+  "Thread passes (G31-G33, G71/G72, G88)": "Резьбовых проходов (G31-G33, G71/G72, G88)",
+  "G73/G74 grooves / pecks": "Канавок / врезаний G73/G74",
+  "G77/G78 tapping cycles": "Циклов нарезания метчиком G77/G78",
+  "G50 zero shifts": "Смещений нуля G50",
+  "Program execution": "Выполнение программы",
+  "Okuma OSP executor (Meimad)": "Исполнитель Okuma OSP (Meimad)",
+  "Rapid X / Z": "Ускоренный ход X / Z",
+  "LAP rough pass (G85/G86)": "Черновой проход LAP (G85/G86)",
+  "LAP rough contour follow": "Проход LAP вдоль чернового контура",
+  "LAP finish contour (G87)": "Чистовой контур LAP (G87)",
+  "Thread cut (G31-G35, G71/G72, G88)": "Нарезание резьбы (G31-G35, G71/G72, G88)",
+  "Groove / drill peck (G73/G74)": "Врезание канавки / сверления (G73/G74)"
 }

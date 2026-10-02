@@ -273,12 +273,13 @@
     const reads = new Map();
     for (const [position, id, value] of trace?.systemReads || []) if (position <= at.position) reads.set(id, value);
     for (const [id, value] of reads) if (!values.has(id)) values.set(id, { value, key: null, read: true });
+    // Okuma variables have names (V1, DIA1): the trace maps their ids to a name and a scope.
     return (trace?.used || []).map((id) => {
       const entry = values.get(id);
       return {
-        variable: `#${id}`,
+        variable: trace?.names?.[id] || `#${id}`,
         value: formatVariable(entry?.value),
-        scope: scopeOf(id),
+        scope: trace?.scopes?.[id] || scopeOf(id),
         setAt: entry?.key ? describeKey(entry.key) : entry?.read ? "read" : ""
       };
     });

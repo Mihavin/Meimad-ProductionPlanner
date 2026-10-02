@@ -11,8 +11,11 @@ public static class NcEngineInfo
     /// <summary>Revision of the Meimad adapter and mapping; bump when analysis output changes.</summary>
     /// <remarks>m2: Meimad machine definitions, dialect translations, lathe subprogram inlining.
     /// m3: lathe programs run through the custom macro executor (loops, calls with local
-    /// variables, system variables, custom macro calls; dwell counted per executed block).</remarks>
-    public const int AdapterRevision = 3;
+    /// variables, system variables, custom macro calls; dwell counted per executed block).
+    /// m4: Okuma OSP lathe programs run through their own executor (LAP, thread and grooving
+    /// cycles expanded with OSP rules, no FANUC translation); FANUC contour cycles carry their
+    /// profile (a GOTO over the profile no longer loses the cycle).</remarks>
+    public const int AdapterRevision = 4;
 
     /// <summary>Stored as the NC analysis parser version, e.g. <c>nc-engine/0.17.0+m1</c>.</summary>
     public static string AnalysisVersion => $"nc-engine/{UpstreamVersion}+m{AdapterRevision}";

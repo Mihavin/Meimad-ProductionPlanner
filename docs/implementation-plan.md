@@ -774,12 +774,9 @@ first-article/QC operating strategy.
   reference positions and work-offset placements are placeholders marked `verified: false`
   and must be measured on the Machine before machine-frame positions or travel checks are
   trusted; (2) the vendored mill tilt solver moves B/C only, so the Variaxis A tilt is
-  interpreted as a B axis about X and shown as B; (3) Okuma OSP is interpreted through the
-  FANUC lathe interpreter after translation: LAP `G85`/`G87` are exact two-block `G71`/`G72`/
-  `G70` equivalents, `G86` copy turning is approximated by one `G73` pass, `G88` LAP threads,
-  `G84` cutting-condition changes, `G34`/`G35` variable leads and `G180`-`G191` compound
-  cycles are not simulated (reported as messages), `CALL` arguments (`PA=`) are not passed,
-  and inch/metric follows the machine parameter, not `G20`/`G21` (home moves on OSP);
+  interpreted as a B axis about X and shown as B; (3) superseded 2026-10-02 (see "NC viewer:
+  Okuma OSP executor and FANUC contour cycles"): Okuma OSP is no longer translated to FANUC
+  cycles; the Okuma executor runs OSP programs and expands their cycles itself;
   (4) Haas lathe one-block cycles are converted to FANUC two-block cycles with the same
   values, tapers (`I`/`K`) are drawn straight, and Haas `G76` chamfer/angle defaults follow
   the FANUC parameter values; (5) the Server analysis uses the NC viewer machine shared by
@@ -1483,3 +1480,33 @@ Open points:
 - The next-call preview shows the first called program of the tree when nothing further is called from the current position.
 
 **Tests:** rewritten `PlaybackCoreTests` (execution order and current row, step targets, caller and next call, halts in execution order with passed halts, variables before/after a step per level); the page glue was checked in headless Edge (breakpoints from the pane's line numbers and F9 in the main editor, six steps into the macro up to its breakpoint, the M01 skipped with optional stop off, Run halting on the main-program breakpoint without repeating the M01, variables at the stepped row). Not verified: the WebView2 page inside the running client.
+
+## NC viewer: Okuma OSP executor and FANUC contour cycles (2026-10-02)
+
+**Owner request:**
+> NC Viewer. Audit the Okuma OSP 200 turning simulation. It looks mixed with Fanuc. Okuma cycles do not work correctly. Also audit the Fanuc turning, cycles stopped working. Do not mix between Okuma and Fanuc.
+
+**Audit findings (against the factory's 88 OSP programs, the Chevalier FANUC programs and the OSP-P200L Programming Manual LE33-013):**
+- FANUC lathe: since the custom macro executor (adapter m3) a contour cycle lost its profile whenever the program jumps over it (`G71 P100 Q200` / `GOTO300` / `N100 … N200` / `N300`, the shop's style): the executor followed the `GOTO`, the flat program had no `N100`-`N200`, and `G71`/`G72`/`G70` drew nothing ("profile was not found"). 6 of the 13 Chevalier example programs lost their roughing and finishing cycles. Without the `GOTO` the vendored interpreter also drew the profile a second time as ordinary moves after the cycle.
+- Okuma: the OSP-to-FANUC translation failed on real programs. Numeric contour names (`N1 G81`, `G85 N1`: every program) were "not found", so no LAP cycle was drawn; the contour definition before the call was cut as ordinary moves; a word with arithmetic (`X31.75-2`) or a `V1=V1+1` dropped the whole block; the angle `A`, the arc radius `L` and the middle (tool) pair of `T nnttoo` were ignored. What did run was shown as FANUC: `G71 rough pass` in the legend for LAP, `G76` for an Okuma `G71` thread, FANUC parameter bits (5104-5108) from the Chevalier's `CNC-PARA.TXT` in the sidebar and in the cycle behaviour, FANUC messages.
+- Machine detection mixed both ways: a FANUC program with `G87` (side drilling) or `G95` was given to the Okuma machine, and its `G76` threads were then removed by the Okuma translation; an Okuma program without LAP went to the FANUC lathe.
+
+**Implemented:**
+- `shared/Meimad.Planner.NcEngine/Scripts/meimad-okuma.js`: the Okuma OSP lathe executor (see `architecture.md`, "Machine definitions"). It replaces the Okuma branch of `meimad-dialects.js`, which is removed; an Okuma program no longer passes through the FANUC macro executor or any FANUC cycle. The adapter gives the lathe interpreter the plain moves, an Okuma parameter profile built from the machine definition (rapids, turret index; no `CNC-PARA.TXT`), copies cycle, pass and kind to the segments, shows the program row as the segment text, and replaces the sidebar rows with Okuma cycle counts.
+- `meimad-macro.js`: every `G70`-`G73 P Q` emits its own profile copy (`G71 P<a> Q<b>` / `GOTO <c>` / `N<a> … N<b>` / `N<c>`, numbers from 90000000 that messages map back to the programmed ones) and `G71`/`G72`/`G73` resume after the `Q` block.
+- Machine choice: `okuma.evidence()` (OSP syntax against FANUC syntax) corrects the vendored lathe detection in both directions; the Okuma machine definition keeps only OSP-specific detection hints. The Meimad Machine's NC dialect and NC viewer machine still win.
+- Viewer page: Okuma segment kinds with their own legend entries (`meimad-viewer3d.js`), variables by name (`V1`) in the macro variables window (`meimad-playback-core.js`).
+- Okuma control definition rewritten from the manual (it described the FANUC translation); `NcEngineInfo.AdapterRevision` 4, so stored release analyses are recalculated once in the background.
+
+**Decisions made while implementing (reversible):**
+- The vendored lathe interpreter stays the drawing and timing kernel for both lathe families (it is the only place where they meet); the control definition keeps `"interpreter": "fanuc-lathe"` because the vendored schema requires it, and the analysis reports `okuma-osp`.
+- `G85` descending slopes are cut level by level after each level's main cut; the control's order of the pocket cuts may differ (reported as a message). The retraction between pecks (`DA`) defaults to 0.1 mm and the LAP relief to 0.1 mm (the control's parameters are not known to the viewer).
+- Compound thread cycles without `M73`/`M74`/`M75` use pattern 1 (`M73`); the infeed angle `B` and the chamfer `L` are not drawn; taper `I`/`K` follows the manual's `G33` example (X is the diameter at the start side).
+- `VC1`-`VC200` are accepted as the common variables `V1`-`V200`.
+
+**Open decisions:**
+- **OD-040 - Cycle time of part-counter programs:** Resolved 2026-10-02 (owner decision: "only reports the repetition count"). An OSP program that loops `n` parts per run (`V1=V1+1` … `IF [V1 EQ n] GOTO`) is analysed as the control runs it, so the NC time of the release is the time of the whole program run (`n` parts). The analysis and the viewer report the repetition count in their messages ("the program section from N100 ran n times (part counter loop); the path and the time include every repetition") and nothing else changes: the time is not divided by the counter and planning is untouched. Not chosen: dividing by the counter, a per-release "parts per program run" value, analysing one pass.
+- **OD-041 - FANUC lathe `G90`/`G92`/`G94` single cycles:** the Chevalier's parameter 3401 selects G-code system A, where `G90`/`G92`/`G94` are turning, threading and facing cycles; the vendored interpreter treats `G90` as absolute positioning and does not expand them (they are expanded only for the Haas lathe translation). Not changed in this work; a system-A expansion for FANUC lathes driven by parameter 3401#6/#7 is the candidate.
+- `G84` cutting-condition change points, `MODIN`/`MODOUT`, any-angle chamfers (`G75`/`G76` with `A`), LAP4 blank shapes (`G83`) and the C-axis/M-tool cycles are reported and not simulated. The soft-limit clamp that the shop's `G0 X500 Z500` relies on is not modelled: the move is drawn to X500 Z500.
+
+**Tests:** `NcEngineOkumaExecutionTests` (LAP levels, relief, rough contour and finish rows from a contour defined before the call; thread passes; drilling pecks; counter loop with zero shift; arc `L`, chamfer `G75`, dwell; unconditional loop; detection in both directions and dialect precedence; no FANUC cycle or row in the Okuma output), `NcEngineRuntimeTests` and `NcEngineProgramAnalyzerTests` (Okuma executor instead of the translation), `NcEngineMacroExecutionTests` (profile behind a `GOTO`, the same path with and without it, profile copies per cycle in a loop), client `PlaybackCoreTests` (named variables). All 88 factory OSP programs and the Chevalier examples were run through the engine with Node: the FANUC cycle segments equal the vendored interpreter's expansion of the same programs, the Okuma programs execute without unresolved blocks. Not verified: the WebView2 page inside the running client (legend, segment text, variables window), and the simulated LAP path against the real control's path on the Okuma.

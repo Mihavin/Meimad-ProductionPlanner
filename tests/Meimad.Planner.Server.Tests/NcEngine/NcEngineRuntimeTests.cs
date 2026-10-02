@@ -33,7 +33,7 @@ public sealed class NcEngineRuntimeTests : IDisposable
     }
 
     [Fact]
-    public void Okuma_osp_lathe_program_is_translated_and_every_row_maps_back_to_the_program()
+    public void Okuma_osp_lathe_program_is_run_by_the_okuma_executor_and_every_row_maps_back_to_the_program()
     {
         var memory = Path.Combine(folder, "OkumaMemory");
         Directory.CreateDirectory(memory);
@@ -58,17 +58,24 @@ public sealed class NcEngineRuntimeTests : IDisposable
         var lines = prepared.GetProperty("lines").EnumerateArray().Select(line => line.GetString()!).ToArray();
         var map = prepared.GetProperty("map").EnumerateArray().ToArray();
         Assert.Equal(lines.Length, map.Length);
-        Assert.Contains(lines, line => line.StartsWith("G71 P", StringComparison.Ordinal));      // LAP -> two-block G71
-        Assert.Contains(lines, line => line.StartsWith("G70 P", StringComparison.Ordinal));      // G87 -> G70
-        Assert.Contains("T0101", lines);                                                           // six-digit T word
+        // The Okuma executor hands over plain moves only: no FANUC cycle, subprogram call or dwell word.
+        Assert.DoesNotContain(lines, line => line.Contains("G71", StringComparison.Ordinal) || line.Contains("G70", StringComparison.Ordinal)
+            || line.Contains("M98", StringComparison.Ordinal) || line.StartsWith("G04", StringComparison.Ordinal));
+        Assert.Contains("T0101", lines);                                                           // T nnttoo -> tool 01, offset 01
         // VC1=1 and IF [VC1 EQ 1] NEND are executed: the jump to NEND skips G00 X200.
-        Assert.DoesNotContain("G00 X200", lines);
-        Assert.Contains("N90001 M02", lines);                                                      // named label NEND = 90001
-        Assert.Contains(lines, line => line.StartsWith("(M98 P500 -> O0500.MIN x2)", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, line => line.StartsWith("G00 X200", StringComparison.Ordinal));
+        Assert.Contains("(CALL O0500 -> O0500.MIN x2)", lines);
         Assert.All(map, entry => Assert.InRange(entry.GetProperty("line").GetInt32(), 1, program.Split('\n').Length));
-        // Both LAP blocks report the row of the single G85 line; inlined rows report the CALL line.
-        var callRow = Array.IndexOf(program.Split('\n'), "CALL O0500 Q2") + 1;
-        Assert.Equal(2, map.Count(entry => entry.GetProperty("line").GetInt32() == Array.IndexOf(program.Split('\n'), "G85 NLAP1 D2 U0.4 W0.1 F0.3") + 1));
+        // Every G85 move reports the row of the G85 line with its cycle; G87 moves report the
+        // contour rows they run; inlined rows report the CALL line.
+        var rows = program.Split('\n');
+        var callRow = Array.IndexOf(rows, "CALL O0500 Q2") + 1;
+        var roughRow = Array.IndexOf(rows, "G85 NLAP1 D2 U0.4 W0.1 F0.3") + 1;
+        var rough = map.Where(entry => entry.GetProperty("line").GetInt32() == roughRow).ToArray();
+        Assert.True(rough.Length > 20, $"G85 moves: {rough.Length}");
+        Assert.All(rough, entry => Assert.Equal("G85", entry.GetProperty("cycle").GetString()));
+        Assert.Contains(map, entry => entry.TryGetProperty("cycle", out var cycle) && cycle.GetString() == "G87"
+            && entry.GetProperty("line").GetInt32() == Array.IndexOf(rows, "X50 Z-30") + 1);
         Assert.Contains(map, entry => entry.GetProperty("line").GetInt32() == callRow
             && entry.TryGetProperty("unit", out var unit) && unit.GetString() == "O0500.MIN");
 
@@ -78,6 +85,8 @@ public sealed class NcEngineRuntimeTests : IDisposable
         Assert.Contains("O0500.MIN", preview.Packed, StringComparison.Ordinal);
         Assert.Contains("Program memory", preview.Packed, StringComparison.Ordinal);
         Assert.Equal("okuma-osp-lathe", analysis.Translation);
+        Assert.Equal("okuma-osp", analysis.Interpreter);
+        Assert.Empty(analysis.Errors);
         Assert.Equal(new[] { "O0500.MIN" }, analysis.Subprograms);
         Assert.Equal(1.5 + 2 * 0.5, analysis.DwellSeconds, 6);
         Assert.Equal(program.Split('\n').Length, analysis.LineCount);
