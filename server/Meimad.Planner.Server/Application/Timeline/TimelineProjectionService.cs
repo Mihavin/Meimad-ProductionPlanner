@@ -1611,8 +1611,9 @@ internal sealed class TimelineProjectionService
             && operation.MachineId is not null
             && !string.Equals(
                 operation.ActualMachineId, operation.MachineId, StringComparison.Ordinal);
+        // Measured series and reported machined parts both leave only the remaining parts to forecast, from now.
         var earliest = operation.Status == "in_progress"
-            && operation.PlanningCycleTimeSource == "cnc_series_average"
+            && (operation.PlanningCycleTimeSource == "cnc_series_average" || operation.CompletedQuantity > 0)
                 ? forecastCursor
             : operation.Status == "in_progress" && operation.ActualStart.HasValue
             ? movedAfterStarting

@@ -101,6 +101,27 @@ public partial class MachinePlanningBoardView : UserControl
         await viewModel.ReportWorkflowStatusAsync(operation, status);
     }
 
+    /// <summary>The planner reports how many parts a running operation has machined so far.</summary>
+    private async void ReportMachinedParts_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { DataContext: PlanningOperationViewModel operation } ||
+            DataContext is not MachinePlanningBoardViewModel viewModel) return;
+        var value = TextPromptWindow.Show(
+            Window.GetWindow(this),
+            $"How many parts of {operation.DisplayTitle} are machined so far (0 to {operation.PlannedQuantity - 1})? This sets the current quantity, and the Timeline plans only the remaining parts.",
+            "Report machined parts",
+            string.Empty);
+        if (string.IsNullOrWhiteSpace(value)) return;
+        if (!int.TryParse(value.Trim(), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var quantity) || quantity < 0)
+        {
+            LocalizedMessageBox.Show("Machined parts must be a whole number of 0 or more.",
+                "Report machined parts", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        await viewModel.ReportMachinedPartsAsync(operation, quantity);
+    }
+
     /// <summary>An operation finished outside the plan leaves the plan and its Machine backlog.</summary>
     private async void MarkFinished_Click(object sender, RoutedEventArgs e)
     {

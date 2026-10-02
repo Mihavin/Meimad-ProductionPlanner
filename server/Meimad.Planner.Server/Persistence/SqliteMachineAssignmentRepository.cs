@@ -634,6 +634,108 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         return new(batchOperationId, execution.MachineId, status, previous, appended.EventId, appended.At);
     }
 
+    /// <summary>
+    /// A planner reports how many parts a running operation has machined (owner request 2026-10-01).
+    /// The count becomes the Production Run output's produced quantity and its cycle count, so the
+    /// Timeline plans only the remaining parts from now on. It is a correction-capable report, not
+    /// a cycle observation: only single-program, single-output runs without DPRNT output accept it,
+    /// the count must be whole cycles, and reaching the target is left to "Mark operation as Finished".
+    /// </summary>
+    public async Task<ManualMachinedPartsResult> ReportMachinedPartsAsync(
+        string batchOperationId, int quantity, int? expectedQuantity, DateTimeOffset now,
+        EditAuthority editAuthority, CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        var actor = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var execution = await ReadExecutionStateAsync(connection, transaction, batchOperationId, cancellationToken)
+            ?? throw new BatchOperationNotFoundException(batchOperationId);
+        if (execution.AssignmentId is null || execution.MachineId is null)
+            throw new BatchOperationNotAssignedException(batchOperationId);
+        if (execution.Status != "in_progress")
+            throw new ManualWorkflowStatusException("operation_not_in_progress",
+                "Machined parts can only be reported for a running operation. Report a production status first to start it.");
+        if ((await SqliteMachineWorkflowReporting.ReadMachinesWithDprntAsync(connection, transaction, cancellationToken))
+            .Contains(execution.MachineId))
+            throw new ManualWorkflowStatusException("machine_reports_workflow",
+                "This Machine counts its parts through DPRNT. To report them by hand, switch the Machine's DPRNT output off in Setup → Machine connection.");
+
+        string? runId;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT production_run_id FROM machine_assignments WHERE id = $id;";
+            read.Parameters.AddWithValue("$id", execution.AssignmentId);
+            runId = await read.ExecuteScalarAsync(cancellationToken) as string;
+        }
+        if (runId is null)
+            throw new ManualWorkflowStatusException("production_run_missing", "The Machine assignment has no Production Run.");
+
+        var programs = new List<(string ProgramId, string? OutputId, int PerCycle, int Target, int Produced)>();
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = """
+                SELECT program.id, output.id, output.quantity_per_cycle, output.target_quantity, output.produced_quantity
+                FROM production_run_programs program
+                LEFT JOIN production_run_outputs output
+                  ON output.production_run_program_id = program.id AND output.batch_operation_id = $operationId
+                WHERE program.production_run_id = $runId;
+                """;
+            read.Parameters.AddWithValue("$operationId", batchOperationId);
+            read.Parameters.AddWithValue("$runId", runId);
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                programs.Add((reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
+                    reader.IsDBNull(2) ? 0 : reader.GetInt32(2), reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
+                    reader.IsDBNull(4) ? 0 : reader.GetInt32(4)));
+        }
+        if (programs.Count != 1 || programs[0].OutputId is null)
+            throw new ManualWorkflowStatusException("machined_parts_unsupported",
+                "Machined parts can only be reported for a run with one program and one output; this run's cycles are counted by the Machine.");
+        var (programId, outputId, perCycle, target, produced) = programs[0];
+        if (expectedQuantity.HasValue && expectedQuantity.Value != produced)
+            throw new ManualWorkflowStatusException("machined_quantity_stale",
+                $"The machined parts changed to {produced} since you opened this report; nothing was changed.");
+        if (quantity >= target)
+            throw new ManualWorkflowStatusException("quantity_reaches_target",
+                $"The target is {target} parts. When every part is machined, use Mark operation as Finished instead.");
+        if (quantity % perCycle != 0)
+            throw new ManualWorkflowStatusException("quantity_not_whole_cycles",
+                $"Each program cycle makes {perCycle} parts, so the machined parts must be a multiple of {perCycle}.");
+
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE production_run_programs
+                SET completed_cycle_count = $cycles, version = version + 1, updated_at = $at
+                WHERE id = $programId;
+                UPDATE production_run_outputs
+                SET produced_quantity = $quantity, status = 'IN_PRODUCTION', version = version + 1, updated_at = $at
+                WHERE id = $outputId;
+                UPDATE production_runs SET version = version + 1, updated_at = $at WHERE id = $runId;
+                """;
+            update.Parameters.AddWithValue("$cycles", quantity / perCycle);
+            update.Parameters.AddWithValue("$quantity", quantity);
+            update.Parameters.AddWithValue("$programId", programId);
+            update.Parameters.AddWithValue("$outputId", outputId);
+            update.Parameters.AddWithValue("$runId", runId);
+            update.Parameters.AddWithValue("$at", FormatInstant(now));
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction, new(
+            "manual_machined_parts_reported", now, actor,
+            new Dictionary<string, string>
+            {
+                ["batchOperationId"] = batchOperationId, ["machineId"] = execution.MachineId, ["productionRunId"] = runId
+            },
+            "machinedParts", null, new { producedQuantity = produced }, new { producedQuantity = quantity, targetQuantity = target }),
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new(batchOperationId, execution.MachineId, quantity, produced, target, now);
+    }
+
     private async Task<BatchOperationExecutionResult> ApplyExecutionAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,

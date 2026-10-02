@@ -2795,6 +2795,12 @@ Owner decisions 2026-09-29: on the Planning Board, the planner reports the produ
     - `409 operation_not_assigned`;
     - `422` for an unknown status;
     - the start errors.
+- `POST /api/v1/batch-operations/{id}/machined-parts` takes `{ quantity, expectedQuantity? }` and needs the operations permission (owner request 2026-10-01). It sets the current machined-parts count of a running operation on a Machine without DPRNT output:
+  - The count becomes the Production Run output's `produced_quantity` and the program's completed cycle count, so the Timeline's `PARTS x/y` shows it and the Timeline plans only the remaining parts, forecast from now, with no setup or QC left.
+  - It is a report that may be corrected up or down, not a cycle observation. Only a run with one program and one output is accepted; the count must be a whole number of program cycles.
+  - `expectedQuantity`, when sent, must equal the stored count, otherwise `409 machined_quantity_stale` and nothing changes.
+  - It returns `{ batchOperationId, machineId, quantity, previousQuantity, targetQuantity, recordedAt }`.
+  - Errors: `409 operation_not_in_progress`, `409 machine_reports_workflow`, `409 machined_parts_unsupported`, `409 quantity_reaches_target` (use Finish when every part is machined), `409 quantity_not_whole_cycles`, `409 operation_not_assigned`, `422` for a negative or missing quantity.
 - Consumers of the new events:
   - Tablets, the preparation queue and the E-Ink device list show `MANUAL_READY_FOR_SETUP` as `READY_FOR_SETUP` and `MANUAL_SETUP_RUN` as `IN_SETUP_RUN`.
   - A tablet's `SEND_TO_QC` is accepted after `MANUAL_SETUP_RUN`.

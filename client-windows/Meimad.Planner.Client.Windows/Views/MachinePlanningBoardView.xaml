@@ -182,6 +182,12 @@
                             </MenuItem.Icon>
                         </MenuItem>
                         <Separator />
+                        <MenuItem Header="Report machined parts…"
+                                  ToolTip="Set how many parts are machined so far. The Timeline then plans only the remaining parts. Needs a running operation on a Machine without DPRNT output."
+                                  IsEnabled="{Binding CanReportMachinedParts}"
+                                  ToolTipService.ShowOnDisabled="True"
+                                  Click="ReportMachinedParts_Click"
+                                  AutomationProperties.Name="Report machined parts" />
                         <MenuItem Header="Mark operation as Finished"
                                   ToolTip="The operation was finished before: remove it from the plan and from its Machine backlog."
                                   IsEnabled="{Binding CanMarkFinished}"

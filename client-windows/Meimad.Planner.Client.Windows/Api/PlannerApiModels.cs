@@ -1916,6 +1916,10 @@ internal sealed record PlanningBoardOperation(
 internal sealed record PlannerWorkflowStatusReport(
     string BatchOperationId, string MachineId, string Status, string PreviousStatus, string? EventId, DateTimeOffset RecordedAt);
 
+/// <summary>The machined-parts count a planner reported for a running operation.</summary>
+internal sealed record PlannerMachinedPartsReport(
+    string BatchOperationId, string MachineId, int Quantity, int PreviousQuantity, int TargetQuantity, DateTimeOffset RecordedAt);
+
 internal sealed record PlannerReadinessComponent(
     string Key,
     string Label,

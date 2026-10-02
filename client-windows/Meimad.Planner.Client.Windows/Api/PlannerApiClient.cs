@@ -1041,6 +1041,12 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    /// <summary>Reports how many parts a running operation on a Machine without DPRNT output has machined.</summary>
+    Task<PlannerMachinedPartsReport> ReportMachinedPartsAsync(
+        string batchOperationId, int quantity, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     /// <summary>Reports the production status of an operation on a Machine without DPRNT output.</summary>
     Task<PlannerWorkflowStatusReport> ReportWorkflowStatusAsync(
         string batchOperationId, string status, string clientId, long editGeneration,
@@ -3753,6 +3759,18 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Content = JsonContent.Create(pause, options: JsonOptions);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<BatchOperationExecution>(response, cancellationToken);
+    }
+
+    public async Task<PlannerMachinedPartsReport> ReportMachinedPartsAsync(
+        string batchOperationId, int quantity, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post,
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/machined-parts", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(new { quantity }, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerMachinedPartsReport>(response, cancellationToken);
     }
 
     public async Task<PlannerWorkflowStatusReport> ReportWorkflowStatusAsync(

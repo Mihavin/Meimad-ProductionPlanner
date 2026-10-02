@@ -455,9 +455,11 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             var assignedMachineId = NullableString(reader, 16);
             var workflowStatus = status == "in_progress"
                 ? ManualWorkflowStatuses.Project(latestEvents.GetValueOrDefault(reader.GetString(0))) : null;
-            var setupDone = (useMeasuredSeries && status == "in_progress")
+            // Parts a planner reported as machined mean the Machine is already producing.
+            var reportedProgress = status == "in_progress" && completedQuantity > 0;
+            var setupDone = ((useMeasuredSeries || reportedProgress) && status == "in_progress")
                 || workflowStatus is ManualWorkflowStatuses.InQc or ManualWorkflowStatuses.ReadyForProduction or ManualWorkflowStatuses.InProduction;
-            var qcDone = (useMeasuredSeries && status == "in_progress")
+            var qcDone = ((useMeasuredSeries || reportedProgress) && status == "in_progress")
                 || workflowStatus is ManualWorkflowStatuses.ReadyForProduction or ManualWorkflowStatuses.InProduction;
             var measured = assignedMachineId is null
                 ? null : measuredTimes.GetValueOrDefault((reader.GetString(11), assignedMachineId));
@@ -486,7 +488,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 ? measuredAverageCycleSeconds
                 : occupancy?.SelectedCycleSeconds
                 ?? (plannedQuantity == 0 && occupancy is not null ? 0 : measuredCycleSeconds ?? manualCycleSeconds);
-            var productionCycleQuantity = useMeasuredSeries
+            var productionCycleQuantity = useMeasuredSeries || reportedProgress
                 ? Math.Max(0, remainingCycleCount ?? targetQuantity - completedQuantity)
                 : occupancy?.RemainingProductionQuantity ?? plannedQuantity;
             values.Add(new TimelineSourceOperation(

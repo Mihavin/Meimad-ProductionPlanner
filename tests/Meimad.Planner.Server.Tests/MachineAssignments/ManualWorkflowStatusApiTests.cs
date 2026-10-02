@@ -102,6 +102,51 @@ public sealed class ManualWorkflowStatusApiTests
     }
 
     [Fact]
+    public async Task Reported_machined_parts_set_the_current_quantity_and_leave_only_the_remaining_parts_to_plan()
+    {
+        await using var server = await ToolPreparationApiTests.TestServer.StartAsync(verificationEnabled: false);
+        await ReserveMaterialAsync(server);
+        var client = server.Client;
+        var parts = "/api/v1/batch-operations/operation-package/machined-parts";
+
+        using var notRunning = await client.PostAsJsonAsync(parts, new { quantity = 3 });
+        Assert.Equal(HttpStatusCode.Conflict, notRunning.StatusCode);
+        Assert.Contains("operation_not_in_progress", await notRunning.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+        await ReportAsync(client, "IN_PRODUCTION");
+        using var negative = await client.PostAsJsonAsync(parts, new { quantity = -1 });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, negative.StatusCode);
+
+        using var reported = await client.PostAsJsonAsync(parts, new { quantity = 4, expectedQuantity = 0 });
+        var body = await reported.Content.ReadAsStringAsync();
+        Assert.True(reported.StatusCode == HttpStatusCode.OK, body);
+        using (var json = JsonDocument.Parse(body))
+        {
+            Assert.Equal(4, json.RootElement.GetProperty("quantity").GetInt32());
+            Assert.Equal(0, json.RootElement.GetProperty("previousQuantity").GetInt32());
+            Assert.Equal(10, json.RootElement.GetProperty("targetQuantity").GetInt32());
+        }
+        Assert.Equal("4|4", await server.ScalarAsync("""
+            SELECT output.produced_quantity || '|' || program.completed_cycle_count
+            FROM production_run_outputs output
+            JOIN production_run_programs program ON program.id = output.production_run_program_id
+            WHERE output.batch_operation_id = 'operation-package';
+            """));
+
+        // A stale report is refused without changing anything; a correction downward is allowed.
+        using var stale = await client.PostAsJsonAsync(parts, new { quantity = 6, expectedQuantity = 0 });
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Assert.Contains("machined_quantity_stale", await stale.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        using var corrected = await client.PostAsJsonAsync(parts, new { quantity = 3, expectedQuantity = 4 });
+        Assert.Equal(HttpStatusCode.OK, corrected.StatusCode);
+
+        // Every part machined is finished with the existing Finish action, not by a count.
+        using var all = await client.PostAsJsonAsync(parts, new { quantity = 10 });
+        Assert.Equal(HttpStatusCode.Conflict, all.StatusCode);
+        Assert.Contains("quantity_reaches_target", await all.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task An_operation_finished_outside_the_plan_is_marked_finished_before_it_starts()
     {
         await using var server = await ToolPreparationApiTests.TestServer.StartAsync(verificationEnabled: false);

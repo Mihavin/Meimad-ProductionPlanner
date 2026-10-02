@@ -1009,6 +1009,33 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>Reports the parts a running operation has machined; the Server sets the current quantity and the Timeline plans the rest.</summary>
+    internal async Task ReportMachinedPartsAsync(PlanningOperationViewModel operation, int quantity)
+    {
+        if (apiClient is null || !isEditor || IsBusy || operation.MachineId is null) return;
+        var succeeded = false;
+        IsBusy = true;
+        try
+        {
+            var result = await apiClient.ReportMachinedPartsAsync(operation.BatchOperationId, quantity, clientId, editGeneration);
+            AddFeedback("information", "Machined parts reported",
+                $"{operation.DisplayTitle}: {result.Quantity} of {result.TargetQuantity} parts machined (was {result.PreviousQuantity}).");
+            StatusMessage = $"{operation.DisplayTitle}: {result.Quantity} of {result.TargetQuantity} parts machined.";
+            succeeded = true;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            AddFeedback("blocking", "Machined parts rejected", FriendlyMessage(exception));
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally { IsBusy = false; }
+        if (succeeded)
+        {
+            await RefreshAsync();
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
     internal async Task RecordManualReportAsync(PlanningOperationViewModel operation, string reportType, int? partTimeSeconds = null)
     {
         if (apiClient is null || !isEditor || IsBusy || operation.MachineId is null) return;
@@ -1774,6 +1801,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public bool IsWorkflowReadyForProduction => WorkflowStatus == "READY_FOR_PRODUCTION";
     public bool IsWorkflowInProduction => WorkflowStatus == "IN_PRODUCTION";
     public bool CanReportWorkflow => ManualWorkflowReporting && MachineId is not null && Status is not ("completed" or "cancelled");
+    public bool CanReportMachinedParts => ManualWorkflowReporting && MachineId is not null && Status == "in_progress";
     public bool CanMarkFinished => MachineId is not null && Status is not ("completed" or "cancelled");
     public string WorkflowStatusText => WorkflowStatus is null ? string.Empty : WorkflowStatusLabel(WorkflowStatus);
     public string WorkflowReportingToolTip => MachineId is null

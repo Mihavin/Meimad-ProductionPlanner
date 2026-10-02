@@ -57,6 +57,10 @@ internal interface IMachineAssignmentRepository
         string batchOperationId, string status, DateTimeOffset now, EditAuthority editAuthority,
         CancellationToken cancellationToken);
 
+    Task<ManualMachinedPartsResult> ReportMachinedPartsAsync(
+        string batchOperationId, int quantity, int? expectedQuantity, DateTimeOffset now,
+        EditAuthority editAuthority, CancellationToken cancellationToken);
+
     Task<ManualOperationReportResult> RecordManualReportAsync(
         string batchOperationId, ManualOperationReportType reportType, int? partTimeSeconds,
         DateTimeOffset now, EditAuthority editAuthority, CancellationToken cancellationToken);
@@ -137,6 +141,10 @@ internal enum ManualOperationReportType { SetupStart, SetupEnd, PartTimeUpdate, 
 /// <summary>A reported workflow status; <see cref="EventId"/> is null when the run already had that status.</summary>
 internal sealed record ManualWorkflowStatusResult(
     string BatchOperationId, string MachineId, string Status, string PreviousStatus, string? EventId, DateTimeOffset RecordedAt);
+
+/// <summary>The machined-parts count a planner reported for a running operation.</summary>
+internal sealed record ManualMachinedPartsResult(
+    string BatchOperationId, string MachineId, int Quantity, int PreviousQuantity, int TargetQuantity, DateTimeOffset RecordedAt);
 
 internal sealed record ManualOperationReportResult(
     string BatchOperationId, string MachineId, string ReportType, DateTimeOffset RecordedAt, int? PartTimeSeconds);

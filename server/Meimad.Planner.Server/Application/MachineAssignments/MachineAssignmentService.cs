@@ -278,6 +278,20 @@ internal sealed class MachineAssignmentService
             editAuthority, cancellationToken);
     }
 
+    internal Task<ManualMachinedPartsResult> ReportMachinedPartsAsync(
+        string batchOperationId, int? quantity, int? expectedQuantity, EditAuthority editAuthority,
+        CancellationToken cancellationToken = default)
+    {
+        if (quantity is null or < 0)
+            throw new MachineAssignmentValidationException("quantity", "invalid",
+                "quantity must be a whole number of machined parts, 0 or more.");
+        if (expectedQuantity is < 0)
+            throw new MachineAssignmentValidationException("expectedQuantity", "invalid",
+                "expectedQuantity must be 0 or more.");
+        return repository.ReportMachinedPartsAsync(batchOperationId.Trim(), quantity.Value, expectedQuantity,
+            timeProvider.GetUtcNow(), editAuthority, cancellationToken);
+    }
+
     internal Task<ManualOperationReportResult> RecordManualReportAsync(
         string batchOperationId, string reportType, int? partTimeSeconds,
         EditAuthority editAuthority, CancellationToken cancellationToken = default)

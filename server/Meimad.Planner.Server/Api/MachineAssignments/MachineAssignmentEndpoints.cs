@@ -22,6 +22,7 @@ internal static class MachineAssignmentEndpoints
         operations.MapPost("/{batchOperationId}/reset", ResetAsync);
         operations.MapPost("/{batchOperationId}/manual-report", ManualReportAsync);
         operations.MapPost("/{batchOperationId}/workflow-status", ReportWorkflowStatusAsync);
+        operations.MapPost("/{batchOperationId}/machined-parts", ReportMachinedPartsAsync);
         operations.MapPost("/{batchOperationId}/redo", RedoAsync);
         endpoints.MapGet("/api/v1/planning-board/finished-operations", ListFinishedAsync);
     }
@@ -305,6 +306,28 @@ internal static class MachineAssignmentEndpoints
         }
     }
 
+    /// <summary>POST …/machined-parts: the planner reports how many parts a running operation has machined.</summary>
+    private static async Task<IResult> ReportMachinedPartsAsync(
+        string batchOperationId, MachinedPartsRequest request, HttpContext context, MachineAssignmentService service,
+        CancellationToken cancellationToken)
+    {
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.RunOperations, out var authority, out var accessError))
+            return accessError!;
+        try
+        {
+            return Results.Ok(await service.ReportMachinedPartsAsync(
+                batchOperationId, request.Quantity, request.ExpectedQuantity, authority!, cancellationToken));
+        }
+        catch (ManualWorkflowStatusException exception)
+        {
+            return PlanningHttpSupport.Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, context);
+        }
+        catch (Exception exception) when (TryMapError(exception, context, out var error))
+        {
+            return error!;
+        }
+    }
+
     private static async Task<IResult> ChangeExecutionStatusAsync(
         string batchOperationId,
         BatchOperationExecutionAction action,
@@ -439,3 +462,6 @@ internal static class MachineAssignmentEndpoints
             $"\"machine-assignment:{assignment.MachineAssignmentId}:v{assignment.Version}\"";
 }
 internal sealed record WorkflowStatusRequest(string? Status);
+
+// ExpectedQuantity is the count the planner saw; a different stored count is refused so a parallel report is not overwritten.
+internal sealed record MachinedPartsRequest(int? Quantity, int? ExpectedQuantity);
