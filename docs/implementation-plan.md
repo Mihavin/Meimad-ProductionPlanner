@@ -1510,3 +1510,22 @@ Open points:
 - `G84` cutting-condition change points, `MODIN`/`MODOUT`, any-angle chamfers (`G75`/`G76` with `A`), LAP4 blank shapes (`G83`) and the C-axis/M-tool cycles are reported and not simulated. The soft-limit clamp that the shop's `G0 X500 Z500` relies on is not modelled: the move is drawn to X500 Z500.
 
 **Tests:** `NcEngineOkumaExecutionTests` (LAP levels, relief, rough contour and finish rows from a contour defined before the call; thread passes; drilling pecks; counter loop with zero shift; arc `L`, chamfer `G75`, dwell; unconditional loop; detection in both directions and dialect precedence; no FANUC cycle or row in the Okuma output), `NcEngineRuntimeTests` and `NcEngineProgramAnalyzerTests` (Okuma executor instead of the translation), `NcEngineMacroExecutionTests` (profile behind a `GOTO`, the same path with and without it, profile copies per cycle in a loop), client `PlaybackCoreTests` (named variables). All 88 factory OSP programs and the Chevalier examples were run through the engine with Node: the FANUC cycle segments equal the vendored interpreter's expansion of the same programs, the Okuma programs execute without unresolved blocks. Not verified: the WebView2 page inside the running client (legend, segment text, variables window), and the simulated LAP path against the real control's path on the Okuma.
+
+## NC viewer: Mazak `.EIA` programs and subprograms (2026-10-05)
+
+**Owner request:**
+> The NC viewer doesn't recognize Mazak .EIA subprograms and programs.
+
+**Cause:** the vendored subprogram resolver (`src/subprograms.js`, unmodified by rule) tries `.nc`, `.tap`, `.cnc`, `.txt` and no extension in the program's folder and indexes a memory folder's `.nc`, `.tap`, `.cnc`, `.ngc`, `.txt`, `.min`, `.mpf`, `.spf` files, so a Mazak control's `<work no.>.EIA` was never found ("G65 P target O09013 was not found"). The NC viewer's file dialogs and the release allow-lists did not list `.eia` either.
+
+**Implemented:**
+- `shared/Meimad.Planner.NcEngine/Scripts/meimad-subprograms.js`: after the vendored resolver, a call is looked up among `.eia` files with its rules (program folder by `O1001`/`1001` file name; then every searched folder and its subfolders by the declared `O` number, else a leading number in the file name; a name target by file name with or without the extension). `NcEngineInfo.AdapterRevision` 5, so stored release analyses are recalculated once in the background.
+- `NcSubprogramCalls` (release subprogram detection, stored `O<number>.eia` name) and the release `gcodeFile` / `subprogramFiles` allow-lists accept `.eia`; the NC viewer and Case workspace file dialogs list `*.eia`.
+
+**Decisions made while implementing (reversible):**
+- `.eia` is tried after every vendored extension: a folder holding both `O1001.nc` and `O1001.EIA` resolves to the `.nc` file, and a memory file of another extension that declares the number wins over an `.EIA` file name.
+
+**Open:**
+- Mazak calls by program name (`M98 <NAME>`, `G65 <NAME>`) are not run: the vendored mill interpreter requires a `P` number.
+
+**Tests:** `NcEngineRuntimeTests` (`.EIA` subprograms from the program folder by name and from a memory subfolder by declared number), `NcSubprogramCallsTests` (`FindInFolder` by `.EIA` name and number). The factory's `9013.EIA` was run through the engine with Node: unresolved before, found from the memory folder after. Not verified: the WebView2 page inside the running client.

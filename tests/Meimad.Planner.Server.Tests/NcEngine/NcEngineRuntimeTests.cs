@@ -94,6 +94,29 @@ public sealed class NcEngineRuntimeTests : IDisposable
     }
 
     [Fact]
+    public void Mazak_eia_subprograms_are_found_in_the_program_folder_and_the_machine_memory()
+    {
+        var programFolder = Path.Combine(folder, "MazakProgram");
+        var memory = Path.Combine(folder, "MazakMemory");
+        Directory.CreateDirectory(programFolder);
+        Directory.CreateDirectory(Path.Combine(memory, "PROBING"));
+        File.WriteAllText(Path.Combine(programFolder, "1001.EIA"), "O1001\nG0 X10. Y10.\nG1 X20. F100.\nM99\n");
+        // Found by the number the file declares, in a subfolder of the memory folder.
+        File.WriteAllText(Path.Combine(memory, "PROBING", "PROBE.EIA"), "O9013(PROBE)\nG1 X30. Y5. F100.\nM99\n");
+        var program = "%\nO0100(MAIN)\nG90 G54 G0 X0 Y0 Z100.\nM98 P1001\nG65 P9013 A0\nM30\n%\n";
+        runtime.SetReadableFolders([programFolder, memory]);
+
+        var preview = runtime.ParsePreview(new NcEnginePreviewRequest(program, MachineSelection: "mazak-variaxis-i-500",
+            DocumentDirectory: programFolder,
+            ProgramMemory: new Dictionary<string, string> { ["mazak-variaxis-i-500"] = memory }));
+
+        Assert.Equal(0, preview.Summary.ErrorCount);
+        Assert.Contains("1001.EIA", preview.Packed, StringComparison.Ordinal);
+        Assert.Contains("PROBE.EIA", preview.Packed, StringComparison.Ordinal);
+        Assert.DoesNotContain("was not found", preview.Packed, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Haas_lathe_one_block_cycles_are_expanded_for_the_st_25y()
     {
         var program = "%\nO2000\nG18 G20 G99\nG50 S2500\nT101\nG96 S500 M03\nG0 X2.6 Z0.1\n"

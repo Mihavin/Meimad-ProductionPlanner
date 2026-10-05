@@ -14,8 +14,9 @@ public static class NcEngineInfo
     /// variables, system variables, custom macro calls; dwell counted per executed block).
     /// m4: Okuma OSP lathe programs run through their own executor (LAP, thread and grooving
     /// cycles expanded with OSP rules, no FANUC translation); FANUC contour cycles carry their
-    /// profile (a GOTO over the profile no longer loses the cycle).</remarks>
-    public const int AdapterRevision = 4;
+    /// profile (a GOTO over the profile no longer loses the cycle).
+    /// m5: Mazak ".EIA" programs are found as called subprograms (program folder and memory).</remarks>
+    public const int AdapterRevision = 5;
 
     /// <summary>Stored as the NC analysis parser version, e.g. <c>nc-engine/0.17.0+m1</c>.</summary>
     public static string AnalysisVersion => $"nc-engine/{UpstreamVersion}+m{AdapterRevision}";

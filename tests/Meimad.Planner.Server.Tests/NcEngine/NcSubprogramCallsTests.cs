@@ -61,6 +61,12 @@ public sealed class NcSubprogramCallsTests
             // The main program itself is never its own subprogram.
             Assert.Null(NcSubprogramCalls.FindInFolder(folder, 1001, excludePath: main));
             Assert.Null(NcSubprogramCalls.FindInFolder(folder, 4000));
+
+            // Mazak EIA programs, by name and by declared number.
+            File.WriteAllText(Path.Combine(folder, "2001.EIA"), "O2001\nM99\n");
+            File.WriteAllText(Path.Combine(folder, "PROBE.EIA"), "O9013(PROBE)\nM99\n");
+            Assert.Equal("2001.EIA", Path.GetFileName(NcSubprogramCalls.FindInFolder(folder, 2001)));
+            Assert.Equal("PROBE.EIA", Path.GetFileName(NcSubprogramCalls.FindInFolder(folder, 9013)));
         }
         finally
         {

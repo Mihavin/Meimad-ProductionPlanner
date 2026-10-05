@@ -8,7 +8,7 @@ namespace Meimad.Planner.Server.Application.GCode;
 internal sealed class GCodeArtifactStore
 {
     private static readonly HashSet<string> GCodeExtensions = new(
-        [".nc", ".tap", ".gcode", ".cnc", ".iso", ".mpf", ".spf"],
+        [".nc", ".tap", ".gcode", ".cnc", ".iso", ".mpf", ".spf", ".eia"],
         StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> ToolTableExtensions = new(
         [".json", ".csv", ".txt", ".mht", ".mhtml"],

@@ -12,12 +12,15 @@ namespace Meimad.Planner.NcEngine;
 /// </summary>
 public static partial class NcSubprogramCalls
 {
-    /// <summary>Extensions the engine tries, in order, for a called number in the program's folder.</summary>
-    public static readonly IReadOnlyList<string> FolderExtensions = [".nc", ".tap", ".cnc", ".txt", ""];
+    /// <summary>
+    /// Extensions the engine tries, in order, for a called number in the program's folder: the
+    /// vendored resolver's, then Mazak's ".eia" (meimad-subprograms.js).
+    /// </summary>
+    public static readonly IReadOnlyList<string> FolderExtensions = [".nc", ".tap", ".cnc", ".txt", "", ".eia"];
 
     /// <summary>Extensions of files that may hold a subprogram.</summary>
     public static readonly IReadOnlySet<string> FileExtensions = new HashSet<string>(
-        ["", ".nc", ".tap", ".cnc", ".txt", ".gcode", ".iso", ".mpf", ".spf", ".min", ".ngc"],
+        ["", ".nc", ".tap", ".cnc", ".txt", ".gcode", ".iso", ".mpf", ".spf", ".min", ".ngc", ".eia"],
         StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The program numbers the lines call with M98 or G65, each once, in order of first call.</summary>

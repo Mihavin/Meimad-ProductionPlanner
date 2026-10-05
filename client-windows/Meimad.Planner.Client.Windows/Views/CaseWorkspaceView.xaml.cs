@@ -349,7 +349,7 @@ public partial class CaseWorkspaceView : UserControl
         var dialog = new OpenFileDialog
         {
             Title = "Select released production G-code",
-            Filter = "G-code|*.nc;*.tap;*.gcode;*.cnc;*.iso;*.mpf;*.spf|All files|*.*",
+            Filter = "G-code|*.nc;*.tap;*.gcode;*.cnc;*.iso;*.mpf;*.spf;*.eia|All files|*.*",
             CheckFileExists = true,
             Multiselect = false
         }.Localized();
@@ -369,7 +369,7 @@ public partial class CaseWorkspaceView : UserControl
         var dialog = new OpenFileDialog
         {
             Title = "Add subprogram files",
-            Filter = "NC programs|*.nc;*.tap;*.cnc;*.txt;*.gcode;*.iso;*.mpf;*.spf;*.min;*.ngc|All files|*.*",
+            Filter = "NC programs|*.nc;*.tap;*.cnc;*.txt;*.gcode;*.iso;*.mpf;*.spf;*.min;*.ngc;*.eia|All files|*.*",
             CheckFileExists = true,
             Multiselect = true,
             InitialDirectory = string.IsNullOrWhiteSpace(viewModel.GCodeFilePath)

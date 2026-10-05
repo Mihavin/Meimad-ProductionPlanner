@@ -58,6 +58,7 @@ const transport = require("../media/model-transport");
 const dialects = require("./meimad-dialects");
 const macro = require("./meimad-macro");
 const okuma = require("./meimad-okuma");
+const { withProgramExtensions } = require("./meimad-subprograms");
 
 const MM_PER_INCH = 25.4;
 const RAPID_KINDS = new Set(["rapid", "home", "tool-change", "g30"]);
@@ -194,6 +195,8 @@ function machineFor(text, selection) {
 // The program's folder is searched by file name (O1001.nc, 1001.nc, ...) and then, like a memory
 // folder, by the O number each file declares, so a subprogram released as "pocket.nc" with O1001
 // is found the way the Planner's release detection finds it; the machine's memory folder follows.
+// Mazak ".EIA" programs, which the vendored resolver does not read, are found the same way
+// (meimad-subprograms.js).
 // Every program a resolver finds is recorded in `units` (name -> { text, path, location }) so the
 // viewer can show a called program next to the main one.
 function subprogramResolverFor(request, units) {
@@ -202,7 +205,9 @@ function subprogramResolverFor(request, units) {
     const folders = [];
     if (typeof request.documentDirectory === "string" && request.documentDirectory.trim()) folders.push(request.documentDirectory);
     if (typeof memory === "string" && memory.trim()) folders.push(memory);
-    const resolver = createSubprogramResolver(request.documentDirectory || undefined, { memoryFolders: folders });
+    const resolver = withProgramExtensions(
+      createSubprogramResolver(request.documentDirectory || undefined, { memoryFolders: folders }),
+      request.documentDirectory);
     if (!units || typeof resolver !== "function") return resolver;
     const recording = function (target) {
       const found = resolver.call(this, target);

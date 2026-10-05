@@ -177,7 +177,7 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
         var dialog = new OpenFileDialog
         {
             Title = "Open NC program",
-            Filter = "NC programs|*.nc;*.cnc;*.tap;*.min;*.mpf;*.spf;*.txt|All files|*.*",
+            Filter = "NC programs|*.nc;*.cnc;*.tap;*.min;*.eia;*.mpf;*.spf;*.txt|All files|*.*",
             CheckFileExists = true,
             InitialDirectory = initialDirectory ?? NcViewerSession.DefaultProgramFolder()
         }.Localized();
@@ -190,7 +190,7 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
         {
             Title = title,
             FileName = suggestedName,
-            Filter = "NC programs|*.nc;*.cnc;*.tap;*.min;*.mpf;*.spf;*.txt|All files|*.*",
+            Filter = "NC programs|*.nc;*.cnc;*.tap;*.min;*.eia;*.mpf;*.spf;*.txt|All files|*.*",
             AddExtension = true,
             DefaultExt = ".nc",
             OverwritePrompt = true,
@@ -239,7 +239,7 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
         var dialog = new OpenFileDialog
         {
             Title = "Add subprogram files",
-            Filter = "NC programs|*.nc;*.tap;*.cnc;*.txt;*.gcode;*.iso;*.mpf;*.spf;*.min;*.ngc|All files|*.*",
+            Filter = "NC programs|*.nc;*.tap;*.cnc;*.txt;*.gcode;*.iso;*.mpf;*.spf;*.min;*.ngc;*.eia|All files|*.*",
             CheckFileExists = true,
             Multiselect = true
         }.Localized();
