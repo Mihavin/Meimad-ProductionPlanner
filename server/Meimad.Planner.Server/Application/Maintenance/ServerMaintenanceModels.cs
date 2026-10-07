@@ -7,12 +7,14 @@ internal static class CollectedDataTypes
     internal const string CncRawTelemetry = "cnc_raw_telemetry";
     internal const string CncStateHistory = "cnc_state_history";
     internal const string CncConnectionEvents = "cnc_connection_events";
+    internal const string CncDprntLog = "cnc_dprnt_log";
 
     internal static readonly IReadOnlyList<string> All =
     [
         CncRawTelemetry,
         CncStateHistory,
-        CncConnectionEvents
+        CncConnectionEvents,
+        CncDprntLog
     ];
 }
 

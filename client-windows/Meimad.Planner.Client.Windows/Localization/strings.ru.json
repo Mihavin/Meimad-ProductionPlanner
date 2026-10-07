@@ -4802,5 +4802,20 @@
   "Timeline work outside the available time; not counted in the percentages": "Работа на шкале времени вне доступного времени; не входит в проценты",
   "Usage % above each bar; dashed line = today, forecast after it": "% загрузки над каждым столбцом; пунктир = сегодня, после него прогноз",
   "How each machine's working time is used according to the Timeline: the time its bars occupy (production, setup, QC, part reload, reserved) over the machine's working calendar. Before now the Timeline shows the recorded actual work; after now its forecast. Hold, downtime and idle time are not usage.": "Как используется рабочее время каждого станка по шкале времени: время, которое занимают её полосы (производство, наладка, ОТК, перезагрузка детали, резерв), от рабочего календаря станка. До текущего момента шкала показывает фактически записанную работу, после — прогноз. Удержание, остановки и простой не считаются загрузкой.",
-  "Usage follows the Timeline: the time its bars occupy each machine (production, setup, QC, part reload and reserved) over the machine's working time. Before now the Timeline shows the recorded actual work as production; after now it shows the forecast. Hold, downtime and idle time are not usage. Work outside the working time is shown apart and does not raise the percentages.": "Загрузка по шкале времени: время, которое её полосы занимают на каждом станке (производство, наладка, ОТК, перезагрузка детали и резерв), от рабочего времени станка. До текущего момента шкала показывает фактически записанную работу как производство, после — прогноз. Удержание, остановки и простой не считаются загрузкой. Работа вне рабочего времени показана отдельно и не увеличивает проценты."
+  "Usage follows the Timeline: the time its bars occupy each machine (production, setup, QC, part reload and reserved) over the machine's working time. Before now the Timeline shows the recorded actual work as production; after now it shows the forecast. Hold, downtime and idle time are not usage. Work outside the working time is shown apart and does not raise the percentages.": "Загрузка по шкале времени: время, которое её полосы занимают на каждом станке (производство, наладка, ОТК, перезагрузка детали и резерв), от рабочего времени станка. До текущего момента шкала показывает фактически записанную работу как производство, после — прогноз. Удержание, остановки и простой не считаются загрузкой. Работа вне рабочего времени показана отдельно и не увеличивает проценты.",
+  "Load log": "Загрузить журнал",
+  "Contains": "Содержит",
+  "DPRNT Log": "Журнал DPRNT",
+  "Export": "Экспорт",
+  "Line": "Строка",
+  "Empty: from the start of the log": "Пусто: с начала журнала",
+  "Empty: up to now": "Пусто: до текущего момента",
+  "Every line a machine's DPRNT output sent": "Каждая строка, отправленная выводом DPRNT станка",
+  "Every line a machine's DPRNT output sent, as the Server received it, oldest first. The log is kept until an administrator clears it in Server Maintenance.": "Каждая строка, отправленная выводом DPRNT станка, в том виде, в каком её получил сервер, от старых к новым. Журнал хранится, пока администратор не очистит его в обслуживании сервера.",
+  "Write the loaded lines to a text file (time, tab, line) and open it": "Записать загруженные строки в текстовый файл (время, табуляция, строка) и открыть его",
+  "Only lines that contain this text (not case-sensitive)": "Только строки, содержащие этот текст (без учёта регистра)",
+  "Machine usage per machine and overall, and each machine's DPRNT log": "Загрузка по станкам и в целом, а также журнал DPRNT каждого станка",
+  "Loading the DPRNT log...": "Загрузка журнала DPRNT...",
+  "Choose a machine and press Load log. Without dates the whole log is loaded.": "Выберите станок и нажмите «Загрузить журнал». Без дат загружается весь журнал.",
+  "DPRNT log": "Журнал DPRNT"
 }

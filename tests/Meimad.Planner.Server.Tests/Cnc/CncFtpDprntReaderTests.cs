@@ -25,6 +25,29 @@ public sealed class CncFtpDprntReaderTests
     }
 
     [Fact]
+    public async Task The_DPRNT_log_gets_each_new_line_once_also_in_replay_mode()
+    {
+        await using var server = new FakeFtpServer { FileContent = Encoding.UTF8.GetBytes("logged before the restart\r\n") };
+        var reader = new CncFtpDprntReader();
+        var first = await reader.DrainAsync(Endpoint(server), replayExistingContent: false, CancellationToken.None);
+        server.FileContent = Encoding.UTF8.GetBytes("logged before the restart\r\npingret\r\n\r\nT12 D=10.000\r\n");
+        var second = await reader.DrainAsync(Endpoint(server), replayExistingContent: false, CancellationToken.None);
+        Assert.Empty(first.AllLines);
+        Assert.Equal(new[] { "pingret", "T12 D=10.000" }, second.AllLines);
+
+        // Replay mode reads the whole file every poll for its events, but logs each line once.
+        server.FileContent = Encoding.UTF8.GetBytes("a\r\n");
+        var replayReader = new CncFtpDprntReader();
+        var replayFirst = await replayReader.DrainAsync(Endpoint(server), replayExistingContent: true, CancellationToken.None);
+        var replaySame = await replayReader.DrainAsync(Endpoint(server), replayExistingContent: true, CancellationToken.None);
+        server.FileContent = Encoding.UTF8.GetBytes("a\r\nb\r\n");
+        var replayMore = await replayReader.DrainAsync(Endpoint(server), replayExistingContent: true, CancellationToken.None);
+        Assert.Equal(new[] { "a" }, replayFirst.AllLines);
+        Assert.Empty(replaySame.AllLines);
+        Assert.Equal(new[] { "b" }, replayMore.AllLines);
+    }
+
+    [Fact]
     public async Task A_rewritten_or_shortened_file_is_read_again_from_the_start()
     {
         await using var server = new FakeFtpServer

@@ -28,7 +28,8 @@ internal sealed record ServerMaintenanceCatalogResponse(
         [
             new(CollectedDataTypes.CncRawTelemetry, "Raw CNC telemetry", "Non-authoritative bounded adapter payloads."),
             new(CollectedDataTypes.CncStateHistory, "Machine state history", "Non-authoritative normalized snapshot history; current Machine state is retained."),
-            new(CollectedDataTypes.CncConnectionEvents, "CNC connection events", "Non-authoritative connect/disconnect/retry diagnostics.")
+            new(CollectedDataTypes.CncConnectionEvents, "CNC connection events", "Non-authoritative connect/disconnect/retry diagnostics."),
+            new(CollectedDataTypes.CncDprntLog, "DPRNT log", "Every DPRNT line each Machine sent; kept until cleared here.")
         ],
         "POST",
         "/api/v1/server-maintenance/backups/download",

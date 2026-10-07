@@ -39,6 +39,7 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
             pending.Append(Encoding.UTF8.GetString(buffer, 0, count));
             string? latest = null;
             var eventLines = new List<string>();
+            var allLines = new List<string>();
             var text = pending.ToString();
             var lines = text.Split(["\r\n", "\n", "\r"], StringSplitOptions.None);
             pending.Clear();
@@ -46,11 +47,12 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
             foreach (var raw in lines[..^1])
             {
                 var line = StripControlCharacters(raw);
+                if (!string.IsNullOrWhiteSpace(line)) allLines.Add(line);
                 if (TryParsePartName(line, out var value)) latest = value;
                 else if (line.TrimStart().StartsWith("MEIMAD/", StringComparison.Ordinal))
                     eventLines.Add(line.Trim());
             }
-            return new(latest, eventLines);
+            return new(latest, eventLines, allLines);
         }
         catch (Exception exception) when (exception is IOException or SocketException or OperationCanceledException && !token.IsCancellationRequested)
         {
@@ -93,4 +95,11 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
     public async ValueTask DisposeAsync() => await DisposeConnectionAsync();
 }
 
-internal sealed record HaasDprntDrainResult(string? PartName, IReadOnlyList<string> EventLines);
+/// <summary>
+/// One read of a DPRNT source: the latest part-number line, the <c>MEIMAD/</c> event lines, and every
+/// non-blank line received (control codes removed, otherwise as sent) for the DPRNT log.
+/// </summary>
+internal sealed record HaasDprntDrainResult(string? PartName, IReadOnlyList<string> EventLines, IReadOnlyList<string>? Lines = null)
+{
+    internal IReadOnlyList<string> AllLines => Lines ?? [];
+}

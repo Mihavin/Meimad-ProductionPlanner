@@ -1,0 +1,53 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.DprntLogView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource CanvasBrush}">
+  <Grid Margin="8">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
+    <DockPanel Margin="0,0,0,8">
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+        <Button Content="Load log" Command="{Binding LoadCommand}" Margin="0,0,8,0" />
+        <Button Content="Export" Command="{Binding ExportCommand}"
+                ToolTip="Write the loaded lines to a text file (time, tab, line) and open it" />
+      </StackPanel>
+      <StackPanel>
+        <TextBlock Text="DPRNT Log" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock Text="Every line a machine's DPRNT output sent, as the Server received it, oldest first. The log is kept until an administrator clears it in Server Maintenance."
+                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+      </StackPanel>
+    </DockPanel>
+
+    <WrapPanel Grid.Row="1" Margin="0,0,0,8">
+      <TextBlock Text="Machine" VerticalAlignment="Center" Margin="0,0,6,0" />
+      <ComboBox ItemsSource="{Binding Machines}" SelectedItem="{Binding Machine}" Width="240" Margin="0,0,14,0" />
+      <TextBlock Text="From" VerticalAlignment="Center" Margin="0,0,6,0" />
+      <DatePicker SelectedDate="{Binding From}" Width="130" Margin="0,0,14,0"
+                  ToolTip="Empty: from the start of the log" />
+      <TextBlock Text="To" VerticalAlignment="Center" Margin="0,0,6,0" />
+      <DatePicker SelectedDate="{Binding To}" Width="130" Margin="0,0,14,0"
+                  ToolTip="Empty: up to now" />
+      <TextBlock Text="Contains" VerticalAlignment="Center" Margin="0,0,6,0" />
+      <TextBox Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" Width="220"
+               ToolTip="Only lines that contain this text (not case-sensitive)" />
+    </WrapPanel>
+
+    <TextBlock Grid.Row="2" Text="{Binding Status}" Foreground="{StaticResource MutedTextBrush}"
+               TextWrapping="Wrap" Margin="0,0,0,8" />
+
+    <DataGrid Grid.Row="3" ItemsSource="{Binding Lines}" AutoGenerateColumns="False" IsReadOnly="True"
+              CanUserAddRows="False" CanUserSortColumns="False" HorizontalScrollBarVisibility="Auto"
+              EnableRowVirtualization="True" VirtualizingPanel.IsVirtualizing="True"
+              VirtualizingPanel.VirtualizationMode="Recycling" SelectionMode="Extended"
+              ClipboardCopyMode="ExcludeHeader">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="Received" Binding="{Binding TimeText}" Width="170" />
+        <DataGridTextColumn Header="Line" Binding="{Binding Line}" Width="*" FontFamily="Consolas" />
+      </DataGrid.Columns>
+    </DataGrid>
+  </Grid>
+</UserControl>

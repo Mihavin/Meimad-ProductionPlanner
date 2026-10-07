@@ -21,6 +21,7 @@ internal static class CncEndpoints
         group.MapPost("/cnc-connection/reconnect", ReconnectAsync);
         group.MapGet("/snapshot", GetSnapshotAsync);
         group.MapGet("/cnc-diagnostics", GetDiagnosticsAsync);
+        group.MapGet("/dprnt-log", GetDprntLogAsync);
         endpoints.Map("/api/v1/machines/live", HandleWebSocketAsync);
         endpoints.Map("/machines/live", HandleWebSocketAsync);
     }
@@ -105,6 +106,39 @@ internal static class CncEndpoints
     private static async Task<IResult> GetDiagnosticsAsync(
         string machineId, int? limit, CncConnectionService service, CancellationToken token) =>
         Results.Ok(await service.GetDiagnosticsAsync(machineId, limit ?? 50, token));
+
+    /// <summary>
+    /// GET /api/v1/machines/{machineId}/dprnt-log?from=&amp;to=&amp;search=&amp;afterId=&amp;limit=: the
+    /// Machine's permanent DPRNT log (every line, in arrival order). from/to are ISO 8601 instants.
+    /// </summary>
+    private static async Task<IResult> GetDprntLogAsync(
+        string machineId, string? from, string? to, string? search, long? afterId, int? limit,
+        HttpContext context, DprntLogService service, CancellationToken token)
+    {
+        static bool TryInstant(string? value, out DateTimeOffset? instant)
+        {
+            instant = null;
+            if (string.IsNullOrWhiteSpace(value)) return true;
+            if (!DateTimeOffset.TryParse(value.Trim(), System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)) return false;
+            instant = parsed;
+            return true;
+        }
+        if (!TryInstant(from, out var fromInstant) || !TryInstant(to, out var toInstant))
+            return PlanningHttpSupport.Error(StatusCodes.Status422UnprocessableEntity, "validation_failed",
+                "from and to are ISO 8601 date-times.", context);
+        try
+        {
+            var page = await service.ReadAsync(machineId, fromInstant, toInstant, search, afterId, limit, token);
+            return page is null
+                ? PlanningHttpSupport.Error(StatusCodes.Status404NotFound, "machine_not_found", "The Machine does not exist.", context)
+                : Results.Ok(page);
+        }
+        catch (DprntLogValidationException exception)
+        {
+            return PlanningHttpSupport.Error(StatusCodes.Status422UnprocessableEntity, "validation_failed", exception.Message, context);
+        }
+    }
 
     private static async Task HandleWebSocketAsync(
         HttpContext context, ICncConnectionManager manager, ICncLivePublisher publisher)

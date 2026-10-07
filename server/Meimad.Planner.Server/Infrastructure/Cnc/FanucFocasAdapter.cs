@@ -174,6 +174,8 @@ internal sealed class FanucFocasAdapter : ICncMachineAdapter
         var dprnt = await dprntSource.DrainAsync(allowClear: true, token);
         foreach (var eventLine in dprnt.Result.EventLines)
             raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.FanucFocas, at, "DPRINT_EVENT", eventLine));
+        foreach (var line in dprnt.Result.AllLines)
+            raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.FanucFocas, at, RawCncTelemetry.DprntLine, line));
         dprntSource.ApplyFileHealth(dprnt, components, health, ref error);
         if (!dprntSource.Enabled) components["DPRNT"] = CncComponentStates.Unsupported;
 

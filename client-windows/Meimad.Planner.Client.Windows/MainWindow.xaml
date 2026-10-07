@@ -143,8 +143,15 @@
             <TabItem Header="Material Orders" ToolTip="Kitaron material purchase-order lines with their reported delivery status">
                 <views:MaterialOrdersView DataContext="{Binding MaterialOrders}" Margin="5" />
             </TabItem>
-            <TabItem Header="Reports" ToolTip="Machine usage per machine and overall, in hours and percent, with the daily history">
-                <views:MachineUsageView DataContext="{Binding MachineUsage}" Margin="5" />
+            <TabItem Header="Reports" ToolTip="Machine usage per machine and overall, and each machine's DPRNT log">
+                <TabControl Margin="5">
+                    <TabItem Header="Machine Usage" ToolTip="Machine usage per machine and overall, in hours and percent, with the daily history">
+                        <views:MachineUsageView DataContext="{Binding MachineUsage}" />
+                    </TabItem>
+                    <TabItem Header="DPRNT Log" ToolTip="Every line a machine's DPRNT output sent">
+                        <views:DprntLogView DataContext="{Binding DprntLog}" />
+                    </TabItem>
+                </TabControl>
             </TabItem>
             <TabItem Header="Users" ToolTip="Administrators: manage user accounts, user types and permissions"
                      Visibility="{Binding CanManageUsers, Converter={StaticResource BooleanToVisibilityConverter}}">

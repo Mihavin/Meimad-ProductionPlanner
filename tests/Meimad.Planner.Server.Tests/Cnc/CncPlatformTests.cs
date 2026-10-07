@@ -62,6 +62,31 @@ public sealed class CncPlatformTests
     }
 
     [Fact]
+    public async Task Every_DPRNT_line_goes_to_the_permanent_log_and_is_never_pruned_with_raw_telemetry()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var connection = await SeedConnectionAsync(fixture.Database);
+        var repository = new SqliteCncConnectionRepository(fixture.Database);
+        var snapshot = FakeCncMachineAdapter.Snapshot("SETUP", 0, 10);
+        var old = snapshot.Timestamp.AddDays(-30);
+        RawCncTelemetry Line(DateTimeOffset at, string text) =>
+            new("machine-cnc", connection.Id, "HAAS_NGC", at, RawCncTelemetry.DprntLine, text);
+
+        // Lines a month old (beyond the 14-day raw retention), then a fresh poll that prunes raw telemetry.
+        await repository.SaveSnapshotAsync(connection, snapshot with { Timestamp = old },
+            [Line(old, "pingret"), Line(old, "30P647004101-001"), Line(old, "MEIMAD/V/1/EVENT/CST/ID/X/SEQ/1")], default);
+        await repository.SaveSnapshotAsync(connection, snapshot, [Line(snapshot.Timestamp, "T12 D=10.000")], default);
+
+        await using var db = await fixture.Database.OpenConnectionAsync();
+        await using var lines = db.CreateCommand();
+        lines.CommandText = "SELECT group_concat(line, '|') FROM (SELECT line FROM machine_dprnt_lines WHERE machine_id = 'machine-cnc' ORDER BY id);";
+        Assert.Equal("pingret|30P647004101-001|MEIMAD/V/1/EVENT/CST/ID/X/SEQ/1|T12 D=10.000", (string)(await lines.ExecuteScalarAsync())!);
+        await using var raw = db.CreateCommand();
+        raw.CommandText = "SELECT COUNT(*) FROM machine_telemetry_raw WHERE operation = 'DPRNT_LINE';";
+        Assert.Equal(0L, (long)(await raw.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
     public async Task Legacy_macro_change_cannot_move_Bench_out_of_setup()
     {
         var directory = Path.Combine(Path.GetTempPath(), "MeimadPlanner.Cnc.Live", Guid.NewGuid().ToString("N"));

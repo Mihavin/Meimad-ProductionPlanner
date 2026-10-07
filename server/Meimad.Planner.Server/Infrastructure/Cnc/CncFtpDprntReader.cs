@@ -22,6 +22,7 @@ internal sealed class CncFtpDprntReader
     private const int MaximumFileBytes = 4 * 1024 * 1024;
     private string consumedContent = string.Empty;
     private bool lastDrainConsumedEverything;
+    private bool initialized;
 
     /// <summary>Set when the last requested clear failed; cleared by the next successful clear.</summary>
     internal string? LastTruncateError { get; private set; }
@@ -30,12 +31,18 @@ internal sealed class CncFtpDprntReader
         CncFtpDprntEndpoint endpoint, bool replayExistingContent, CancellationToken token)
     {
         var content = Decode(await DownloadAsync(endpoint, token));
-        var added = !replayExistingContent && content.StartsWith(consumedContent, StringComparison.Ordinal)
+        var appended = content.StartsWith(consumedContent, StringComparison.Ordinal)
             ? content[consumedContent.Length..]
             : content;
+        var added = replayExistingContent ? content : appended;
+        // The DPRNT log takes only text new since the previous read, also in replay mode. The first
+        // read after a start sees the file again: its lines were logged before, unless the file is
+        // emptied after reading (replay mode), in which case what it holds was never read.
+        var logged = initialized ? appended : replayExistingContent ? content : string.Empty;
 
         consumedContent = content;
         lastDrainConsumedEverything = true;
+        initialized = true;
 
         string? latest = null;
         var eventLines = new List<string>();
@@ -47,7 +54,11 @@ internal sealed class CncFtpDprntReader
             else if (line.TrimStart().StartsWith("MEIMAD/", StringComparison.Ordinal))
                 eventLines.Add(line.Trim());
         }
-        return new(latest, eventLines);
+        var allLines = logged.Split(["\r\n", "\n", "\r"], StringSplitOptions.None)
+            .Select(HaasDprntPartReader.StripControlCharacters)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToArray();
+        return new(latest, eventLines, allLines);
     }
 
     /// <summary>

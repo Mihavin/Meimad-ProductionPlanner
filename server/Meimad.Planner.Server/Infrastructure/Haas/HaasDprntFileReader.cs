@@ -87,6 +87,7 @@ internal sealed class HaasDprntFileReader
     {
         string? latest = null;
         var eventLines = new List<string>();
+        var allLines = new List<string>();
         long length;
         await using (var stream = new FileStream(path, new FileStreamOptions
         {
@@ -127,7 +128,7 @@ internal sealed class HaasDprntFileReader
                 total += count;
                 RememberTail(buffer);
                 AppendText(buffer);
-                ParsePendingLines(ref latest, eventLines);
+                ParsePendingLines(ref latest, eventLines, allLines);
             }
         }
 
@@ -136,11 +137,12 @@ internal sealed class HaasDprntFileReader
         lastDrainConsumedEverything = offset == length;
         if (catchingUp)
         {
-            // Historical event lines were most likely ingested before this reader existed.
+            // Historical event lines were most likely ingested (and logged) before this reader existed.
             eventLines.Clear();
+            allLines.Clear();
             if (lastDrainConsumedEverything) catchingUp = false;
         }
-        return new(latest, eventLines);
+        return new(latest, eventLines, allLines);
     }
 
     private async Task<bool> TailMatchesAsync(FileStream stream, CancellationToken token)
@@ -183,7 +185,7 @@ internal sealed class HaasDprntFileReader
         pending.Append(text);
     }
 
-    private void ParsePendingLines(ref string? latest, List<string> eventLines)
+    private void ParsePendingLines(ref string? latest, List<string> eventLines, List<string> allLines)
     {
         var lines = pending.ToString().Split(["\r\n", "\n", "\r"], StringSplitOptions.None);
         pending.Clear();
@@ -191,6 +193,7 @@ internal sealed class HaasDprntFileReader
         foreach (var raw in lines[..^1])
         {
             var line = HaasDprntPartReader.StripControlCharacters(raw);
+            if (!string.IsNullOrWhiteSpace(line)) allLines.Add(line);
             if (HaasDprntPartReader.TryParsePartName(line, out var value)) latest = value;
             else if (line.TrimStart().StartsWith("MEIMAD/", StringComparison.Ordinal))
                 eventLines.Add(line.Trim());

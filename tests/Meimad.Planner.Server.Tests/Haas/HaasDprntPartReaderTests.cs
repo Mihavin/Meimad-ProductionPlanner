@@ -23,6 +23,33 @@ public sealed class HaasDprntPartReaderTests
             TimeSpan.FromSeconds(2)));
     }
 
+    [Fact]
+    public async Task The_TCP_stream_returns_every_complete_line_for_the_DPRNT_log()
+    {
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        await using var reader = new HaasDprntPartReader();
+        var accept = listener.AcceptTcpClientAsync();
+        await reader.DrainAsync("127.0.0.1", port, 2000, CancellationToken.None);
+        using var machine = await accept;
+        var bytes = System.Text.Encoding.ASCII.GetBytes(
+            "pingret\r\n30P647004101-001\r\n\r\nMEIMAD/V/1/EVENT/CST/ID/X/SEQ/1\r\nT12 D=10.000\r\npart");
+        await machine.GetStream().WriteAsync(bytes);
+
+        HaasDprntDrainResult? result = null;
+        Assert.True(SpinWait.SpinUntil(() =>
+        {
+            result = reader.DrainAsync("127.0.0.1", port, 2000, CancellationToken.None).GetAwaiter().GetResult();
+            return result.AllLines.Count > 0;
+        }, TimeSpan.FromSeconds(3)));
+        listener.Stop();
+
+        Assert.Equal(new[] { "pingret", "30P647004101-001", "MEIMAD/V/1/EVENT/CST/ID/X/SEQ/1", "T12 D=10.000" }, result!.AllLines);
+        Assert.Equal("30P647004101-001", result.PartName);
+        Assert.Equal(new[] { "MEIMAD/V/1/EVENT/CST/ID/X/SEQ/1" }, result.EventLines);
+    }
+
     [Theory]
     [InlineData("30P647004101-001", "30P647004101-001")]
     [InlineData(" 16e2509-7psofi-1 ", "16E2509-7PSOFI-1")]

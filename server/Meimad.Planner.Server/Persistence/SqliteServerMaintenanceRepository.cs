@@ -27,7 +27,12 @@ internal sealed class SqliteServerMaintenanceRepository : IServerMaintenanceRepo
                 CollectedDataTypes.CncConnectionEvents,
                 "CNC connection events",
                 "machine_connection_events",
-                "occurred_at")
+                "occurred_at"),
+            [CollectedDataTypes.CncDprntLog] = new(
+                CollectedDataTypes.CncDprntLog,
+                "DPRNT log",
+                "machine_dprnt_lines",
+                "received_at")
         };
 
     private readonly SqliteDatabase database;

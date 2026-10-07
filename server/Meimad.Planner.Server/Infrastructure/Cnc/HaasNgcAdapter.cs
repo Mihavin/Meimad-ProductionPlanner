@@ -227,6 +227,8 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         var dprnt = await dprntSource.DrainAsync(allowClear: true, token);
         foreach (var eventLine in dprnt.Result.EventLines)
             raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, "DPRINT_EVENT", eventLine));
+        foreach (var line in dprnt.Result.AllLines)
+            raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, RawCncTelemetry.DprntLine, line));
         dprntSource.ApplyFileHealth(dprnt, components, health, ref error);
         var dprntPart = dprnt.Result.PartName;
 
@@ -358,6 +360,8 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         var dprnt = await dprntSource.DrainAsync(allowClear: true, token);
         foreach (var eventLine in dprnt.Result.EventLines)
             raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, "DPRINT_EVENT", eventLine));
+        foreach (var line in dprnt.Result.AllLines)
+            raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, RawCncTelemetry.DprntLine, line));
         dprntSource.ApplyFileHealth(dprnt, components, health, ref error);
 
         var program = status.ProgramNumber;
@@ -521,6 +525,8 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         var raw = new List<RawCncTelemetry>();
         foreach (var eventLine in dprnt.Result.EventLines)
             raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, "DPRINT_EVENT", eventLine));
+        foreach (var line in dprnt.Result.AllLines)
+            raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, RawCncTelemetry.DprntLine, line));
         if (dprnt.Result.PartName is not null)
         {
             cachedPart = new(dprnt.Result.PartName, at, false);

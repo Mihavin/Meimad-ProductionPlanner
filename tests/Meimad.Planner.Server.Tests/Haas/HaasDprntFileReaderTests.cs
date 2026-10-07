@@ -202,6 +202,29 @@ public sealed class HaasDprntFileReaderTests : IDisposable
         await Assert.ThrowsAnyAsync<IOException>(() => reader.DrainAsync(path, false, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task Every_new_non_blank_line_is_returned_for_the_DPRNT_log()
+    {
+        await File.WriteAllTextAsync(path, "logged before the restart\r\n");
+        var reader = new HaasDprntFileReader();
+
+        var first = await reader.DrainAsync(path, false, CancellationToken.None);
+        await File.AppendAllTextAsync(path,
+            "pingret\r\n\r\n   \r\n30P647004101-001\r\nMEIMAD/V/1/CST/BBB\r\n\0T12 D=10.000\r\nstill writ");
+        var second = await reader.DrainAsync(path, false, CancellationToken.None);
+        await File.AppendAllTextAsync(path, "ing\r\n");
+        var third = await reader.DrainAsync(path, false, CancellationToken.None);
+
+        // History from before the reader started is not logged twice; blank lines are skipped,
+        // control codes removed, and an unfinished line waits until the controller ends it.
+        Assert.Empty(first.AllLines);
+        Assert.Equal(new[] { "pingret", "30P647004101-001", "MEIMAD/V/1/CST/BBB", "T12 D=10.000" }, second.AllLines);
+        Assert.Equal(new[] { "still writing" }, third.AllLines);
+
+        var replay = await new HaasDprntFileReader().DrainAsync(path, true, CancellationToken.None);
+        Assert.Equal(6, replay.AllLines.Count);
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(Path.GetDirectoryName(path)!, true); } catch { }

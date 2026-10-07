@@ -1462,6 +1462,7 @@ No G-code ever deletes that file, so `dprntFileClearPolicy` says when the Server
 | `POST` | `/api/v1/machines/{machineId}/cnc-connection/reconnect` | Edit-Mode request to restart only that Server-side Machine worker. It does not affect browser connections. |
 | `GET` | `/api/v1/machines/{machineId}/snapshot` | Last normalized current snapshot, including freshness, component health and runtime capability availability. |
 | `GET` | `/api/v1/machines/{machineId}/cnc-diagnostics?limit=50` | Bounded recent raw protocol diagnostics; no credentials or complete NC files. |
+| `GET` | `/api/v1/machines/{machineId}/dprnt-log?from=&to=&search=&afterId=0&limit=5000` | The permanent DPRNT log (schema v96): every line the Machine's DPRNT output sent, in arrival order, as `{ machineId, from, to, search, lines: [ { id, receivedAt, line } ], hasMore }`. `from`/`to` are optional ISO 8601 instants (`from <= receivedAt < to`), `search` an optional case-insensitive substring (at most 200 characters, `%` and `_` literal), `afterId` the last `id` already read, `limit` 1-50000. More lines follow when `hasMore`. Unknown Machine `404 machine_not_found`; invalid parameters `422 validation_failed`. Read-only. |
 | `WS` | `/api/v1/machines/live` | First client message is `{ "type": "subscribe", "machineIds": [...] }` (1-100 IDs). Server messages are `MachineSnapshotUpdated`, `MachineConnectionChanged`, or `BenchStateChanged`. |
 
 WebSocket is Server-to-client monitoring transport only. It exposes no CNC command or generic macro-write message. Initial screen state always comes from the relevant GET endpoint before live incremental updates.
@@ -1665,6 +1666,7 @@ The only accepted `types` are:
 - `cnc_raw_telemetry` (`machine_telemetry_raw.observed_at`)
 - `cnc_state_history` (`machine_state_history.observed_at`)
 - `cnc_connection_events` (`machine_connection_events.occurred_at`)
+- `cnc_dprnt_log` (`machine_dprnt_lines.received_at`; schema v96, never pruned automatically)
 
 The catalog is Server-owned and fixed. Callers cannot supply a table or timestamp column. Planning data, releases, Production Run workflow/cycle/output evidence, anomalies, current Machine state, and `structured_event_log` are not deletable through this API.
 

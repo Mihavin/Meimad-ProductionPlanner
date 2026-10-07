@@ -295,6 +295,8 @@ public static class ServerApplication
         builder.Services.AddSingleton<IHaasIntegrationRepository, SqliteHaasIntegrationRepository>();
         builder.Services.AddSingleton<HaasIntegrationService>();
         builder.Services.AddSingleton<ICncConnectionRepository, SqliteCncConnectionRepository>();
+        builder.Services.AddSingleton<IDprntLogRepository, SqliteDprntLogRepository>();
+        builder.Services.AddSingleton<DprntLogService>();
         builder.Services.AddSingleton<CncAdapterRegistry>();
         builder.Services.AddSingleton<ICncAdapterFactory, CncAdapterFactory>();
         builder.Services.AddSingleton<ICncSnapshotConsumer, BenchAutomationService>();

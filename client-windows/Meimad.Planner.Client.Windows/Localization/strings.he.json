@@ -4802,5 +4802,20 @@
   "Timeline work outside the available time; not counted in the percentages": "עבודה בציר הזמן מחוץ לזמן הזמין; לא נכללת באחוזים",
   "Usage % above each bar; dashed line = today, forecast after it": "אחוז הניצולת מעל כל עמודה; קו מקווקו = היום, ואחריו תחזית",
   "How each machine's working time is used according to the Timeline: the time its bars occupy (production, setup, QC, part reload, reserved) over the machine's working calendar. Before now the Timeline shows the recorded actual work; after now its forecast. Hold, downtime and idle time are not usage.": "כיצד נוצל זמן העבודה של כל מכונה לפי ציר הזמן: הזמן שהעמודות שלו תופסות (ייצור, כיוון, בקרת איכות, טעינה מחדש של חלק, שריון) מתוך יומן העבודה של המכונה. לפני עכשיו ציר הזמן מציג את העבודה שנרשמה בפועל; אחרי עכשיו את התחזית. המתנה, השבתה וזמן סרק אינם ניצולת.",
-  "Usage follows the Timeline: the time its bars occupy each machine (production, setup, QC, part reload and reserved) over the machine's working time. Before now the Timeline shows the recorded actual work as production; after now it shows the forecast. Hold, downtime and idle time are not usage. Work outside the working time is shown apart and does not raise the percentages.": "הניצולת לפי ציר הזמן: הזמן שהעמודות שלו תופסות בכל מכונה (ייצור, כיוון, בקרת איכות, טעינה מחדש של חלק ושריון) מתוך זמן העבודה של המכונה. לפני עכשיו ציר הזמן מציג את העבודה שנרשמה בפועל כייצור; אחרי עכשיו את התחזית. המתנה, השבתה וזמן סרק אינם ניצולת. עבודה מחוץ לזמן העבודה מוצגת בנפרד ואינה מעלה את האחוזים."
+  "Usage follows the Timeline: the time its bars occupy each machine (production, setup, QC, part reload and reserved) over the machine's working time. Before now the Timeline shows the recorded actual work as production; after now it shows the forecast. Hold, downtime and idle time are not usage. Work outside the working time is shown apart and does not raise the percentages.": "הניצולת לפי ציר הזמן: הזמן שהעמודות שלו תופסות בכל מכונה (ייצור, כיוון, בקרת איכות, טעינה מחדש של חלק ושריון) מתוך זמן העבודה של המכונה. לפני עכשיו ציר הזמן מציג את העבודה שנרשמה בפועל כייצור; אחרי עכשיו את התחזית. המתנה, השבתה וזמן סרק אינם ניצולת. עבודה מחוץ לזמן העבודה מוצגת בנפרד ואינה מעלה את האחוזים.",
+  "Load log": "טעינת יומן",
+  "Contains": "מכיל",
+  "DPRNT Log": "יומן DPRNT",
+  "Export": "ייצוא",
+  "Line": "שורה",
+  "Empty: from the start of the log": "ריק: מתחילת היומן",
+  "Empty: up to now": "ריק: עד עכשיו",
+  "Every line a machine's DPRNT output sent": "כל שורה שפלט ה-DPRNT של המכונה שלח",
+  "Every line a machine's DPRNT output sent, as the Server received it, oldest first. The log is kept until an administrator clears it in Server Maintenance.": "כל שורה שפלט ה-DPRNT של המכונה שלח, כפי שהשרת קיבל אותה, מהישנה לחדשה. היומן נשמר עד שמנהל מערכת מוחק אותו בתחזוקת השרת.",
+  "Write the loaded lines to a text file (time, tab, line) and open it": "כתיבת השורות שנטענו לקובץ טקסט (שעה, טאב, שורה) ופתיחתו",
+  "Only lines that contain this text (not case-sensitive)": "רק שורות שמכילות את הטקסט הזה (ללא הבחנה בין אותיות גדולות לקטנות)",
+  "Machine usage per machine and overall, and each machine's DPRNT log": "ניצולת מכונות לפי מכונה ובסך הכול, ויומן ה-DPRNT של כל מכונה",
+  "Loading the DPRNT log...": "טוען את יומן ה-DPRNT...",
+  "Choose a machine and press Load log. Without dates the whole log is loaded.": "בחרו מכונה ולחצו על טעינת יומן. בלי תאריכים נטען היומן כולו.",
+  "DPRNT log": "יומן DPRNT"
 }

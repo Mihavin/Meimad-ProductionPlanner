@@ -219,6 +219,22 @@ internal sealed class SqliteCncConnectionRepository(SqliteDatabase database) : I
         }
         foreach (var raw in rawTelemetry)
         {
+            if (raw.Operation == RawCncTelemetry.DprntLine)
+            {
+                // Every DPRNT line goes to the permanent DPRNT log, never to the pruned raw telemetry.
+                await using var dprnt = connection.CreateCommand();
+                dprnt.Transaction = transaction;
+                dprnt.CommandText = """
+                    INSERT INTO machine_dprnt_lines (machine_id, connection_id, received_at, line)
+                    VALUES ($machineId, $connectionId, $at, $line);
+                    """;
+                dprnt.Parameters.AddWithValue("$machineId", raw.MachineId);
+                dprnt.Parameters.AddWithValue("$connectionId", raw.ConnectionId);
+                dprnt.Parameters.AddWithValue("$at", Format(raw.Timestamp));
+                dprnt.Parameters.AddWithValue("$line", raw.RawPayload.Length <= 4096 ? raw.RawPayload : raw.RawPayload[..4096]);
+                await dprnt.ExecuteNonQueryAsync(token);
+                continue;
+            }
             await using var telemetry = connection.CreateCommand();
             telemetry.Transaction = transaction;
             telemetry.CommandText = """

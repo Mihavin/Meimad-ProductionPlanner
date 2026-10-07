@@ -43,6 +43,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         QcQueue = new QcQueueViewModel();
         MaterialOrders = new MaterialOrdersViewModel();
         MachineUsage = new MachineUsageViewModel();
+        DprntLog = new DprntLogViewModel();
         ToolRequirements = new ToolRequirementsViewModel();
         ShiftRoster = new ShiftRosterViewModel();
         NcCreatorQueue = new PreparationQueueViewModel(
@@ -150,6 +151,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public MaterialOrdersViewModel MaterialOrders { get; }
 
     public MachineUsageViewModel MachineUsage { get; }
+
+    public DprntLogViewModel DprntLog { get; }
 
     public ToolRequirementsViewModel ToolRequirements { get; }
 
@@ -605,6 +608,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         QcQueue.AttachSession(apiClient, ClientId, userId, For(PlannerPermissions.DecideQc));
         MaterialOrders.AttachSession(apiClient);
         MachineUsage.AttachSession(apiClient);
+        DprntLog.AttachSession(apiClient);
         ToolRequirements.AttachSession(apiClient);
         ShiftRoster.AttachSession(apiClient, ClientId, signedIn?.Has(PlannerPermissions.PlanMachines) == true);
         UserAdministration.AttachSession(

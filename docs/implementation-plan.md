@@ -1142,6 +1142,16 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 
 **Tests:** `TimelineCalculationEngineTests.Locked_simultaneous_members_are_set_up_one_after_the_other_by_the_one_qualified_setup_worker`; the other locked-group tests keep their results.
 
+## Permanent DPRNT log (2026-10-07, schema v96)
+
+**Request (2026-10-07):** the owner asked for the full DPRNT log of Machine 15 for all time, "not only MEIMAD events". The Server had kept only `MEIMAD/` lines (as `DPRINT_EVENT` raw telemetry, pruned after 14 days) and discarded every other line, so the full history could not be recovered; the owner approved capturing every line from now on.
+
+**Implemented:** every DPRNT reader (TCP stream, controller file, FTP file) returns every non-blank line it receives besides the part name and `MEIMAD/` events; a file or FTP source does not log again what it held when the Server started, and FTP replay mode logs only new text. The adapters pass the lines as `DPRNT_LINE` raw telemetry, which `SqliteCncConnectionRepository` writes to `machine_dprnt_lines` instead of the pruned raw table. `GET /api/v1/machines/{id}/dprnt-log` reads it with period, text and paging; Server Maintenance lists it as `cnc_dprnt_log` so an administrator can clear a period on purpose. The migration copies the `DPRINT_EVENT` rows still in raw telemetry. Windows **Reports** now has inner tabs **Machine Usage** and **DPRNT Log** (Machine, period, text, **Load log**, **Export** to a text file); he/ru texts are included.
+
+**Open points:** the log grows without limit (a line is small; Server Maintenance can clear it); blank lines are not kept; a line is logged as received, so a line the controller is still writing to an FTP file can appear in two parts.
+
+**Tests:** reader tests for TCP, file and FTP sources; `CncPlatformTests.Every_DPRNT_line_goes_to_the_permanent_log_and_is_never_pruned_with_raw_telemetry`; `DprntLogApiTests` (order, period, search, paging, Machine separation, 404/422, maintenance catalog and preview); `DprntLogMigrationTests`; client `DprntLogViewModelTests`.
+
 ## Machine usage report (2026-10-07)
 
 **Request (2026-10-07):** "Add a report generator: machine usage for each machine in hours and %, overall performance in hours and %, daily report with history graph, total setup time, total idle time." A first version measured recorded CNC states and workflow events; the owner rejected it the same day: **"it should show the usage according to the timeline"**. The report now follows the calculated Timeline and stores nothing.

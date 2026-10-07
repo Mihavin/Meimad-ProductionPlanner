@@ -727,6 +727,12 @@ internal interface IPlannerApiClient : IDisposable
         DateOnly from, DateOnly to, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    /// <summary>A page of a Machine's permanent DPRNT log in arrival order (every line it sent).</summary>
+    Task<DprntLogPageInfo> GetDprntLogAsync(
+        string machineId, DateTimeOffset? from, DateTimeOffset? to, string? search, long afterId, int limit,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     /// <summary>Recorded Machine usage for whole factory days; basis is "schedule" or "fullDay".</summary>
     Task<MachineUsageReportInfo> GetMachineUsageAsync(
         DateOnly from, DateOnly to, string basis, CancellationToken cancellationToken = default) =>
@@ -3105,6 +3111,19 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         using var response = await httpClient.GetAsync(
             $"api/v1/resources/workload?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", cancellationToken);
         return await ReadSuccessAsync<EmployeeWorkloadReportInfo>(response, cancellationToken);
+    }
+
+    public async Task<DprntLogPageInfo> GetDprntLogAsync(
+        string machineId, DateTimeOffset? from, DateTimeOffset? to, string? search, long afterId, int limit,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new List<string> { $"afterId={afterId}", $"limit={limit}" };
+        if (from is { } start) query.Add("from=" + Uri.EscapeDataString(start.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
+        if (to is { } end) query.Add("to=" + Uri.EscapeDataString(end.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
+        if (!string.IsNullOrWhiteSpace(search)) query.Add("search=" + Uri.EscapeDataString(search.Trim()));
+        using var response = await httpClient.GetAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/dprnt-log?{string.Join("&", query)}", cancellationToken);
+        return await ReadSuccessAsync<DprntLogPageInfo>(response, cancellationToken);
     }
 
     public async Task<MachineUsageReportInfo> GetMachineUsageAsync(

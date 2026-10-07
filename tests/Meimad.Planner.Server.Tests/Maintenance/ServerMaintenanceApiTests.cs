@@ -34,7 +34,7 @@ public sealed class ServerMaintenanceApiTests
                 var root = json.RootElement;
                 Assert.True(root.GetProperty("database").GetProperty("databaseFileBytes").GetInt64() > 0);
                 Assert.True(root.GetProperty("database").GetProperty("schemaVersion").GetInt32() > 0);
-                Assert.Equal(3, root.GetProperty("deletableTypes").GetArrayLength());
+                Assert.Equal(4, root.GetProperty("deletableTypes").GetArrayLength());
                 Assert.DoesNotContain("structured_event_log", root.GetRawText(), StringComparison.Ordinal);
                 Assert.DoesNotContain("test.db", root.GetRawText(), StringComparison.OrdinalIgnoreCase);
             }

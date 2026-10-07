@@ -263,7 +263,14 @@ internal sealed record RawCncTelemetry(
     string AdapterType,
     DateTimeOffset Timestamp,
     string Operation,
-    string RawPayload);
+    string RawPayload)
+{
+    /// <summary>
+    /// One line of DPRNT output, whatever it says. It is kept in the permanent DPRNT log
+    /// (<c>machine_dprnt_lines</c>), not in the pruned raw telemetry.
+    /// </summary>
+    internal const string DprntLine = "DPRNT_LINE";
+}
 
 internal sealed record CncAdapterCheck(string Id, bool Succeeded, string Status, string Message);
 internal sealed record CncConnectionTestResult(
