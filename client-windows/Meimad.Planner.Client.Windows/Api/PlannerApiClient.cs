@@ -727,6 +727,11 @@ internal interface IPlannerApiClient : IDisposable
         DateOnly from, DateOnly to, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    /// <summary>Recorded Machine usage for whole factory days; basis is "schedule" or "fullDay".</summary>
+    Task<MachineUsageReportInfo> GetMachineUsageAsync(
+        DateOnly from, DateOnly to, string basis, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<IReadOnlyList<PlannerResource>> ListResourcesAsync(
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<PlannerResource>>([]);
@@ -3100,6 +3105,15 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         using var response = await httpClient.GetAsync(
             $"api/v1/resources/workload?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", cancellationToken);
         return await ReadSuccessAsync<EmployeeWorkloadReportInfo>(response, cancellationToken);
+    }
+
+    public async Task<MachineUsageReportInfo> GetMachineUsageAsync(
+        DateOnly from, DateOnly to, string basis, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/reports/machine-usage?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}&basis={Uri.EscapeDataString(basis)}",
+            cancellationToken);
+        return await ReadSuccessAsync<MachineUsageReportInfo>(response, cancellationToken);
     }
 
     public async Task<IReadOnlyList<PlannerSkill>> ListSkillsAsync(CancellationToken cancellationToken = default) =>

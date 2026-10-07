@@ -1142,6 +1142,30 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 
 **Tests:** `TimelineCalculationEngineTests.Locked_simultaneous_members_are_set_up_one_after_the_other_by_the_one_qualified_setup_worker`; the other locked-group tests keep their results.
 
+## Machine usage report (2026-10-07)
+
+**Request (2026-10-07):** "Add a report generator: machine usage for each machine in hours and %, overall performance in hours and %, daily report with history graph, total setup time, total idle time." It reports recorded usage only; it does not compare plan and actual (AGENTS.md rule 12) and stores nothing.
+
+**Implemented:** `MachineUsageReportService`, `SqliteMachineUsageRepository` and `GET /api/v1/reports/machine-usage?from=&to=&basis=` (see the API contract). Available time reuses the Timeline's own machine calendar expansion (`TimelineProjectionService.MachineWorkingWindows`, shared with the Timeline), so a report hour and a Timeline hour mean the same. Windows has a new **Reports** tab: period, basis, **Calculate**, overall-performance tiles, the Machine table, the daily history chart (all Machines or one) with its day table, **Print report** (self-contained HTML with SVG charts in `%TEMP%\MeimadPlanner\Reports`, right-to-left in Hebrew) and **Export CSV**. he/ru texts are included.
+
+**Proposed definitions awaiting owner confirmation (reversible, all in `MachineUsageReportService`):**
+- Production on a CNC-monitored Machine is the CNC `ACTIVE` state only; feed hold, ready, stopped, interrupted and alarm are idle.
+- Setup takes precedence over production (the first part cut during setup is setup), and work takes precedence over a downtime.
+- Time a CNC-monitored Machine sent no state is **no data**, not idle, so a lost connection does not lower usage silently. On a Machine without CNC monitoring, unreported time is idle.
+- The default basis is the working calendar; work outside it is reported apart and never raises a percentage above 100 %.
+- A setup counts from the measured setups (the operation time statistics definition) plus a run setup still in progress until now; a manual setup start without its end is not counted.
+- Usage level text: low under 40 %, normal, high from 75 %.
+
+**Known limits:** CNC state history keeps only meaningful changes, so a period when the Server itself was stopped keeps the last recorded state; history older than the CNC history retention is gone; cycle observations are not used yet (there are none in production); automatic e-mail of this report is not implemented.
+
+**Tests:** `MachineUsageReportApiTests` (exact split of a CNC and a manual Machine, full-day basis, future and invalid periods, last-poll tail, span set operations); client `MachineUsageViewModelTests` (calculation, chart scope, validation and refusal, HTML and CSV content).
+
+## Part reloads of parts already made (2026-10-07)
+
+**Problem:** an operation with reported progress (for example 20 of 35 parts) showed 20 extra `PART RELOAD` phases packed together right after now: the engine kept one production run per planned part, emptied the runs of the parts already made, and still placed a load before each empty run.
+
+**Fixed:** `TimelineCalculationEngine` builds runs only for the parts still to make. Manual loading has one load per remaining part; automatic loading every N parts first finishes the load already in progress without a new load. Loads are numbered after the loads already done (`Part reload 21/35`), and the operation start is the earliest of its load and production phases. The setup prove-out part no longer gets a load of its own either. **Test:** `TimelineCalculationEngineTests.Reported_parts_keep_their_loads_so_each_load_ahead_precedes_a_part`.
+
 ## Employee workload calculator (2026-09-28)
 
 **Owner decision (2026-09-28):** "Employees tabs in Setup. Add employee workload calculator with report." Chosen: **planned load** from the Timeline (not recorded work), shown **on screen and as a printable page**.

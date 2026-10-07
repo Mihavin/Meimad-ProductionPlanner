@@ -143,6 +143,9 @@
             <TabItem Header="Material Orders" ToolTip="Kitaron material purchase-order lines with their reported delivery status">
                 <views:MaterialOrdersView DataContext="{Binding MaterialOrders}" Margin="5" />
             </TabItem>
+            <TabItem Header="Reports" ToolTip="Machine usage per machine and overall, in hours and percent, with the daily history">
+                <views:MachineUsageView DataContext="{Binding MachineUsage}" Margin="5" />
+            </TabItem>
             <TabItem Header="Users" ToolTip="Administrators: manage user accounts, user types and permissions"
                      Visibility="{Binding CanManageUsers, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <views:UserAdministrationView DataContext="{Binding UserAdministration}" Margin="5" />
