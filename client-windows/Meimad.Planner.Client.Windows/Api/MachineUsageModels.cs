@@ -3,8 +3,9 @@ using System.Globalization;
 namespace Meimad.Planner.Client.Windows.Api;
 
 /// <summary>
-/// Recorded Machine usage from the Server (GET /api/v1/reports/machine-usage) for whole factory
-/// days; only time up to <see cref="CountedUntil"/> counts.
+/// Machine usage according to the calculated Timeline (GET /api/v1/reports/machine-usage) for whole
+/// factory days. Time before <see cref="CalculatedAt"/> is the history the Timeline shows; time after
+/// it is the Timeline forecast.
 /// </summary>
 internal sealed record MachineUsageReportInfo(
     DateOnly From,
@@ -12,36 +13,45 @@ internal sealed record MachineUsageReportInfo(
     string Basis,
     string TimeZoneId,
     DateTimeOffset CalculatedAt,
-    DateTimeOffset CountedUntil,
     MachineUsageMetricsInfo Totals,
     IReadOnlyList<MachineUsageDayInfo> Days,
     IReadOnlyList<MachineUsageRowInfo> Machines);
 
 /// <summary>
-/// Exclusive kinds of the available time: production + setup + downtime + no data + idle =
-/// available. Work outside the available time is counted apart and never raises a percentage.
+/// Exclusive kinds of the available time as the Timeline bars show them: production + setup + QC +
+/// part reload + reserved + hold + downtime + idle = available. Used time is production, setup, QC,
+/// part reload and reserved. Work outside the available time is counted apart.
 /// </summary>
 internal sealed record MachineUsageMetricsInfo(
     long AvailableSeconds,
     long ProductionSeconds,
     long SetupSeconds,
+    long QcSeconds,
+    long PartReloadSeconds,
+    long ReservedSeconds,
+    long HoldSeconds,
     long DowntimeSeconds,
-    long NoDataSeconds,
     long IdleSeconds,
     long OutsideScheduleSeconds,
     long UsedSeconds,
     decimal? UsagePercent,
     decimal? ProductionPercent,
     decimal? SetupPercent,
+    decimal? QcPercent,
+    decimal? PartReloadPercent,
+    decimal? ReservedPercent,
+    decimal? HoldPercent,
     decimal? DowntimePercent,
-    decimal? NoDataPercent,
     decimal? IdlePercent)
 {
     public string AvailableText => MachineUsageText.Hours(AvailableSeconds);
     public string ProductionText => MachineUsageText.HoursAndPercent(ProductionSeconds, ProductionPercent);
     public string SetupText => MachineUsageText.HoursAndPercent(SetupSeconds, SetupPercent);
+    public string QcText => MachineUsageText.HoursAndPercent(QcSeconds, QcPercent);
+    public string PartReloadText => MachineUsageText.HoursAndPercent(PartReloadSeconds, PartReloadPercent);
+    public string ReservedText => MachineUsageText.HoursAndPercent(ReservedSeconds, ReservedPercent);
+    public string HoldText => MachineUsageText.HoursAndPercent(HoldSeconds, HoldPercent);
     public string DowntimeText => MachineUsageText.HoursAndPercent(DowntimeSeconds, DowntimePercent);
-    public string NoDataText => MachineUsageText.HoursAndPercent(NoDataSeconds, NoDataPercent);
     public string IdleText => MachineUsageText.HoursAndPercent(IdleSeconds, IdlePercent);
     public string OutsideScheduleText => MachineUsageText.Hours(OutsideScheduleSeconds);
     public string UsedText => MachineUsageText.Hours(UsedSeconds);
@@ -59,12 +69,10 @@ internal sealed record MachineUsageRowInfo(
     string MachineId,
     string Number,
     string Name,
-    string DataSource,
     MachineUsageMetricsInfo Metrics,
     IReadOnlyList<MachineUsageDayInfo> Days)
 {
     public string DisplayName => string.IsNullOrWhiteSpace(Number) || Number == Name ? Name : $"{Number} - {Name}";
-    public string DataSourceText => MachineUsageText.DataSource(DataSource);
 }
 
 /// <summary>Display text for usage values; every usage level is spelled out, not only coloured.</summary>
@@ -90,13 +98,6 @@ internal static class MachineUsageText
         "normal" => "Normal use",
         "low" => "Low use",
         _ => "No available time"
-    };
-
-    internal static string DataSource(string source) => source switch
-    {
-        "cnc" => "CNC monitoring",
-        "manual" => "Manual reports",
-        _ => source
     };
 
     internal static string Basis(string basis) => basis switch

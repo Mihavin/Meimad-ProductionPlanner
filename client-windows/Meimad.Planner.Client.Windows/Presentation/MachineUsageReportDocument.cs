@@ -12,14 +12,17 @@ namespace Meimad.Planner.Client.Windows.Presentation;
 /// </summary>
 internal static class MachineUsageReportDocument
 {
-    /// <summary>The kinds of the history chart, bottom to top, with the functional-spec palette.</summary>
+    /// <summary>The kinds of the history chart, bottom to top, in the Timeline legend colours.</summary>
     internal static readonly IReadOnlyList<(string Name, string Color, Func<MachineUsageMetricsInfo, long> Seconds)> Kinds =
     [
         ("Production", "#1E88E5", metrics => metrics.ProductionSeconds),
         ("Machine setup", "#FBC02D", metrics => metrics.SetupSeconds),
+        ("QC", "#43A047", metrics => metrics.QcSeconds),
+        ("Part reload", "#7B1FA2", metrics => metrics.PartReloadSeconds),
+        ("Reserved", "#F57C00", metrics => metrics.ReservedSeconds),
+        ("Hold", "#7E57C2", metrics => metrics.HoldSeconds),
         ("Downtime", "#C62828", metrics => metrics.DowntimeSeconds),
-        ("Idle", "#9E9E9E", metrics => metrics.IdleSeconds),
-        ("No data", "#E0E0E0", metrics => metrics.NoDataSeconds)
+        ("Idle", "#E0E0E0", metrics => metrics.IdleSeconds)
     ];
 
     internal static string Build(MachineUsageReportInfo report, Func<string, string> translate, bool rightToLeft)
@@ -28,6 +31,7 @@ internal static class MachineUsageReportDocument
         static string E(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
         var culture = CultureInfo.CurrentCulture;
         var totals = report.Totals;
+        var today = DateOnly.FromDateTime(report.CalculatedAt.ToLocalTime().DateTime);
         var html = new StringBuilder();
         html.Append($$"""
             <!doctype html>
@@ -65,32 +69,33 @@ internal static class MachineUsageReportDocument
             <h1>{{T("Machine usage")}}</h1>
             <p class="meta">{{T("Period")}}: {{report.From.ToString("d", culture)}} - {{report.To.ToString("d", culture)}}.
             {{T("Available time")}}: {{T(MachineUsageText.Basis(report.Basis))}}.
-            {{T("Counted until")}} {{E(report.CountedUntil.ToLocalTime().ToString("g", culture))}}.
             {{T("Calculated at")}} {{E(report.CalculatedAt.ToLocalTime().ToString("g", culture))}}.</p>
-            <p class="meta">{{T("Usage is production plus setup over the available time. Production is the CNC running state on monitored machines and the reported production sessions on the others; setup runs from the Offset Loader or reported setup run to Send to QC; no data is time a monitored machine sent no state; idle is the rest. Work outside the available time is shown apart and does not raise the percentages.")}}</p>
+            <p class="meta">{{T("Usage follows the Timeline: the time its bars occupy each machine (production, setup, QC, part reload and reserved) over the machine's working time. Before now the Timeline shows the recorded actual work as production; after now it shows the forecast. Hold, downtime and idle time are not usage. Work outside the working time is shown apart and does not raise the percentages.")}}</p>
             <h2>{{T("Overall performance")}}</h2>
             <div class="kpis">
               <div class="kpi">{{T("Usage")}}<b>{{E(totals.UsageText)}}</b>{{E(totals.UsedText)}} / {{E(totals.AvailableText)}}</div>
               <div class="kpi">{{T("Production")}}<b>{{E(MachineUsageText.Hours(totals.ProductionSeconds))}}</b>{{E(MachineUsageText.Percent(totals.ProductionPercent))}}</div>
               <div class="kpi">{{T("Total setup time")}}<b>{{E(MachineUsageText.Hours(totals.SetupSeconds))}}</b>{{E(MachineUsageText.Percent(totals.SetupPercent))}}</div>
               <div class="kpi">{{T("Total idle time")}}<b>{{E(MachineUsageText.Hours(totals.IdleSeconds))}}</b>{{E(MachineUsageText.Percent(totals.IdlePercent))}}</div>
+              <div class="kpi">{{T("QC")}}<b>{{E(MachineUsageText.Hours(totals.QcSeconds))}}</b>{{E(MachineUsageText.Percent(totals.QcPercent))}}</div>
+              <div class="kpi">{{T("Part reload")}}<b>{{E(MachineUsageText.Hours(totals.PartReloadSeconds))}}</b>{{E(MachineUsageText.Percent(totals.PartReloadPercent))}}</div>
               <div class="kpi">{{T("Downtime")}}<b>{{E(MachineUsageText.Hours(totals.DowntimeSeconds))}}</b>{{E(MachineUsageText.Percent(totals.DowntimePercent))}}</div>
-              <div class="kpi">{{T("No data")}}<b>{{E(MachineUsageText.Hours(totals.NoDataSeconds))}}</b>{{E(MachineUsageText.Percent(totals.NoDataPercent))}}</div>
+              <div class="kpi">{{T("Hold")}}<b>{{E(MachineUsageText.Hours(totals.HoldSeconds))}}</b>{{E(MachineUsageText.Percent(totals.HoldPercent))}}</div>
               <div class="kpi">{{T("Outside schedule")}}<b>{{E(totals.OutsideScheduleText)}}</b></div>
             </div>
             <h2>{{T("Usage per machine")}}</h2>
             """);
-        AppendMetricsHeader(html, T, T("Machine"), T("Data source"));
+        AppendMetricsHeader(html, T, T("Machine"));
         foreach (var row in report.Machines)
-            AppendMetricsRow(html, T, E(row.DisplayName), T(row.DataSourceText), row.Metrics, total: false);
-        AppendMetricsRow(html, T, T("All machines"), string.Empty, totals, total: true);
+            AppendMetricsRow(html, T, E(row.DisplayName), row.Metrics, total: false);
+        AppendMetricsRow(html, T, T("All machines"), totals, total: true);
         html.Append("</table>");
 
         html.Append($"<h2>{T("Daily history")}</h2>");
-        html.Append(Chart(report.Days, T));
-        AppendMetricsHeader(html, T, T("Day"), null);
+        html.Append(Chart(report.Days, today, T));
+        AppendMetricsHeader(html, T, T("Day"));
         foreach (var day in report.Days)
-            AppendMetricsRow(html, T, E(day.DateText), null, day.Metrics, total: false);
+            AppendMetricsRow(html, T, E(day.DateText), day.Metrics, total: false);
         html.Append("</table>");
 
         if (report.Days.Count > 1)
@@ -99,7 +104,7 @@ internal static class MachineUsageReportDocument
             foreach (var row in report.Machines)
             {
                 html.Append($"""<div class="machine"><h3>{E(row.DisplayName)} - {E(row.Metrics.UsageText)} <span class="level {row.Metrics.UsageLevel}">{T(row.Metrics.UsageLevelText)}</span></h3>""");
-                html.Append(Chart(row.Days, T));
+                html.Append(Chart(row.Days, today, T));
                 html.Append("</div>");
             }
         }
@@ -107,30 +112,28 @@ internal static class MachineUsageReportDocument
         return html.ToString();
     }
 
-    private static void AppendMetricsHeader(StringBuilder html, Func<string, string> t, string first, string? second)
-    {
-        html.Append($"<table><tr><th>{first}</th>");
-        if (second is not null) html.Append($"<th>{second}</th>");
-        html.Append($"<th>{t("Available time")}</th><th>{t("Production")}</th><th>{t("Machine setup")}</th><th>{t("Downtime")}</th><th>{t("No data")}</th><th>{t("Idle")}</th><th>{t("Outside schedule")}</th><th>{t("Used")}</th><th>{t("Usage")}</th><th>{t("Level")}</th></tr>");
-    }
+    private static void AppendMetricsHeader(StringBuilder html, Func<string, string> t, string first) =>
+        html.Append($"<table><tr><th>{first}</th><th>{t("Available time")}</th><th>{t("Production")}</th><th>{t("Machine setup")}</th><th>{t("QC")}</th><th>{t("Part reload")}</th><th>{t("Reserved")}</th><th>{t("Hold")}</th><th>{t("Downtime")}</th><th>{t("Idle")}</th><th>{t("Outside schedule")}</th><th>{t("Used")}</th><th>{t("Usage")}</th><th>{t("Level")}</th></tr>");
 
     private static void AppendMetricsRow(
-        StringBuilder html, Func<string, string> t, string first, string? second, MachineUsageMetricsInfo m, bool total)
+        StringBuilder html, Func<string, string> t, string first, MachineUsageMetricsInfo m, bool total)
     {
         static string E(string value) => WebUtility.HtmlEncode(value);
         html.Append(total ? "<tr class=\"total\">" : "<tr>");
-        html.Append($"<td>{first}</td>");
-        if (second is not null) html.Append($"<td>{second}</td>");
         html.Append($"""
-            <td class="number">{E(m.AvailableText)}</td><td class="number">{E(m.ProductionText)}</td><td class="number">{E(m.SetupText)}</td>
-            <td class="number">{E(m.DowntimeText)}</td><td class="number">{E(m.NoDataText)}</td><td class="number">{E(m.IdleText)}</td>
-            <td class="number">{E(m.OutsideScheduleText)}</td><td class="number">{E(m.UsedText)}</td>
+            <td>{first}</td><td class="number">{E(m.AvailableText)}</td><td class="number">{E(m.ProductionText)}</td>
+            <td class="number">{E(m.SetupText)}</td><td class="number">{E(m.QcText)}</td><td class="number">{E(m.PartReloadText)}</td>
+            <td class="number">{E(m.ReservedText)}</td><td class="number">{E(m.HoldText)}</td><td class="number">{E(m.DowntimeText)}</td>
+            <td class="number">{E(m.IdleText)}</td><td class="number">{E(m.OutsideScheduleText)}</td><td class="number">{E(m.UsedText)}</td>
             <td class="number {m.UsageLevel}">{E(m.UsageText)}</td><td class="level {m.UsageLevel}">{t(m.UsageLevelText)}</td></tr>
             """);
     }
 
-    /// <summary>Stacked hours per day with the usage percentage written above each bar.</summary>
-    internal static string Chart(IReadOnlyList<MachineUsageDayInfo> days, Func<string, string> t)
+    /// <summary>
+    /// Stacked hours per day with the usage percentage written above each bar and a "Now" line
+    /// between the history and the forecast days.
+    /// </summary>
+    internal static string Chart(IReadOnlyList<MachineUsageDayInfo> days, DateOnly today, Func<string, string> t)
     {
         if (days.Count == 0) return string.Empty;
         const double height = 180, top = 22, bottom = 34, left = 44, right = 8;
@@ -141,7 +144,6 @@ internal static class MachineUsageReportDocument
         double Y(double hours) => top + height * (1 - hours / maxHours);
         var svg = new StringBuilder();
         svg.Append(CultureInfo.InvariantCulture, $"""<svg xmlns="http://www.w3.org/2000/svg" width="{width:0}" height="{top + height + bottom:0}" role="img" aria-label="{t("Daily history")}">""");
-        svg.Append("""<defs><pattern id="nodata" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#E0E0E0"/><line x1="0" y1="0" x2="0" y2="6" stroke="#9E9E9E" stroke-width="2"/></pattern></defs>""");
         for (var tick = 0; tick <= 4; tick++)
         {
             var hours = maxHours * tick / 4;
@@ -158,19 +160,23 @@ internal static class MachineUsageReportDocument
             {
                 var hours = seconds(day.Metrics) / 3600.0;
                 if (hours <= 0) continue;
-                var fill = name == "No data" ? "url(#nodata)" : color;
                 svg.Append(CultureInfo.InvariantCulture,
-                    $"""<rect x="{x:0.#}" y="{Y(stacked + hours):0.#}" width="{barWidth:0.#}" height="{Y(stacked) - Y(stacked + hours):0.#}" fill="{fill}" stroke="#555" stroke-width="0.5"><title>{WebUtility.HtmlEncode(day.DateText)}: {t(name)} {hours:0.0} h</title></rect>""");
+                    $"""<rect x="{x:0.#}" y="{Y(stacked + hours):0.#}" width="{barWidth:0.#}" height="{Y(stacked) - Y(stacked + hours):0.#}" fill="{color}" stroke="#555" stroke-width="0.5"><title>{WebUtility.HtmlEncode(day.DateText)}: {t(name)} {hours:0.0} h</title></rect>""");
                 stacked += hours;
             }
             svg.Append(CultureInfo.InvariantCulture,
                 $"""<text x="{x + barWidth / 2:0.#}" y="{Y(stacked) - 4:0.#}" font-size="10" text-anchor="middle">{WebUtility.HtmlEncode(day.Metrics.UsageText)}</text>""");
             svg.Append(CultureInfo.InvariantCulture,
                 $"""<text x="{x + barWidth / 2:0.#}" y="{top + height + 14:0.#}" font-size="10" text-anchor="middle">{WebUtility.HtmlEncode(day.Date.ToString("dd/MM", CultureInfo.CurrentCulture))}</text>""");
+            if (day.Date == today)
+            {
+                var nowX = left + slot * index;
+                svg.Append(CultureInfo.InvariantCulture,
+                    $"""<line x1="{nowX:0.#}" x2="{nowX:0.#}" y1="{top - 6:0.#}" y2="{top + height:0.#}" stroke="#C62828" stroke-dasharray="4 3"/><text x="{nowX + 3:0.#}" y="{top + height + 28:0.#}" font-size="10" fill="#C62828">{t("Today")} - {t("forecast after now")}</text>""");
+            }
         }
         svg.Append("</svg>");
-        var legend = string.Concat(Kinds.Select(kind =>
-            $"""<span><i style="background:{(kind.Name == "No data" ? "repeating-linear-gradient(45deg,#E0E0E0 0 3px,#9E9E9E 3px 5px)" : kind.Color)}"></i>{t(kind.Name)}</span>"""));
+        var legend = string.Concat(Kinds.Select(kind => $"""<span><i style="background:{kind.Color}"></i>{t(kind.Name)}</span>"""));
         return $"""<div class="legend">{legend}<span>{t("Usage % above each bar")}</span></div>{svg}""";
     }
 }

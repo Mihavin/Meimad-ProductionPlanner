@@ -2,7 +2,6 @@ using System.Net;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.Reports;
 using Meimad.Planner.Server.Application.Timeline;
-using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Persistence;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
@@ -13,75 +12,61 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 namespace Meimad.Planner.Server.Tests.Reports;
 
 /// <summary>
-/// Machine usage report: recorded time of each Machine in its working calendar, split into
-/// production, setup, downtime, no CNC data and idle, per Machine, per day and for the factory.
+/// Machine usage report: each Machine's time as the calculated Timeline shows it, split into
+/// production, setup, QC, part reload, reserved, hold, downtime and idle inside its working calendar.
 /// </summary>
 public sealed class MachineUsageReportApiTests
 {
     private const string Report = "/api/v1/reports/machine-usage";
 
     [Fact]
-    public async Task Report_splits_scheduled_time_into_production_setup_downtime_no_data_and_idle()
+    public async Task Report_counts_the_timeline_bars_inside_the_machine_calendar()
     {
         await RunAsync(async (application, client) =>
         {
             await SeedAsync(application.Services);
+            using var timeline = await client.GetAsync("/api/v1/timeline?from=2026-08-10T00:00:00Z&to=2026-08-12T00:00:00Z");
+            var timelineBody = await timeline.Content.ReadAsStringAsync();
+            Assert.True(timeline.StatusCode == HttpStatusCode.OK, timelineBody);
+
             using var response = await client.GetAsync($"{Report}?from=2026-08-11&to=2026-08-11");
             var body = await response.Content.ReadAsStringAsync();
             Assert.True(response.StatusCode == HttpStatusCode.OK, body);
             using var document = JsonDocument.Parse(body);
-            var root = document.RootElement;
-            Assert.Equal("schedule", root.GetProperty("basis").GetString());
-            var machines = root.GetProperty("machines").EnumerateArray()
-                .ToDictionary(value => value.GetProperty("number").GetString()!, value => value);
+            var machine = Assert.Single(document.RootElement.GetProperty("machines").EnumerateArray());
+            Assert.Equal("M-1", machine.GetProperty("number").GetString());
 
-            // 08:00-18:00 working time. CNC: running 07-09 and 10-12, offline 12-13, setup 08:30-09:30,
-            // downtime 14-15. Running 07-08 is before the shift; running during setup is setup.
-            var cnc = machines["M-1"];
-            Assert.Equal("cnc", cnc.GetProperty("dataSource").GetString());
-            AssertMetrics(cnc.GetProperty("metrics"),
-                available: 36000, production: 9000, setup: 3600, downtime: 3600, noData: 3600, idle: 16200, outside: 3600);
-            Assert.Equal(35.0m, cnc.GetProperty("metrics").GetProperty("usagePercent").GetDecimal());
-
-            // Manual: setup reported 08-09 (to Send to QC), production session 10-14, a session opened
-            // at 14:00 whose run moved to another Machine at 15:00, and a setup started at 16:00 still
-            // in progress at midnight (16-18 inside, 18-24 outside the shift).
-            var manual = machines["M-2"];
-            Assert.Equal("manual", manual.GetProperty("dataSource").GetString());
-            AssertMetrics(manual.GetProperty("metrics"),
-                available: 36000, production: 18000, setup: 10800, downtime: 0, noData: 0, idle: 7200, outside: 21600);
-            Assert.Equal(80.0m, manual.GetProperty("metrics").GetProperty("usagePercent").GetDecimal());
-
-            var totals = root.GetProperty("totals");
-            AssertMetrics(totals,
-                available: 72000, production: 27000, setup: 14400, downtime: 3600, noData: 3600, idle: 23400, outside: 25200);
-            Assert.Equal(57.5m, totals.GetProperty("usagePercent").GetDecimal());
-            var day = Assert.Single(root.GetProperty("days").EnumerateArray());
+            // 08:00-18:00 working time. The Timeline places OP10 setup 08:00-08:30 and its two
+            // 30-minute parts 08:30-09:30, OP20's two 15-minute parts 09:30-10:00, and the
+            // downtime 10:00-10:30; the rest of the day is idle.
+            var metrics = machine.GetProperty("metrics");
+            AssertMetrics(metrics, timelineBody,
+                available: 36000, production: 5400, setup: 1800, qc: 0, partReload: 0, hold: 0, downtime: 1800, idle: 27000, outside: 0);
+            Assert.Equal(20.0m, metrics.GetProperty("usagePercent").GetDecimal());
+            Assert.Equal(7200, metrics.GetProperty("usedSeconds").GetInt64());
+            AssertMetrics(document.RootElement.GetProperty("totals"), timelineBody,
+                available: 36000, production: 5400, setup: 1800, qc: 0, partReload: 0, hold: 0, downtime: 1800, idle: 27000, outside: 0);
+            var day = Assert.Single(document.RootElement.GetProperty("days").EnumerateArray());
             Assert.Equal("2026-08-11", day.GetProperty("date").GetString());
-            Assert.Equal(41400, day.GetProperty("metrics").GetProperty("usedSeconds").GetInt64());
 
-            // Over whole days the manual Machine has 24 h, and nothing is outside it.
-            using var fullDay = await client.GetAsync($"{Report}?from=2026-08-11&to=2026-08-11&basis=fullDay");
-            using var fullDocument = JsonDocument.Parse(await fullDay.Content.ReadAsStringAsync());
-            var fullManual = fullDocument.RootElement.GetProperty("machines").EnumerateArray()
-                .Single(value => value.GetProperty("number").GetString() == "M-2");
-            AssertMetrics(fullManual.GetProperty("metrics"),
-                available: 86400, production: 18000, setup: 32400, downtime: 0, noData: 0, idle: 36000, outside: 0);
+            // The day before has no working time: the recorded actual work the Timeline shows there
+            // (09:00-12:00) is outside the schedule, and over the whole day it is production.
+            using var history = await client.GetAsync($"{Report}?from=2026-08-10&to=2026-08-10");
+            using var historyDocument = JsonDocument.Parse(await history.Content.ReadAsStringAsync());
+            AssertMetrics(historyDocument.RootElement.GetProperty("totals"), timelineBody,
+                available: 0, production: 0, setup: 0, qc: 0, partReload: 0, hold: 0, downtime: 0, idle: 0, outside: 10800);
+            using var fullDay = await client.GetAsync($"{Report}?from=2026-08-10&to=2026-08-10&basis=fullDay");
+            using var fullDayDocument = JsonDocument.Parse(await fullDay.Content.ReadAsStringAsync());
+            AssertMetrics(fullDayDocument.RootElement.GetProperty("totals"), timelineBody,
+                available: 86400, production: 10800, setup: 0, qc: 0, partReload: 0, hold: 0, downtime: 0, idle: 75600, outside: 0);
         });
     }
 
     [Fact]
-    public async Task Report_counts_only_time_until_now_and_rejects_invalid_periods()
+    public async Task Report_rejects_invalid_periods()
     {
-        await RunAsync(async (application, client) =>
+        await RunAsync(async (_, client) =>
         {
-            await SeedAsync(application.Services);
-            using var future = await client.GetAsync($"{Report}?from=2026-08-12&to=2026-08-13");
-            using var futureDocument = JsonDocument.Parse(await future.Content.ReadAsStringAsync());
-            Assert.Equal(0, futureDocument.RootElement.GetProperty("totals").GetProperty("availableSeconds").GetInt64());
-            Assert.Equal(JsonValueKind.Null, futureDocument.RootElement.GetProperty("totals").GetProperty("usagePercent").ValueKind);
-            Assert.Equal(2, futureDocument.RootElement.GetProperty("days").GetArrayLength());
-
             foreach (var query in new[]
                      {
                          "from=2026-08-12&to=2026-08-11", "from=2026-05-01&to=2026-08-11",
@@ -95,21 +80,41 @@ public sealed class MachineUsageReportApiTests
     }
 
     [Fact]
-    public async Task A_cnc_state_holds_until_the_last_poll_and_later_time_has_no_data()
+    public void Each_bar_kind_counts_once_inside_the_period()
     {
-        var repository = new FakeRepository(new MachineUsageSource(
-            [new MachineUsageSourceMachine(Machine("m-1", "M-1"), true, At("12:00"))],
-            null, null, [], [],
-            [new MachineStateChange("m-1", At("08:00"), "ONLINE", "ACTIVE")],
-            [], []));
-        var service = new MachineUsageReportService(repository, new TimelineOptions { TimeZoneId = "UTC" },
-            new FixedTimeProvider(DateTimeOffset.Parse("2026-08-12T00:00:00Z")));
+        static TimelineProjectionPhase Phase(string type, string start, string end) => new(type, At(start), At(end), null);
+        static TimelineProjectionInterval Interval(string type, string start, string end, string? timingKind = null,
+            IReadOnlyList<TimelineProjectionPhase>? phases = null) =>
+            new(type, "m-1", null, null, null, null, null, null, At(start), At(end), null, timingKind, Phases: phases);
+        var machine = new TimelineProjectionMachine("m-1", "M-1", "Mill",
+        [
+            // Actual history has no phases: all of it is production (07:00 is before the period).
+            Interval("actual_history", "07:00", "09:00", "actual"),
+            // A forecast block: setup, a part reload, production and QC; the gap 11:30-12:00 is not used.
+            Interval("operation", "09:00", "13:00", "forecast",
+            [
+                Phase("setup", "09:00", "10:00"), Phase("loadunload", "10:00", "10:15"),
+                Phase("production", "10:15", "11:30"), Phase("qa", "12:00", "12:30"), Phase("production", "12:30", "13:00")
+            ]),
+            // A paused block: its waiting phase is hold.
+            Interval("operation", "14:00", "16:00", "hold", [Phase("waiting", "14:00", "16:00")]),
+            // Downtime under the setup counts as setup, the rest as downtime.
+            Interval("downtime", "09:30", "10:00"),
+            Interval("downtime", "16:00", "17:00"),
+            // Blocked and waiting time is empty space on the Timeline.
+            Interval("waiting", "17:00", "18:00", "blocked")
+        ]);
 
-        var report = await service.CalculateAsync(new DateOnly(2026, 8, 11), new DateOnly(2026, 8, 11), null);
+        var kinds = MachineUsageReportService.Classify(machine, [(At("08:00"), At("18:00"))]);
 
-        var metrics = Assert.Single(report.Machines).Metrics;
-        Assert.Equal((36000L, 14400L, 21600L, 0L), (metrics.AvailableSeconds, metrics.ProductionSeconds, metrics.NoDataSeconds, metrics.IdleSeconds));
-        Assert.Equal(40.0m, metrics.UsagePercent);
+        long Seconds(MachineTimeKind kind) => Spans.Seconds(kinds[kind]);
+        Assert.Equal(3600 + 4500 + 1800, Seconds(MachineTimeKind.Production));
+        Assert.Equal(3600, Seconds(MachineTimeKind.Setup));
+        Assert.Equal(900, Seconds(MachineTimeKind.PartReload));
+        Assert.Equal(1800, Seconds(MachineTimeKind.Qc));
+        Assert.Equal(7200, Seconds(MachineTimeKind.Hold));
+        Assert.Equal(3600, Seconds(MachineTimeKind.Downtime));
+        Assert.Equal(0, Seconds(MachineTimeKind.Reserved));
     }
 
     [Fact]
@@ -125,21 +130,20 @@ public sealed class MachineUsageReportApiTests
     }
 
     private static void AssertMetrics(
-        JsonElement metrics, long available, long production, long setup, long downtime, long noData, long idle, long outside)
+        JsonElement metrics, string timeline, long available, long production, long setup, long qc, long partReload,
+        long hold, long downtime, long idle, long outside)
     {
-        Assert.Equal(
-            (available, production, setup, downtime, noData, idle, outside),
+        Assert.True(
+            (available, production, setup, qc, partReload, hold, downtime, idle, outside) ==
             (metrics.GetProperty("availableSeconds").GetInt64(), metrics.GetProperty("productionSeconds").GetInt64(),
-             metrics.GetProperty("setupSeconds").GetInt64(), metrics.GetProperty("downtimeSeconds").GetInt64(),
-             metrics.GetProperty("noDataSeconds").GetInt64(), metrics.GetProperty("idleSeconds").GetInt64(),
-             metrics.GetProperty("outsideScheduleSeconds").GetInt64()));
+             metrics.GetProperty("setupSeconds").GetInt64(), metrics.GetProperty("qcSeconds").GetInt64(),
+             metrics.GetProperty("partReloadSeconds").GetInt64(), metrics.GetProperty("holdSeconds").GetInt64(),
+             metrics.GetProperty("downtimeSeconds").GetInt64(), metrics.GetProperty("idleSeconds").GetInt64(),
+             metrics.GetProperty("outsideScheduleSeconds").GetInt64()),
+            $"Report {metrics} for Timeline {timeline}");
     }
 
     private static DateTimeOffset At(string time) => DateTimeOffset.Parse($"2026-08-11T{time}:00Z");
-
-    private static TimelineSourceMachine Machine(string id, string number) => new(
-        id, number, number, "UTC",
-        """{"availability":[{"startsAt":"2026-08-11T08:00:00Z","endsAt":"2026-08-11T18:00:00Z"}]}""", [], false);
 
     private static async Task SeedAsync(IServiceProvider services)
     {
@@ -150,48 +154,39 @@ public sealed class MachineUsageReportApiTests
             INSERT INTO working_calendars (id, name, time_zone_id, calendar_json)
             VALUES ('calendar-1', 'Day shift', 'UTC',
                     '{"availability":[{"startsAt":"2026-08-11T08:00:00Z","endsAt":"2026-08-11T18:00:00Z"}]}');
+            INSERT INTO application_settings (key, value)
+            VALUES ('timeline.setup_calendar_json',
+                    '{"availability":[{"startsAt":"2026-08-11T08:00:00Z","endsAt":"2026-08-11T18:00:00Z"}]}');
             INSERT INTO machines (id, number, name, machine_type, working_calendar_id, status, is_active)
-            VALUES ('machine-cnc', 'M-1', 'CNC Mill', 'mill', 'calendar-1', 'active', 1),
-                   ('machine-manual', 'M-2', 'Manual Lathe', 'mill', 'calendar-1', 'active', 1);
-            INSERT INTO machine_connections (
-                id, machine_id, adapter_type, enabled, connection_status, polling_interval_ms,
-                connection_timeout_ms, maximum_reconnect_backoff_ms, allow_read, allow_write,
-                configuration_json, raw_telemetry_retention_days, version, created_at, updated_at)
-            VALUES ('connection-cnc', 'machine-cnc', 'HAAS_NGC', 0, 'DISABLED', 1000,
-                    3000, 30000, 1, 0, '{}', 14, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z');
-            INSERT INTO machine_state_history (id, machine_id, connection_id, observed_at, change_kind, snapshot_json)
-            VALUES
-                ('h0', 'machine-cnc', 'connection-cnc', '2026-08-10T20:00:00.0000000+00:00', 'MEANINGFUL_CHANGE', '{"connectionStatus":"ONLINE","machineState":{"value":"STOPPED"}}'),
-                ('h1', 'machine-cnc', 'connection-cnc', '2026-08-11T07:00:00.0000000+00:00', 'MEANINGFUL_CHANGE', '{"connectionStatus":"ONLINE","machineState":{"value":"ACTIVE"}}'),
-                ('h2', 'machine-cnc', 'connection-cnc', '2026-08-11T09:00:00.0000000+00:00', 'MEANINGFUL_CHANGE', '{"connectionStatus":"DEGRADED","machineState":{"value":"STOPPED"}}'),
-                ('h3', 'machine-cnc', 'connection-cnc', '2026-08-11T10:00:00.0000000+00:00', 'MEANINGFUL_CHANGE', '{"connectionStatus":"ONLINE","machineState":{"value":"ACTIVE"}}'),
-                ('h4', 'machine-cnc', 'connection-cnc', '2026-08-11T12:00:00.0000000+00:00', 'MEANINGFUL_CHANGE', '{"connectionStatus":"OFFLINE","machineState":{"value":"ACTIVE"}}'),
-                ('h5', 'machine-cnc', 'connection-cnc', '2026-08-11T13:00:00.0000000+00:00', 'MEANINGFUL_CHANGE', '{"connectionStatus":"ONLINE","machineState":{"value":"READY"}}');
-            INSERT INTO downtimes (id, machine_id, starts_at, ends_at, reason, status)
-            VALUES ('downtime-1', 'machine-cnc', '2026-08-11T14:00:00.0000000+00:00', '2026-08-11T15:00:00.0000000+00:00', 'Inspection', 'planned');
+            VALUES ('machine-1', 'M-1', 'Mill One', 'mill', 'calendar-1', 'active', 1);
+            INSERT INTO employee_resources (id, employee_number, name, resource_type, first_name, last_name,
+                skills_json, assigned_calendar_id, is_active)
+            VALUES ('resource-setup', 'E-SETUP', 'Setup Worker', 'setup_worker', 'Setup', 'Worker', '["machine-1"]', 'calendar-1', 1),
+                   ('resource-qa', 'E-QA', 'QA Worker', 'qa_worker', 'QA', 'Worker', '[]', 'calendar-1', 1);
             INSERT INTO cases (id, part_number, name, working_folder_path) VALUES ('case-1', 'PN-1', 'Usage Part', 'C:\Cases\PN-1');
-            INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity) VALUES ('batch-1', 'case-1', 'B-1', 'waiting', 4);
-            INSERT INTO case_operations (id, case_id, operation_number, route_position, name, required_machine_type, setup_seconds, cycle_seconds, dependency_type)
-            VALUES ('case-op-1', 'case-1', 10, 0, 'Mill', 'mill', 1800, 600, 'independent');
-            INSERT INTO batch_operations (id, production_batch_id, source_case_operation_id, operation_number, route_position, name,
-                required_machine_type, setup_seconds, cycle_seconds, status, dependency_type)
-            VALUES ('op-1', 'batch-1', 'case-op-1', 10, 0, 'Mill', 'mill', 1800, 600, 'in_progress', 'independent'),
-                   ('op-2', 'batch-1', 'case-op-1', 20, 1, 'Mill', 'mill', 1800, 600, 'in_progress', 'independent'),
-                   ('op-3', 'batch-1', 'case-op-1', 30, 2, 'Mill', 'mill', 1800, 600, 'in_progress', 'independent'),
-                   ('op-4', 'batch-1', 'case-op-1', 40, 3, 'Mill', 'mill', 1800, 600, 'in_progress', 'independent');
-            INSERT INTO production_runs (id, status, legacy_batch_operation_id)
-            VALUES ('run-cnc', 'PLANNED', 'op-1'), ('run-manual', 'PLANNED', 'op-2'), ('run-open', 'PLANNED', 'op-3'), ('run-moved', 'PLANNED', 'op-4');
-            INSERT INTO production_run_workflow_events (id, production_run_id, machine_id, event_type, source, source_event_id, server_received_at, metadata_json)
-            VALUES
-                ('e1', 'run-cnc', 'machine-cnc', 'OFFSET_LOADER_COMPLETED', 'CNC', 'olc-1', '2026-08-11T08:30:00.0000000+00:00', '{}'),
-                ('e2', 'run-cnc', 'machine-cnc', 'SEND_TO_QC', 'TABLET', 'qc-1', '2026-08-11T09:30:00.0000000+00:00', '{}'),
-                ('e3', 'run-manual', 'machine-manual', 'MANUAL_SETUP_RUN', 'PLANNER_MANUAL', 'm-1', '2026-08-11T08:00:00.0000000+00:00', '{}'),
-                ('e4', 'run-manual', 'machine-manual', 'SEND_TO_QC', 'PLANNER_MANUAL', 'm-2', '2026-08-11T09:00:00.0000000+00:00', '{}'),
-                ('e5', 'run-manual', 'machine-manual', 'PRODUCTION_SESSION_OPENED', 'PLANNER_MANUAL', 'm-3', '2026-08-11T10:00:00.0000000+00:00', '{}'),
-                ('e6', 'run-manual', 'machine-manual', 'PRODUCTION_SESSION_CLOSED', 'PLANNER_MANUAL', 'm-4', '2026-08-11T14:00:00.0000000+00:00', '{"producedQuantity":4}'),
-                ('e7', 'run-open', 'machine-manual', 'MANUAL_SETUP_RUN', 'PLANNER_MANUAL', 'm-5', '2026-08-11T16:00:00.0000000+00:00', '{}'),
-                ('e8', 'run-moved', 'machine-manual', 'PRODUCTION_SESSION_OPENED', 'PLANNER_MANUAL', 'm-6', '2026-08-11T14:00:00.0000000+00:00', '{}'),
-                ('e9', 'run-moved', 'machine-cnc', 'SEND_TO_QC', 'TABLET', 'qc-2', '2026-08-11T15:00:00.0000000+00:00', '{}');
+            INSERT INTO orders (id, case_id, order_reference, quantity, work_finish_date, status)
+            VALUES ('order-1', 'case-1', 'SO-10', 2, '2026-08-12', 'active');
+            INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
+            VALUES ('batch-1', 'case-1', 'B-1', 'waiting', 2), ('batch-old', 'case-1', 'B-0', 'complete', 2);
+            INSERT INTO batch_allocations (id, production_batch_id, allocation_type, order_id, quantity)
+            VALUES ('allocation-1', 'batch-1', 'order', 'order-1', 2);
+            INSERT INTO case_operations (id, case_id, operation_number, route_position, name, required_machine_type,
+                setup_seconds, cycle_seconds, dependency_type, predecessor_case_operation_id)
+            VALUES ('case-op-1', 'case-1', 10, 0, 'First', 'mill', 1800, 1800, 'independent', NULL),
+                   ('case-op-2', 'case-1', 20, 1, 'Second', 'mill', 0, 900, 'sequential', 'case-op-1');
+            INSERT INTO batch_operations (id, production_batch_id, source_case_operation_id, operation_number, route_position,
+                name, required_machine_type, setup_seconds, cycle_seconds, status, dependency_type, predecessor_source_case_operation_id)
+            VALUES ('op-1', 'batch-1', 'case-op-1', 10, 0, 'First', 'mill', 1800, 1800, 'not_started', 'independent', NULL),
+                   ('op-2', 'batch-1', 'case-op-2', 20, 1, 'Second', 'mill', 0, 900, 'not_started', 'sequential', 'case-op-1');
+            INSERT INTO batch_operations (id, production_batch_id, source_case_operation_id, operation_number, route_position,
+                name, required_machine_type, setup_seconds, cycle_seconds, status, dependency_type,
+                actual_start, actual_end, actual_machine_id)
+            VALUES ('op-old', 'batch-old', 'case-op-1', 10, 0, 'First', 'mill', 1800, 1800, 'completed', 'independent',
+                    '2026-08-10T09:00:00.0000000+00:00', '2026-08-10T12:00:00.0000000+00:00', 'machine-1');
+            INSERT INTO machine_assignments (id, batch_operation_id, machine_id, backlog_position)
+            VALUES ('assignment-1', 'op-1', 'machine-1', 0), ('assignment-2', 'op-2', 'machine-1', 1);
+            INSERT INTO downtimes (id, machine_id, starts_at, ends_at, reason, status)
+            VALUES ('downtime-1', 'machine-1', '2026-08-11T10:00:00.0000000+00:00', '2026-08-11T10:30:00.0000000+00:00', 'Inspection', 'planned');
             """;
         await command.ExecuteNonQueryAsync();
     }
@@ -208,7 +203,7 @@ public sealed class MachineUsageReportApiTests
                 webHost.ConfigureServices(services =>
                 {
                     services.RemoveAll<TimeProvider>();
-                    services.AddSingleton<TimeProvider>(new FixedTimeProvider(DateTimeOffset.Parse("2026-08-12T00:00:00Z")));
+                    services.AddSingleton<TimeProvider>(new FixedTimeProvider(DateTimeOffset.Parse("2026-08-11T08:00:00Z")));
                 });
             });
         try
@@ -225,12 +220,6 @@ public sealed class MachineUsageReportApiTests
             try { if (Directory.Exists(directoryPath)) Directory.Delete(directoryPath, recursive: true); }
             catch (IOException) { } // A pooled handle may still hold the file; the temp folder is disposable.
         }
-    }
-
-    private sealed class FakeRepository(MachineUsageSource source) : IMachineUsageRepository
-    {
-        public Task<MachineUsageSource> ReadAsync(DateTimeOffset from, DateTimeOffset to, DateTimeOffset now, CancellationToken cancellationToken) =>
-            Task.FromResult(source);
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider

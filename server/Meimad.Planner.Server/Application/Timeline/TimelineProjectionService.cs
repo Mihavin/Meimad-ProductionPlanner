@@ -212,15 +212,27 @@ internal sealed class TimelineProjectionService
             }
         }
 
+        var calendars = new List<TimelineMachineCalendar>();
         var masterAvailability = source.MasterCalendarJson is null ? null : ReadAvailability(
             source.MasterCalendarJson, source.MasterCalendarTimeZoneId, horizonStart, horizonEnd,
             "Israel Master Calendar", mappingConflicts, [], source.Holidays);
-        var machineWindows = MachineWorkingWindows(
-            source.Machines, source.MasterCalendarJson, source.MasterCalendarTimeZoneId, source.Holidays,
-            horizonStart, horizonEnd, mappingConflicts, masterAvailability);
-        var calendars = source.Machines
-            .Select(machine => new TimelineMachineCalendar(machine.MachineId, machineWindows[machine.MachineId], machine.SkillTokens))
-            .ToList();
+        foreach (var machine in source.Machines)
+        {
+            var windows = ReadAvailability(
+                machine.CalendarJson,
+                machine.TimeZoneId,
+                horizonStart,
+                horizonEnd,
+                $"Machine {machine.Number} calendar",
+                mappingConflicts,
+                [machine.MachineId],
+                source.Holidays);
+            calendars.Add(new TimelineMachineCalendar(machine.MachineId,
+                machine.RespectMasterCalendar && masterAvailability is not null
+                    ? IntersectAvailability(windows, masterAvailability)
+                    : windows,
+                machine.SkillTokens));
+        }
         var machineCalendarsById = calendars.ToDictionary(
             calendar => calendar.MachineId,
             StringComparer.Ordinal);
@@ -986,42 +998,6 @@ internal sealed class TimelineProjectionService
             startsAt,
             endsAt,
             "Machine calendar: non-working time.");
-
-    /// <summary>
-    /// Each Machine's working windows in the horizon: its calendar with holidays, cut to the master
-    /// calendar when the Machine respects it. The Timeline and the machine usage report share it.
-    /// </summary>
-    internal static IReadOnlyDictionary<string, IReadOnlyList<TimelineWindow>> MachineWorkingWindows(
-        IReadOnlyList<TimelineSourceMachine> machines,
-        string? masterCalendarJson,
-        string? masterCalendarTimeZoneId,
-        IReadOnlyList<TimelineSourceHoliday> holidays,
-        DateTimeOffset horizonStart,
-        DateTimeOffset horizonEnd,
-        ICollection<TimelineProjectionConflict> conflicts,
-        IReadOnlyList<TimelineWindow>? masterAvailability = null)
-    {
-        masterAvailability ??= masterCalendarJson is null ? null : ReadAvailability(
-            masterCalendarJson, masterCalendarTimeZoneId, horizonStart, horizonEnd,
-            "Israel Master Calendar", conflicts, [], holidays);
-        var result = new Dictionary<string, IReadOnlyList<TimelineWindow>>(StringComparer.Ordinal);
-        foreach (var machine in machines)
-        {
-            var windows = ReadAvailability(
-                machine.CalendarJson,
-                machine.TimeZoneId,
-                horizonStart,
-                horizonEnd,
-                $"Machine {machine.Number} calendar",
-                conflicts,
-                [machine.MachineId],
-                holidays);
-            result[machine.MachineId] = machine.RespectMasterCalendar && masterAvailability is not null
-                ? IntersectAvailability(windows, masterAvailability)
-                : windows;
-        }
-        return result;
-    }
 
     private static IReadOnlyList<TimelineWindow> ReadAvailability(
         string json,

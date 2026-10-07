@@ -1,55 +1,66 @@
 using Meimad.Planner.Server.Application.Timeline;
 using Meimad.Planner.Server.Configuration;
-using Meimad.Planner.Server.Domain.Timeline;
 
 namespace Meimad.Planner.Server.Application.Reports;
 
 /// <summary>
-/// The time of one Machine, one day or the whole factory, split into exclusive kinds. Every kind is
-/// counted inside the available time only, so <c>Production + Setup + Downtime + NoData + Idle =
-/// Available</c>; work outside the available time (unattended running after the shift) is
-/// <see cref="OutsideScheduleSeconds"/> and does not raise the percentages.
+/// The time of one Machine, one day or the whole factory as the Timeline shows it, split into
+/// exclusive kinds inside the available time: <c>Production + Setup + Qc + PartReload + Reserved +
+/// Hold + Downtime + Idle = Available</c>. Used time is the Machine occupancy (production, setup,
+/// QC, part reload and reserved). Work the Timeline shows outside the available time is
+/// <see cref="OutsideScheduleSeconds"/> and never raises a percentage.
 /// </summary>
 internal sealed record MachineUsageMetrics(
     long AvailableSeconds,
     long ProductionSeconds,
     long SetupSeconds,
+    long QcSeconds,
+    long PartReloadSeconds,
+    long ReservedSeconds,
+    long HoldSeconds,
     long DowntimeSeconds,
-    long NoDataSeconds,
     long IdleSeconds,
     long OutsideScheduleSeconds,
     long UsedSeconds,
     decimal? UsagePercent,
     decimal? ProductionPercent,
     decimal? SetupPercent,
+    decimal? QcPercent,
+    decimal? PartReloadPercent,
+    decimal? ReservedPercent,
+    decimal? HoldPercent,
     decimal? DowntimePercent,
-    decimal? NoDataPercent,
     decimal? IdlePercent)
 {
     internal static MachineUsageMetrics From(
-        long available, long production, long setup, long downtime, long noData, long outside)
+        long available, long production, long setup, long qc, long partReload, long reserved,
+        long hold, long downtime, long outside)
     {
-        var idle = Math.Max(0, available - production - setup - downtime - noData);
-        var used = production + setup;
+        var used = production + setup + qc + partReload + reserved;
+        var idle = Math.Max(0, available - used - hold - downtime);
         return new MachineUsageMetrics(
-            available, production, setup, downtime, noData, idle, outside, used,
+            available, production, setup, qc, partReload, reserved, hold, downtime, idle, outside, used,
             Percent(used, available), Percent(production, available), Percent(setup, available),
-            Percent(downtime, available), Percent(noData, available), Percent(idle, available));
+            Percent(qc, available), Percent(partReload, available), Percent(reserved, available),
+            Percent(hold, available), Percent(downtime, available), Percent(idle, available));
     }
 
     internal static MachineUsageMetrics Sum(IEnumerable<MachineUsageMetrics> values)
     {
-        long available = 0, production = 0, setup = 0, downtime = 0, noData = 0, outside = 0;
+        long available = 0, production = 0, setup = 0, qc = 0, partReload = 0, reserved = 0, hold = 0, downtime = 0, outside = 0;
         foreach (var value in values)
         {
             available += value.AvailableSeconds;
             production += value.ProductionSeconds;
             setup += value.SetupSeconds;
+            qc += value.QcSeconds;
+            partReload += value.PartReloadSeconds;
+            reserved += value.ReservedSeconds;
+            hold += value.HoldSeconds;
             downtime += value.DowntimeSeconds;
-            noData += value.NoDataSeconds;
             outside += value.OutsideScheduleSeconds;
         }
-        return From(available, production, setup, downtime, noData, outside);
+        return From(available, production, setup, qc, partReload, reserved, hold, downtime, outside);
     }
 
     private static decimal? Percent(long part, long whole) =>
@@ -58,110 +69,74 @@ internal sealed record MachineUsageMetrics(
 
 internal sealed record MachineUsageDay(DateOnly Date, MachineUsageMetrics Metrics);
 
-/// <summary>
-/// One Machine's usage. <see cref="DataSource"/> is <c>cnc</c> when production is the CNC
-/// running state (time without a CNC signal is <c>noData</c>), or <c>manual</c> when production
-/// is the production sessions reported by hand (unreported time is idle).
-/// </summary>
 internal sealed record MachineUsageRow(
     string MachineId,
     string Number,
     string Name,
-    string DataSource,
     MachineUsageMetrics Metrics,
     IReadOnlyList<MachineUsageDay> Days);
 
+/// <summary>
+/// The report. Time before <see cref="CalculatedAt"/> is what the Timeline shows as history (the
+/// recorded actual work); time after it is the Timeline forecast.
+/// </summary>
 internal sealed record MachineUsageReport(
     DateOnly From,
     DateOnly To,
     string Basis,
     string TimeZoneId,
     DateTimeOffset CalculatedAt,
-    DateTimeOffset CountedUntil,
     MachineUsageMetrics Totals,
     IReadOnlyList<MachineUsageDay> Days,
     IReadOnlyList<MachineUsageRow> Machines);
 
 internal static class MachineUsageBasis
 {
-    /// <summary>Available time is the Machine's working calendar, as the Timeline uses it.</summary>
+    /// <summary>Available time is the Machine's working calendar: the Timeline minus its non-working columns.</summary>
     internal const string Schedule = "schedule";
 
     /// <summary>Available time is the whole day, 24 hours.</summary>
     internal const string FullDay = "fullDay";
 }
 
-internal static class MachineUsageDataSource
+/// <summary>The kinds of Machine time, in the order a moment shown twice is counted.</summary>
+internal enum MachineTimeKind
 {
-    internal const string Cnc = "cnc";
-    internal const string Manual = "manual";
-}
-
-/// <summary>A span of time on one Machine.</summary>
-internal sealed record MachineTimeSpan(string MachineId, DateTimeOffset StartsAt, DateTimeOffset EndsAt);
-
-/// <summary>A meaningful CNC change: the state it reports holds until the next change.</summary>
-internal sealed record MachineStateChange(
-    string MachineId, DateTimeOffset ObservedAt, string? ConnectionStatus, string? MachineState);
-
-/// <summary>A Machine of the report with how its CNC signal is known.</summary>
-internal sealed record MachineUsageSourceMachine(
-    TimelineSourceMachine Machine, bool HasEnabledCncConnection, DateTimeOffset? LastPolledAt);
-
-internal sealed record MachineUsageSource(
-    IReadOnlyList<MachineUsageSourceMachine> Machines,
-    string? MasterCalendarJson,
-    string? MasterCalendarTimeZoneId,
-    IReadOnlyList<TimelineSourceHoliday> Holidays,
-    IReadOnlyList<TimelineSourceDowntime> Downtimes,
-    IReadOnlyList<MachineStateChange> StateChanges,
-    IReadOnlyList<MachineTimeSpan> ProductionSessions,
-    IReadOnlyList<MachineTimeSpan> Setups);
-
-internal interface IMachineUsageRepository
-{
-    /// <summary>
-    /// The Machines and their recorded activity that touch [from, to): CNC changes (with the last
-    /// one before <paramref name="from"/>), production sessions, setups and downtimes. Spans still
-    /// open end at <paramref name="now"/>.
-    /// </summary>
-    Task<MachineUsageSource> ReadAsync(
-        DateTimeOffset from, DateTimeOffset to, DateTimeOffset now, CancellationToken cancellationToken);
+    Setup,
+    Qc,
+    PartReload,
+    Production,
+    Reserved,
+    Hold,
+    Downtime
 }
 
 internal sealed class MachineUsageValidationException(string message) : Exception(message);
 
 /// <summary>
-/// Machine usage report: how each Machine's available time in a period of whole factory days was
-/// spent, from what was recorded (it never reads the planned Timeline).
+/// Machine usage report: how each Machine's time in a period of whole factory days is used
+/// according to the calculated Timeline, exactly as its bars show it.
 /// <list type="bullet">
-/// <item>Available: the Machine's working calendar with holidays and the master calendar, exactly as
-/// the Timeline uses it, or the whole day with <see cref="MachineUsageBasis.FullDay"/>. Only time
-/// up to now counts.</item>
-/// <item>Setup: the measured setups of the Production Runs (an Offset Loader run or a setup run
-/// reported by hand to the first SEND_TO_QC, a manual setup start to its end) and a setup still in
-/// progress.</item>
-/// <item>Production: the CNC <c>ACTIVE</c> (program running) state on a Machine with CNC
-/// monitoring; the production sessions reported by hand on a Machine without it. Time in setup is
-/// setup, not production.</item>
-/// <item>Downtime: planned, active and restored Machine downtimes not covered by work.</item>
-/// <item>No data: on a CNC Machine, time with the connection offline or the state unknown.</item>
-/// <item>Idle: the rest of the available time (stopped, ready, feed hold, alarm, or unreported).</item>
+/// <item>Available: the period minus the Machine's non-working Timeline columns (its working calendar
+/// with holidays and the master calendar), or the whole day with <see cref="MachineUsageBasis.FullDay"/>.</item>
+/// <item>Each operation block counts its phases: production (blue; also the recorded actual work
+/// before now), setup, QC, part reload and reserved; the gaps between phases are not used. A block
+/// without phases (actual history) is production. A paused block is hold.</item>
+/// <item>Downtime: the Timeline's downtime bars. Idle: the rest of the available time, including
+/// waiting and blocked time, which the Timeline leaves empty.</item>
 /// </list>
+/// The Timeline is calculated with the same horizon rule as the Employee workload, so the forecast
+/// part of the period matches the Timeline view.
 /// </summary>
 internal sealed class MachineUsageReportService(
-    IMachineUsageRepository repository,
+    TimelineProjectionService timeline,
     TimelineOptions options,
     TimeProvider timeProvider)
 {
     internal const int MaximumDays = 92;
 
-    /// <summary>CNC states that mean the program is running (MTConnect Execution and FOCAS).</summary>
-    internal static readonly IReadOnlySet<string> RunningStates =
-        new HashSet<string>(["ACTIVE"], StringComparer.OrdinalIgnoreCase);
-
-    private static readonly IReadOnlySet<string> SignalStatuses =
-        new HashSet<string>(["ONLINE", "DEGRADED"], StringComparer.OrdinalIgnoreCase);
+    /// <summary>Days the Timeline is calculated beyond the period, so its placement matches the Timeline view.</summary>
+    private const int HorizonMarginDays = 30;
 
     internal async Task<MachineUsageReport> CalculateAsync(
         DateOnly from, DateOnly to, string? basis, CancellationToken cancellationToken = default)
@@ -177,68 +152,48 @@ internal sealed class MachineUsageReportService(
         var now = timeProvider.GetUtcNow();
         var periodStart = LocalMidnight(from, zone);
         var periodEnd = LocalMidnight(to.AddDays(1), zone);
-        var countedUntil = periodEnd < now ? periodEnd : now;
-        var source = await repository.ReadAsync(periodStart, periodEnd, now, cancellationToken);
+        // The Timeline plans from now: a later horizon start would move work into the period.
+        var horizonStart = periodStart < now ? periodStart : now;
+        var horizonEnd = (periodEnd > now ? periodEnd : now).AddDays(HorizonMarginDays);
+        var projection = await timeline.CalculateAsync(horizonStart, horizonEnd, cancellationToken);
         var dayBounds = Enumerable.Range(0, to.DayNumber - from.DayNumber + 1)
             .Select(offset => from.AddDays(offset))
             .Select(date => (Date: date, Start: LocalMidnight(date, zone), End: LocalMidnight(date.AddDays(1), zone)))
             .ToArray();
-
-        var windows = TimelineProjectionService.MachineWorkingWindows(
-            source.Machines.Select(machine => machine.Machine).ToArray(),
-            source.MasterCalendarJson, source.MasterCalendarTimeZoneId, source.Holidays,
-            periodStart, periodEnd, new List<TimelineProjectionConflict>());
-        var changes = source.StateChanges.ToLookup(change => change.MachineId, StringComparer.Ordinal);
-        var sessions = source.ProductionSessions.ToLookup(span => span.MachineId, StringComparer.Ordinal);
-        var setups = source.Setups.ToLookup(span => span.MachineId, StringComparer.Ordinal);
-        var downtimes = source.Downtimes.ToLookup(downtime => downtime.MachineId, StringComparer.Ordinal);
+        var period = new[] { (periodStart, periodEnd) };
 
         var rows = new List<MachineUsageRow>();
-        foreach (var entry in source.Machines)
+        foreach (var machine in projection.Machines)
         {
-            var machine = entry.Machine;
-            var machineChanges = changes[machine.MachineId].OrderBy(change => change.ObservedAt).ToArray();
-            var isCnc = entry.HasEnabledCncConnection || machineChanges.Length > 0;
-            var counted = new[] { (periodStart, countedUntil) };
             var available = basis == MachineUsageBasis.FullDay
-                ? Spans.Normalize(counted)
-                : Spans.Intersect(Spans.Normalize(windows[machine.MachineId].Select(window => (window.StartsAt, window.EndsAt))), counted);
-            var setup = Spans.Intersect(Spans.Normalize(setups[machine.MachineId].Select(span => (span.StartsAt, span.EndsAt))), counted);
-            IReadOnlyList<(DateTimeOffset, DateTimeOffset)> running, observed;
-            if (isCnc)
-                (running, observed) = CncSpans(machineChanges, Earlier(entry.LastPolledAt ?? countedUntil, countedUntil));
-            else
-                (running, observed) = (Spans.Normalize(sessions[machine.MachineId].Select(span => (span.StartsAt, span.EndsAt))), []);
-            var production = Spans.Subtract(Spans.Intersect(running, counted), setup);
-            var work = Spans.Union(setup, production);
-            var downtime = Spans.Subtract(Spans.Intersect(
-                Spans.Normalize(downtimes[machine.MachineId].Select(value => (value.StartsAt, value.EndsAt))), counted), work);
-            var noData = isCnc
-                ? Spans.Subtract(Spans.Subtract(available, Spans.Union(work, downtime)), observed)
-                : [];
-
+                ? Spans.Normalize(period)
+                : Spans.Subtract(Spans.Normalize(period), Spans.Normalize(
+                    (machine.NonWorkingWindows ?? []).Select(window => (window.StartsAt, window.EndsAt))));
+            var kinds = Classify(machine, period);
+            var used = Spans.Normalize(kinds
+                .Where(kind => kind.Key is not (MachineTimeKind.Hold or MachineTimeKind.Downtime))
+                .SelectMany(kind => kind.Value));
             var days = dayBounds.Select(day =>
             {
                 var bounds = new[] { (day.Start, day.End) };
                 var dayAvailable = Spans.Intersect(available, bounds);
+                long Seconds(MachineTimeKind kind) => Spans.Seconds(Spans.Intersect(kinds[kind], dayAvailable));
                 return new MachineUsageDay(day.Date, MachineUsageMetrics.From(
                     Spans.Seconds(dayAvailable),
-                    Spans.Seconds(Spans.Intersect(production, dayAvailable)),
-                    Spans.Seconds(Spans.Intersect(setup, dayAvailable)),
-                    Spans.Seconds(Spans.Intersect(downtime, dayAvailable)),
-                    Spans.Seconds(Spans.Intersect(noData, dayAvailable)),
-                    Spans.Seconds(Spans.Subtract(Spans.Intersect(work, bounds), dayAvailable))));
+                    Seconds(MachineTimeKind.Production), Seconds(MachineTimeKind.Setup), Seconds(MachineTimeKind.Qc),
+                    Seconds(MachineTimeKind.PartReload), Seconds(MachineTimeKind.Reserved), Seconds(MachineTimeKind.Hold),
+                    Seconds(MachineTimeKind.Downtime),
+                    Spans.Seconds(Spans.Subtract(Spans.Intersect(used, bounds), dayAvailable))));
             }).ToArray();
             rows.Add(new MachineUsageRow(
                 machine.MachineId, machine.Number, machine.Name,
-                isCnc ? MachineUsageDataSource.Cnc : MachineUsageDataSource.Manual,
                 MachineUsageMetrics.Sum(days.Select(day => day.Metrics)), days));
         }
 
         var totalsByDay = dayBounds.Select((day, index) => new MachineUsageDay(
             day.Date, MachineUsageMetrics.Sum(rows.Select(row => row.Days[index].Metrics)))).ToArray();
         return new MachineUsageReport(
-            from, to, basis, options.TimeZoneId, now, countedUntil,
+            from, to, basis, options.TimeZoneId, now,
             MachineUsageMetrics.Sum(rows.Select(row => row.Metrics)),
             totalsByDay,
             rows.OrderBy(row => row.Number, StringComparer.CurrentCultureIgnoreCase)
@@ -246,27 +201,54 @@ internal sealed class MachineUsageReportService(
     }
 
     /// <summary>
-    /// The running and the observed time of a CNC Machine: each change holds until the next one, and
-    /// the last until the last poll. A state is observed while the connection is online or degraded.
+    /// The exclusive time of each kind on one Timeline Machine row inside <paramref name="period"/>:
+    /// a moment shown by more than one bar counts once, for the first kind in
+    /// <see cref="MachineTimeKind"/> order.
     /// </summary>
-    private static (IReadOnlyList<(DateTimeOffset, DateTimeOffset)> Running, IReadOnlyList<(DateTimeOffset, DateTimeOffset)> Observed) CncSpans(
-        IReadOnlyList<MachineStateChange> changes, DateTimeOffset lastPolledAt)
+    internal static IReadOnlyDictionary<MachineTimeKind, IReadOnlyList<(DateTimeOffset Start, DateTimeOffset End)>> Classify(
+        TimelineProjectionMachine machine, IReadOnlyList<(DateTimeOffset Start, DateTimeOffset End)> period)
     {
-        var running = new List<(DateTimeOffset, DateTimeOffset)>();
-        var observed = new List<(DateTimeOffset, DateTimeOffset)>();
-        for (var index = 0; index < changes.Count; index++)
+        var raw = Enum.GetValues<MachineTimeKind>().ToDictionary(kind => kind, _ => new List<(DateTimeOffset, DateTimeOffset)>());
+        foreach (var interval in machine.Intervals)
         {
-            var change = changes[index];
-            var end = index + 1 < changes.Count ? changes[index + 1].ObservedAt : lastPolledAt;
-            if (end <= change.ObservedAt) continue;
-            if (change.MachineState is null || change.ConnectionStatus is null || !SignalStatuses.Contains(change.ConnectionStatus)) continue;
-            observed.Add((change.ObservedAt, end));
-            if (RunningStates.Contains(change.MachineState)) running.Add((change.ObservedAt, end));
+            if (interval.Type == "downtime")
+            {
+                raw[MachineTimeKind.Downtime].Add((interval.StartsAt, interval.EndsAt));
+                continue;
+            }
+            if (interval.Type is not ("operation" or "actual_history")) continue;
+            var hold = interval.TimingKind == "hold";
+            if (interval.Phases is not { Count: > 0 } phases)
+            {
+                raw[hold ? MachineTimeKind.Hold : MachineTimeKind.Production].Add((interval.StartsAt, interval.EndsAt));
+                continue;
+            }
+            foreach (var phase in phases)
+            {
+                MachineTimeKind? kind = phase.Type switch
+                {
+                    "setup" => MachineTimeKind.Setup,
+                    "qa" => MachineTimeKind.Qc,
+                    "loadunload" => MachineTimeKind.PartReload,
+                    "production" => MachineTimeKind.Production,
+                    "reserved" => MachineTimeKind.Reserved,
+                    "waiting" when hold => MachineTimeKind.Hold,
+                    _ => null
+                };
+                if (kind is { } value) raw[value].Add((phase.StartsAt, phase.EndsAt));
+            }
         }
-        return (Spans.Normalize(running), Spans.Normalize(observed));
-    }
 
-    private static DateTimeOffset Earlier(DateTimeOffset left, DateTimeOffset right) => left < right ? left : right;
+        var result = new Dictionary<MachineTimeKind, IReadOnlyList<(DateTimeOffset Start, DateTimeOffset End)>>();
+        IReadOnlyList<(DateTimeOffset Start, DateTimeOffset End)> taken = [];
+        foreach (var kind in Enum.GetValues<MachineTimeKind>())
+        {
+            var spans = Spans.Subtract(Spans.Intersect(Spans.Normalize(raw[kind]), period), taken);
+            result[kind] = spans;
+            taken = Spans.Union(taken, spans);
+        }
+        return result;
+    }
 
     private static DateTimeOffset LocalMidnight(DateOnly date, TimeZoneInfo zone)
     {

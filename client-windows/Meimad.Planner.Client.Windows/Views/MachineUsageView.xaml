@@ -45,7 +45,7 @@
       </StackPanel>
       <StackPanel>
         <TextBlock Text="Machine Usage" FontSize="20" FontWeight="SemiBold" />
-        <TextBlock Text="How each machine's available time was spent, from what was recorded: production (CNC running state, or reported production sessions), setup (Offset Loader or reported setup run to Send to QC), downtime, no CNC data, and idle. Usage is production plus setup over the available time."
+        <TextBlock Text="How each machine's working time is used according to the Timeline: the time its bars occupy (production, setup, QC, part reload, reserved) over the machine's working calendar. Before now the Timeline shows the recorded actual work; after now its forecast. Hold, downtime and idle time are not usage."
                    Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
       </StackPanel>
     </DockPanel>
@@ -94,17 +94,29 @@
         </Border>
         <Border Style="{StaticResource Kpi}">
           <StackPanel>
+            <TextBlock Text="QC" />
+            <TextBlock Text="{Binding QcText}" Style="{StaticResource KpiValue}" />
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Kpi}">
+          <StackPanel>
+            <TextBlock Text="Part reload" />
+            <TextBlock Text="{Binding PartReloadText}" Style="{StaticResource KpiValue}" />
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Kpi}">
+          <StackPanel>
             <TextBlock Text="Downtime" />
             <TextBlock Text="{Binding DowntimeText}" Style="{StaticResource KpiValue}" />
           </StackPanel>
         </Border>
-        <Border Style="{StaticResource Kpi}" ToolTip="Time a CNC-monitored machine sent no state (connection offline or state unknown)">
+        <Border Style="{StaticResource Kpi}" ToolTip="Paused operations on the Timeline">
           <StackPanel>
-            <TextBlock Text="No data" />
-            <TextBlock Text="{Binding NoDataText}" Style="{StaticResource KpiValue}" />
+            <TextBlock Text="Hold" />
+            <TextBlock Text="{Binding HoldText}" Style="{StaticResource KpiValue}" />
           </StackPanel>
         </Border>
-        <Border Style="{StaticResource Kpi}" ToolTip="Production and setup outside the available time, such as unattended running after the shift; not counted in the percentages">
+        <Border Style="{StaticResource Kpi}" ToolTip="Timeline work outside the available time; not counted in the percentages">
           <StackPanel>
             <TextBlock Text="Outside schedule" />
             <TextBlock Text="{Binding OutsideScheduleText}" Style="{StaticResource KpiValue}" />
@@ -118,16 +130,18 @@
               MaxHeight="300">
       <DataGrid.Columns>
         <DataGridTextColumn Header="Machine" Binding="{Binding DisplayName}" Width="220" />
-        <DataGridTextColumn Header="Data source" Binding="{Binding DataSourceText}" Width="120" />
-        <DataGridTextColumn Header="Available time" Binding="{Binding Metrics.AvailableText}" Width="85" />
-        <DataGridTextColumn Header="Usage" Binding="{Binding Metrics.UsageText}" Width="75" />
-        <DataGridTextColumn Header="Level" Binding="{Binding Metrics.UsageLevelText}" Width="100" />
-        <DataGridTextColumn Header="Used" Binding="{Binding Metrics.UsedText}" Width="75" />
-        <DataGridTextColumn Header="Production" Binding="{Binding Metrics.ProductionText}" Width="130" />
-        <DataGridTextColumn Header="Machine setup" Binding="{Binding Metrics.SetupText}" Width="130" />
-        <DataGridTextColumn Header="Idle" Binding="{Binding Metrics.IdleText}" Width="130" />
-        <DataGridTextColumn Header="Downtime" Binding="{Binding Metrics.DowntimeText}" Width="130" />
-        <DataGridTextColumn Header="No data" Binding="{Binding Metrics.NoDataText}" Width="130" />
+        <DataGridTextColumn Header="Available time" Binding="{Binding Metrics.AvailableText}" Width="Auto" />
+        <DataGridTextColumn Header="Usage" Binding="{Binding Metrics.UsageText}" Width="Auto" MinWidth="60" />
+        <DataGridTextColumn Header="Level" Binding="{Binding Metrics.UsageLevelText}" Width="Auto" />
+        <DataGridTextColumn Header="Used" Binding="{Binding Metrics.UsedText}" Width="Auto" />
+        <DataGridTextColumn Header="Production" Binding="{Binding Metrics.ProductionText}" Width="Auto" />
+        <DataGridTextColumn Header="Machine setup" Binding="{Binding Metrics.SetupText}" Width="Auto" />
+        <DataGridTextColumn Header="QC" Binding="{Binding Metrics.QcText}" Width="Auto" />
+        <DataGridTextColumn Header="Part reload" Binding="{Binding Metrics.PartReloadText}" Width="Auto" />
+        <DataGridTextColumn Header="Reserved" Binding="{Binding Metrics.ReservedText}" Width="Auto" />
+        <DataGridTextColumn Header="Hold" Binding="{Binding Metrics.HoldText}" Width="Auto" />
+        <DataGridTextColumn Header="Downtime" Binding="{Binding Metrics.DowntimeText}" Width="Auto" />
+        <DataGridTextColumn Header="Idle" Binding="{Binding Metrics.IdleText}" Width="Auto" />
         <DataGridTextColumn Header="Outside schedule" Binding="{Binding Metrics.OutsideScheduleText}" Width="*" MinWidth="110" />
       </DataGrid.Columns>
     </DataGrid>
@@ -139,10 +153,13 @@
       <WrapPanel VerticalAlignment="Center">
         <StackPanel Orientation="Horizontal" Margin="0,0,12,0"><Border Style="{StaticResource LegendSwatch}" Background="#1E88E5" /><TextBlock Text="Production" /></StackPanel>
         <StackPanel Orientation="Horizontal" Margin="0,0,12,0"><Border Style="{StaticResource LegendSwatch}" Background="#FBC02D" /><TextBlock Text="Machine setup" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,12,0"><Border Style="{StaticResource LegendSwatch}" Background="#43A047" /><TextBlock Text="QC" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,12,0"><Border Style="{StaticResource LegendSwatch}" Background="#7B1FA2" /><TextBlock Text="Part reload" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,12,0"><Border Style="{StaticResource LegendSwatch}" Background="#F57C00" /><TextBlock Text="Reserved" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,12,0"><Border Style="{StaticResource LegendSwatch}" Background="#7E57C2" /><TextBlock Text="Hold" /></StackPanel>
         <StackPanel Orientation="Horizontal" Margin="0,0,12,0"><Border Style="{StaticResource LegendSwatch}" Background="#C62828" /><TextBlock Text="Downtime" /></StackPanel>
-        <StackPanel Orientation="Horizontal" Margin="0,0,12,0"><Border Style="{StaticResource LegendSwatch}" Background="#9E9E9E" /><TextBlock Text="Idle" /></StackPanel>
-        <StackPanel Orientation="Horizontal" Margin="0,0,12,0"><Border x:Name="NoDataSwatch" Style="{StaticResource LegendSwatch}" /><TextBlock Text="No data" /></StackPanel>
-        <TextBlock Text="Usage % above each bar" Foreground="{StaticResource MutedTextBrush}" />
+        <StackPanel Orientation="Horizontal" Margin="0,0,12,0"><Border Style="{StaticResource LegendSwatch}" Background="#E0E0E0" /><TextBlock Text="Idle" /></StackPanel>
+        <TextBlock Text="Usage % above each bar; dashed line = today, forecast after it" Foreground="{StaticResource MutedTextBrush}" />
       </WrapPanel>
     </DockPanel>
 
@@ -152,7 +169,7 @@
         <ColumnDefinition Width="2*" MinWidth="320" />
       </Grid.ColumnDefinitions>
       <Border BorderBrush="#BBBBBB" BorderThickness="1" Background="White" Margin="0,0,8,0">
-        <views:MachineUsageHistoryChart Days="{Binding ChartDays}" Margin="4" />
+        <views:MachineUsageHistoryChart Days="{Binding ChartDays}" Today="{Binding Today}" Margin="4" />
       </Border>
       <DataGrid Grid.Column="1" ItemsSource="{Binding ChartDays}" AutoGenerateColumns="False" IsReadOnly="True"
                 CanUserAddRows="False" HorizontalScrollBarVisibility="Auto">
@@ -162,9 +179,11 @@
           <DataGridTextColumn Header="Available time" Binding="{Binding Metrics.AvailableText}" Width="Auto" MinWidth="60" />
           <DataGridTextColumn Header="Production" Binding="{Binding Metrics.ProductionText}" Width="Auto" />
           <DataGridTextColumn Header="Machine setup" Binding="{Binding Metrics.SetupText}" Width="Auto" />
+          <DataGridTextColumn Header="QC" Binding="{Binding Metrics.QcText}" Width="Auto" />
+          <DataGridTextColumn Header="Part reload" Binding="{Binding Metrics.PartReloadText}" Width="Auto" />
           <DataGridTextColumn Header="Idle" Binding="{Binding Metrics.IdleText}" Width="Auto" />
           <DataGridTextColumn Header="Downtime" Binding="{Binding Metrics.DowntimeText}" Width="Auto" />
-          <DataGridTextColumn Header="No data" Binding="{Binding Metrics.NoDataText}" Width="Auto" />
+          <DataGridTextColumn Header="Hold" Binding="{Binding Metrics.HoldText}" Width="Auto" />
         </DataGrid.Columns>
       </DataGrid>
     </Grid>

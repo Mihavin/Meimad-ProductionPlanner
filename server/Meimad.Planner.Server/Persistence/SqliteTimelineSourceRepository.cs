@@ -177,7 +177,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         return values;
     }
 
-    internal static async Task<IReadOnlyList<TimelineSourceMachine>> ReadMachinesAsync(
+    private static async Task<IReadOnlyList<TimelineSourceMachine>> ReadMachinesAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         CancellationToken cancellationToken)
@@ -594,7 +594,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         }
     }
 
-    internal static async Task<IReadOnlyList<TimelineSourceDowntime>> ReadDowntimesAsync(
+    private static async Task<IReadOnlyList<TimelineSourceDowntime>> ReadDowntimesAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         DateTimeOffset horizonStart,
@@ -671,7 +671,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             null);
     }
 
-    internal static async Task<IReadOnlyList<TimelineSourceHoliday>> ReadHolidaysAsync(
+    private static async Task<IReadOnlyList<TimelineSourceHoliday>> ReadHolidaysAsync(
         SqliteConnection connection, SqliteTransaction transaction,
         DateTimeOffset horizonStart, DateTimeOffset horizonEnd, CancellationToken cancellationToken)
     {
@@ -799,7 +799,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         return resources;
     }
 
-    internal static async Task<(string? Json, string? TimeZoneId)> ReadMasterCalendarAsync(
+    private static async Task<(string? Json, string? TimeZoneId)> ReadMasterCalendarAsync(
         SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();

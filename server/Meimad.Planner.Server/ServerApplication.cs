@@ -334,7 +334,6 @@ public static class ServerApplication
         builder.Services.AddSingleton<IWeeklyEmployeeEfficiencyRepository, SqliteWeeklyEmployeeEfficiencyRepository>();
         builder.Services.AddSingleton<IEmployeeEfficiencyEmailSender, SmtpEmployeeEfficiencyEmailSender>();
         builder.Services.AddSingleton<WeeklyEmployeeEfficiencyReportService>();
-        builder.Services.AddSingleton<IMachineUsageRepository, SqliteMachineUsageRepository>();
         builder.Services.AddSingleton<MachineUsageReportService>();
         builder.Services.AddHostedService<WeeklyEmployeeEfficiencyReportScheduler>();
         builder.Services.AddSingleton<IStructuredEventLogRepository, SqliteStructuredEventLogRepository>();

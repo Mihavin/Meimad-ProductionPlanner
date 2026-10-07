@@ -13,7 +13,8 @@ internal static class MachineUsageReportEndpoints
 
     /// <summary>
     /// GET /api/v1/reports/machine-usage?from=yyyy-MM-dd&amp;to=yyyy-MM-dd&amp;basis=schedule|fullDay:
-    /// recorded Machine usage for whole factory days (default: the last 7 days up to today).
+    /// Machine usage according to the calculated Timeline for whole factory days (default: the last
+    /// 7 days up to today).
     /// </summary>
     private static async Task<IResult> ReadAsync(
         string? from, string? to, string? basis, HttpContext context,

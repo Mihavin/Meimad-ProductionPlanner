@@ -1144,21 +1144,20 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 
 ## Machine usage report (2026-10-07)
 
-**Request (2026-10-07):** "Add a report generator: machine usage for each machine in hours and %, overall performance in hours and %, daily report with history graph, total setup time, total idle time." It reports recorded usage only; it does not compare plan and actual (AGENTS.md rule 12) and stores nothing.
+**Request (2026-10-07):** "Add a report generator: machine usage for each machine in hours and %, overall performance in hours and %, daily report with history graph, total setup time, total idle time." A first version measured recorded CNC states and workflow events; the owner rejected it the same day: **"it should show the usage according to the timeline"**. The report now follows the calculated Timeline and stores nothing.
 
-**Implemented:** `MachineUsageReportService`, `SqliteMachineUsageRepository` and `GET /api/v1/reports/machine-usage?from=&to=&basis=` (see the API contract). Available time reuses the Timeline's own machine calendar expansion (`TimelineProjectionService.MachineWorkingWindows`, shared with the Timeline), so a report hour and a Timeline hour mean the same. Windows has a new **Reports** tab: period, basis, **Calculate**, overall-performance tiles, the Machine table, the daily history chart (all Machines or one) with its day table, **Print report** (self-contained HTML with SVG charts in `%TEMP%\MeimadPlanner\Reports`, right-to-left in Hebrew) and **Export CSV**. he/ru texts are included.
+**Implemented:** `MachineUsageReportService` calculates the Timeline (same horizon rule as the Employee workload) and `GET /api/v1/reports/machine-usage?from=&to=&basis=` (see the API contract) counts each Machine row's bars inside its available time (the period minus the Timeline's non-working columns, or the whole day). Windows has a **Reports** tab: period, basis, **Calculate**, overall-performance tiles, the Machine table, the daily history chart (all Machines or one, Timeline legend colours, dashed line at today) with its day table, **Print report** (self-contained HTML with SVG charts in `%TEMP%\MeimadPlanner\Reports`, right-to-left in Hebrew) and **Export CSV**. he/ru texts are included.
 
 **Proposed definitions awaiting owner confirmation (reversible, all in `MachineUsageReportService`):**
-- Production on a CNC-monitored Machine is the CNC `ACTIVE` state only; feed hold, ready, stopped, interrupted and alarm are idle.
-- Setup takes precedence over production (the first part cut during setup is setup), and work takes precedence over a downtime.
-- Time a CNC-monitored Machine sent no state is **no data**, not idle, so a lost connection does not lower usage silently. On a Machine without CNC monitoring, unreported time is idle.
-- The default basis is the working calendar; work outside it is reported apart and never raises a percentage above 100 %.
-- A setup counts from the measured setups (the operation time statistics definition) plus a run setup still in progress until now; a manual setup start without its end is not counted.
+- Usage is production + setup + QC + part reload + reserved over the available time; hold, downtime and idle are not usage.
+- Before now the Timeline's actual history is one production span (it has no setup/QC breakdown), so setup and QC before now count only where the Timeline shows them.
+- A moment shown by more than one bar counts once (setup, QC, part reload, production, reserved, hold, downtime); the gaps inside an operation block are idle.
+- The default basis is the working calendar; Timeline work outside it is reported apart and never raises a percentage above 100 %.
 - Usage level text: low under 40 %, normal, high from 75 %.
 
-**Known limits:** CNC state history keeps only meaningful changes, so a period when the Server itself was stopped keeps the last recorded state; history older than the CNC history retention is gone; cycle observations are not used yet (there are none in production); automatic e-mail of this report is not implemented.
+**Known limits:** the forecast part changes with every planning change, like the Timeline; a paused operation shows hold until the Timeline horizon ends, as on the Timeline; automatic e-mail of this report is not implemented.
 
-**Tests:** `MachineUsageReportApiTests` (exact split of a CNC and a manual Machine, full-day basis, future and invalid periods, last-poll tail, span set operations); client `MachineUsageViewModelTests` (calculation, chart scope, validation and refusal, HTML and CSV content).
+**Tests:** `MachineUsageReportApiTests` (a seeded Timeline: setup, production, downtime and idle inside the calendar; actual history outside the schedule and over the whole day; invalid periods; the bar classification and its precedence; span set operations); client `MachineUsageViewModelTests` (calculation, chart scope, history/forecast tooltip, validation and refusal, HTML and CSV content).
 
 ## Part reloads of parts already made (2026-10-07)
 

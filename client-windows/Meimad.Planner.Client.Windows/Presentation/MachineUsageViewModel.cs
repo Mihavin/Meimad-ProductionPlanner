@@ -24,10 +24,10 @@ internal sealed record MachineUsageBasisOption(string Label, string Value)
 }
 
 /// <summary>
-/// Reports → Machine usage: how each Machine's available time in a chosen period was spent
-/// (production, setup, downtime, no CNC data, idle), the factory totals, a daily history chart,
-/// a printable report and a CSV export. The Server calculates everything from what was recorded;
-/// everyone signed in may look and nothing is changed.
+/// Reports → Machine usage: how each Machine's working time in a chosen period is used according to
+/// the Timeline (production, setup, QC, part reload, reserved, hold, downtime, idle), the factory
+/// totals, a daily history chart, a printable report and a CSV export. The Server calculates the
+/// Timeline; everyone signed in may look and nothing is changed.
 /// </summary>
 internal sealed class MachineUsageViewModel : INotifyPropertyChanged
 {
@@ -142,6 +142,9 @@ internal sealed class MachineUsageViewModel : INotifyPropertyChanged
 
     internal MachineUsageReportInfo? Report => report;
 
+    /// <summary>The day the report was calculated; the chart marks it, and later days are forecast.</summary>
+    public DateTime? Today => report?.CalculatedAt.ToLocalTime().Date;
+
     internal void AttachSession(IPlannerApiClient? client)
     {
         apiClient = client;
@@ -163,7 +166,7 @@ internal sealed class MachineUsageViewModel : INotifyPropertyChanged
         }
 
         IsBusy = true;
-        Status = "Calculating machine usage...";
+        Status = "Calculating the Timeline...";
         try
         {
             var result = await apiClient.GetMachineUsageAsync(
@@ -175,11 +178,11 @@ internal sealed class MachineUsageViewModel : INotifyPropertyChanged
             Replace(ChartScopes, [new MachineUsageChartScope(AllMachines, null),
                 .. result.Machines.Select(row => new MachineUsageChartScope(row.DisplayName, row.MachineId))]);
             Totals = result.Totals;
+            OnPropertyChanged(nameof(Today));
             chartScope = null;
             ChartScope = ChartScopes.FirstOrDefault(scope => scope.MachineId == selectedId) ?? ChartScopes[0];
-            var counted = result.CountedUntil.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
-            var at = result.CalculatedAt.ToLocalTime().ToString("HH:mm", CultureInfo.CurrentCulture);
-            Status = $"{result.Machines.Count} machine(s); overall usage {result.Totals.UsageText} of {result.Totals.AvailableText}. Counted until {counted}; calculated at {at}.";
+            var at = result.CalculatedAt.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
+            Status = $"{result.Machines.Count} machine(s); overall usage {result.Totals.UsageText} of {result.Totals.AvailableText}. According to the Timeline calculated at {at}: history before, forecast after.";
         }
         catch (Exception exception) when (IsExpected(exception))
         {
@@ -215,22 +218,23 @@ internal sealed class MachineUsageViewModel : INotifyPropertyChanged
         static string P(decimal? value) => value?.ToString("0.0", CultureInfo.InvariantCulture) ?? string.Empty;
         static string Q(string value) => value.IndexOfAny([',', '"', '\n', '\r']) < 0 ? value : $"\"{value.Replace("\"", "\"\"")}\"";
         var csv = new StringBuilder();
-        csv.AppendLine("Date,Machine number,Machine,Data source,Available h,Production h,Setup h,Downtime h,No data h,Idle h,Outside schedule h,Used h,Usage %,Production %,Setup %,Idle %");
-        void Row(string date, string number, string name, string source, MachineUsageMetricsInfo m) =>
-            csv.AppendLine(string.Join(",", Q(date), Q(number), Q(name), Q(source),
-                H(m.AvailableSeconds), H(m.ProductionSeconds), H(m.SetupSeconds), H(m.DowntimeSeconds),
-                H(m.NoDataSeconds), H(m.IdleSeconds), H(m.OutsideScheduleSeconds), H(m.UsedSeconds),
+        csv.AppendLine("Date,Machine number,Machine,Available h,Production h,Setup h,QC h,Part reload h,Reserved h,Hold h,Downtime h,Idle h,Outside schedule h,Used h,Usage %,Production %,Setup %,Idle %");
+        void Row(string date, string number, string name, MachineUsageMetricsInfo m) =>
+            csv.AppendLine(string.Join(",", Q(date), Q(number), Q(name),
+                H(m.AvailableSeconds), H(m.ProductionSeconds), H(m.SetupSeconds), H(m.QcSeconds), H(m.PartReloadSeconds),
+                H(m.ReservedSeconds), H(m.HoldSeconds), H(m.DowntimeSeconds), H(m.IdleSeconds),
+                H(m.OutsideScheduleSeconds), H(m.UsedSeconds),
                 P(m.UsagePercent), P(m.ProductionPercent), P(m.SetupPercent), P(m.IdlePercent)));
         var period = $"{report.From:yyyy-MM-dd}..{report.To:yyyy-MM-dd}";
         foreach (var machine in report.Machines)
         {
             foreach (var day in machine.Days)
-                Row(day.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), machine.Number, machine.Name, machine.DataSource, day.Metrics);
-            Row(period, machine.Number, machine.Name, machine.DataSource, machine.Metrics);
+                Row(day.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), machine.Number, machine.Name, day.Metrics);
+            Row(period, machine.Number, machine.Name, machine.Metrics);
         }
         foreach (var day in report.Days)
-            Row(day.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), string.Empty, AllMachines, string.Empty, day.Metrics);
-        Row(period, string.Empty, AllMachines, string.Empty, report.Totals);
+            Row(day.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), string.Empty, AllMachines, day.Metrics);
+        Row(period, string.Empty, AllMachines, report.Totals);
         return csv.ToString();
     }
 
