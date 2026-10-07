@@ -1268,49 +1268,70 @@ internal sealed class TimelineCalculationEngine
             + operation.ProductionDuration.Ticks * ProductionCycleQuantity(operation)
             + operation.LoadUnloadDuration.Ticks * LoadUnloadOccurrenceCount(operation)));
 
+    /// <summary>
+    /// The load/unload occurrences still ahead: one per load of the parts still to make. Parts already
+    /// made were loaded already, and the rest of a load in progress needs no new load.
+    /// </summary>
     private static int LoadUnloadOccurrenceCount(TimelineOperationInput operation)
     {
-        if (operation.PlannedQuantity == 0 || operation.LoadUnloadDuration == TimeSpan.Zero)
+        if (operation.PlannedQuantity == 0 || operation.LoadUnloadDuration == TimeSpan.Zero
+            || PartsPerLoad(operation) is not { } partsPerLoad)
         {
             return 0;
         }
 
-        if (!operation.AutomaticLoading)
-        {
-            return operation.PlannedQuantity;
-        }
-
-        return operation.LoadUnloadEveryNParts is { } everyN
-            ? (int)((operation.PlannedQuantity + (long)everyN - 1) / everyN)
-            : 0;
+        var toMake = ProductionCycleQuantity(operation);
+        var loadedAhead = Math.Min(toMake, PartsLeftInCurrentLoad(operation, partsPerLoad));
+        return (int)((toMake - loadedAhead + (long)partsPerLoad - 1) / partsPerLoad);
     }
 
+    /// <summary>The loads already done, so the loads still ahead are numbered after them.</summary>
+    private static int CompletedLoadCount(TimelineOperationInput operation) =>
+        PartsPerLoad(operation) is { } partsPerLoad
+            ? (int)((operation.PlannedQuantity - ProductionCycleQuantity(operation) + (long)partsPerLoad - 1) / partsPerLoad)
+            : 0;
+
+    /// <summary>Parts per load: one for manual loading, N for automatic loading every N parts.</summary>
+    private static int? PartsPerLoad(TimelineOperationInput operation) =>
+        operation.AutomaticLoading ? operation.LoadUnloadEveryNParts : 1;
+
+    /// <summary>Parts of the load in progress (loaded, not yet made) when some parts are already made.</summary>
+    private static int PartsLeftInCurrentLoad(TimelineOperationInput operation, int partsPerLoad)
+    {
+        var made = operation.PlannedQuantity - ProductionCycleQuantity(operation);
+        return (partsPerLoad - made % partsPerLoad) % partsPerLoad;
+    }
+
+    /// <summary>
+    /// The production still ahead, one run per load: the rest of a load in progress first (no new
+    /// load), then a load/unload before each further load. Parts already made get no runs, so their
+    /// loads are not repeated in the forecast.
+    /// </summary>
     private static IReadOnlyList<ProductionRun> ProductionRuns(TimelineOperationInput operation)
     {
-        if (operation.PlannedQuantity == 0)
+        var toMake = ProductionCycleQuantity(operation);
+        if (operation.PlannedQuantity == 0 || toMake == 0)
         {
             return [];
         }
 
-        if (LoadUnloadOccurrenceCount(operation) == 0)
+        if (operation.LoadUnloadDuration == TimeSpan.Zero || PartsPerLoad(operation) is not { } partsPerLoad)
         {
-            return ProductionCycleQuantity(operation) == 0
-                ? []
-                : [new ProductionRun(ProductionCycleQuantity(operation), false)];
+            return [new ProductionRun(toMake, false)];
         }
 
-        var partsPerRun = operation.AutomaticLoading
-            ? operation.LoadUnloadEveryNParts!.Value
-            : 1;
-        var remaining = operation.PlannedQuantity;
-        var skippedProductionParts = operation.PlannedQuantity - ProductionCycleQuantity(operation);
         var runs = new List<ProductionRun>();
+        var remaining = toMake;
+        var loadedAhead = Math.Min(remaining, PartsLeftInCurrentLoad(operation, partsPerLoad));
+        if (loadedAhead > 0)
+        {
+            runs.Add(new ProductionRun(loadedAhead, false));
+            remaining -= loadedAhead;
+        }
         while (remaining > 0)
         {
-            var partCount = Math.Min(remaining, partsPerRun);
-            var skippedInRun = Math.Min(skippedProductionParts, partCount);
-            runs.Add(new ProductionRun(partCount - skippedInRun, true));
-            skippedProductionParts -= skippedInRun;
+            var partCount = Math.Min(remaining, partsPerLoad);
+            runs.Add(new ProductionRun(partCount, true));
             remaining -= partCount;
         }
         return runs;
@@ -1608,7 +1629,9 @@ internal sealed class TimelineCalculationEngine
         var loadAllocations = new List<ScheduledLoad>();
         var phaseLatest = latest;
         var productionRuns = ProductionRuns(entry.Operation);
-        var loadOccurrenceCount = LoadUnloadOccurrenceCount(entry.Operation);
+        var completedLoads = CompletedLoadCount(entry.Operation);
+        var loadOccurrenceCount = completedLoads + LoadUnloadOccurrenceCount(entry.Operation);
+        var loadNumber = loadOccurrenceCount + 1;
         for (var runIndex = productionRuns.Count - 1; runIndex >= 0; runIndex--)
         {
             var run = productionRuns[runIndex];
@@ -1625,6 +1648,7 @@ internal sealed class TimelineCalculationEngine
                 continue;
             }
 
+            loadNumber--;
             ResourcePhase? loadPhase = null;
             Allocation? loadUnload;
             if (entry.Operation.LoadUnloadRequiresWorker)
@@ -1644,7 +1668,7 @@ internal sealed class TimelineCalculationEngine
             loadAllocations.Insert(0, new ScheduledLoad(
                 loadUnload,
                 LoadUnloadDetail(
-                    entry.Operation, runIndex + 1, loadOccurrenceCount,
+                    entry.Operation, loadNumber, loadOccurrenceCount,
                     loadPhase?.ResourceId),
                 WorkerId(loadPhase?.ResourceId)));
             phaseLatest = AllocationStart(loadUnload, phaseLatest);
@@ -1950,7 +1974,9 @@ internal sealed class TimelineCalculationEngine
         var loadAllocations = new List<ScheduledLoad>();
         var phaseEarliest = qaPhase.Allocation.FinishesAt;
         var productionRuns = ProductionRuns(entry.Operation);
-        var loadOccurrenceCount = LoadUnloadOccurrenceCount(entry.Operation);
+        var completedLoads = CompletedLoadCount(entry.Operation);
+        var loadOccurrenceCount = completedLoads + LoadUnloadOccurrenceCount(entry.Operation);
+        var loadNumber = completedLoads;
         // Parts already made are the first ones, so the parts still to make are numbered after them.
         var nextPart = Math.Max(0, entry.Operation.PlannedQuantity - ProductionCycleQuantity(entry.Operation)) + 1;
         var partFinishes = flowPartsReady is null ? null : new Dictionary<int, DateTimeOffset>();
@@ -1959,6 +1985,7 @@ internal sealed class TimelineCalculationEngine
             var run = productionRuns[runIndex];
             if (run.RequiresLoadUnload)
             {
+                loadNumber++;
                 // A load of several parts needs all of them from the previous member.
                 var loadRequestedAt = phaseEarliest;
                 var loadEarliest = FlowReady(flowPartsReady, nextPart, run.PartCount, phaseEarliest);
@@ -2004,7 +2031,7 @@ internal sealed class TimelineCalculationEngine
                 loadAllocations.Add(new ScheduledLoad(
                     loadUnload,
                     LoadUnloadDetail(
-                        entry.Operation, runIndex + 1, loadOccurrenceCount,
+                        entry.Operation, loadNumber, loadOccurrenceCount,
                         loadPhase?.ResourceId),
                     WorkerId(loadPhase?.ResourceId)));
                 phaseEarliest = loadUnload.FinishesAt;
@@ -2052,10 +2079,10 @@ internal sealed class TimelineCalculationEngine
 
         var startsAt = setupPhase.Allocation.Intervals.FirstOrDefault()?.StartsAt
             ?? qaPhase.Allocation.Intervals.FirstOrDefault()?.StartsAt
+            // The rest of a load in progress is made before the first load ahead.
             ?? loadAllocations.SelectMany(load => load.Allocation.Intervals)
-                .FirstOrDefault()?.StartsAt
-            ?? productionAllocations.SelectMany(production => production.Intervals)
-                .FirstOrDefault()?.StartsAt
+                .Concat(productionAllocations.SelectMany(production => production.Intervals))
+                .MinBy(window => window.StartsAt)?.StartsAt
             ?? earliest;
         var setupIntervals = setupPhase.Allocation.Intervals.Select(window => new TimelineInterval(
             TimelineIntervalType.Setup,

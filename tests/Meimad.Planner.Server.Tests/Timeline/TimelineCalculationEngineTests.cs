@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Meimad.Planner.Server.Domain.Timeline;
 
 namespace Meimad.Planner.Server.Tests.Timeline;
@@ -1375,6 +1375,47 @@ public sealed class TimelineCalculationEngineTests
         Assert.Equal(TimeSpan.FromSeconds(300),
             TimeSpan.FromTicks(scheduled.ProductionIntervals.Sum(interval => (interval.EndsAt - interval.StartsAt).Ticks)));
         Assert.Equal(TimeSpan.FromSeconds(870), scheduled.FinishesAt - scheduled.StartsAt);
+    }
+
+    [Fact]
+    public void Reported_parts_keep_their_loads_so_each_load_ahead_precedes_a_part()
+    {
+        // 20 of 35 parts reported: the 15 parts ahead each get their own load, numbered after the
+        // 20 loads already done, and no load is left without a part after it.
+        var manual = new TimelineOperationInput(
+            "op-reported", TimeSpan.Zero, TimeSpan.FromMinutes(10),
+            LoadUnloadDuration: TimeSpan.FromMinutes(2), PlannedQuantity: 35, ProductionCycleQuantity: 15);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [manual])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], []));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        var loads = scheduled.LoadUnloadIntervals!;
+        Assert.Equal(15, loads.Count);
+        Assert.Equal(15, scheduled.ProductionIntervals.Count);
+        Assert.StartsWith("Part reload 21/35", loads[0].Detail, StringComparison.Ordinal);
+        Assert.StartsWith("Part reload 35/35", loads[^1].Detail, StringComparison.Ordinal);
+        for (var index = 0; index < loads.Count; index++)
+            Assert.Equal(loads[index].EndsAt, scheduled.ProductionIntervals[index].StartsAt);
+        Assert.Equal(TimeSpan.FromMinutes(15 * 12), scheduled.FinishesAt - scheduled.StartsAt);
+
+        // Automatic loading every 10 parts with 25 made: the 5 parts left in the load in progress
+        // need no new load; one load (the 4th) brings the last 5.
+        var automatic = manual with
+        {
+            OperationId = "op-automatic", AutomaticLoading = true, LoadUnloadEveryNParts = 10, ProductionCycleQuantity = 10
+        };
+        var automaticResult = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [automatic])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], []));
+        var automaticScheduled = Assert.Single(automaticResult.Operations);
+        var automaticLoad = Assert.Single(automaticScheduled.LoadUnloadIntervals!);
+        Assert.StartsWith("Part reload 4/4", automaticLoad.Detail, StringComparison.Ordinal);
+        Assert.Equal(automaticScheduled.StartsAt.AddMinutes(50), automaticLoad.StartsAt);
+        Assert.Equal(TimeSpan.FromMinutes(102), automaticScheduled.FinishesAt - automaticScheduled.StartsAt);
     }
 
     private static TimelineCalculationInput Input(
