@@ -174,7 +174,7 @@
                             </MenuItem.Icon>
                         </MenuItem>
                         <MenuItem Header="In Production" Tag="IN_PRODUCTION" Click="WorkflowStatus_Click"
-                                  IsEnabled="{Binding CanReportWorkflow}" ToolTip="{Binding WorkflowReportingToolTip}"
+                                  IsEnabled="{Binding CanReportProductionStatus}" ToolTip="{Binding ProductionReportingToolTip}"
                                   ToolTipService.ShowOnDisabled="True" AutomationProperties.Name="In Production">
                             <MenuItem.Icon>
                                 <RadioButton IsChecked="{Binding IsWorkflowInProduction, Mode=OneWay}" IsHitTestVisible="False" Focusable="False"
@@ -183,7 +183,7 @@
                         </MenuItem>
                         <Separator />
                         <MenuItem Header="Report machined parts…"
-                                  ToolTip="Set how many parts are machined so far. The Timeline then plans only the remaining parts. Needs a running operation on a Machine without DPRNT output."
+                                  ToolTip="{Binding MachinedPartsToolTip}"
                                   IsEnabled="{Binding CanReportMachinedParts}"
                                   ToolTipService.ShowOnDisabled="True"
                                   Click="ReportMachinedParts_Click"

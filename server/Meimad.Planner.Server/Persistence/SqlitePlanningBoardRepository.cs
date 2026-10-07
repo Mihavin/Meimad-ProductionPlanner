@@ -231,6 +231,7 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
         // output reports it; on the others the planner reports it by hand (owner decision 2026-09-29).
         var latestEvents = await SqliteMachineWorkflowReporting.ReadLatestEventsAsync(connection, transaction, cancellationToken);
         var machinesWithDprnt = await SqliteMachineWorkflowReporting.ReadMachinesWithDprntAsync(connection, transaction, cancellationToken);
+        var verifiedPackages = await SqliteMachineWorkflowReporting.ReadVerifiedPackagesAsync(connection, transaction, cancellationToken);
         var operations = new List<PlanningBoardOperation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -357,7 +358,12 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 MeasuredLoadUnloadSamples: measuredLoad?.SampleCount ?? 0,
                 WorkflowStatus: machineId is null ? null
                     : ManualWorkflowStatuses.Project(latestEvents.GetValueOrDefault(reader.GetString(0))),
-                ManualWorkflowReporting: machineId is not null && !machinesWithDprnt.Contains(machineId)));
+                ManualWorkflowReporting: machineId is not null
+                    && SqliteMachineWorkflowReporting.Mode(machineId, reader.GetString(0), machinesWithDprnt, verifiedPackages)
+                        != WorkflowReportingMode.Machine,
+                ManualProductionReporting: machineId is not null
+                    && SqliteMachineWorkflowReporting.Mode(machineId, reader.GetString(0), machinesWithDprnt, verifiedPackages)
+                        == WorkflowReportingMode.Manual));
         }
 
         await reader.DisposeAsync();

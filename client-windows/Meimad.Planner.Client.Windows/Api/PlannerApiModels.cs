@@ -1910,7 +1910,8 @@ internal sealed record PlanningBoardOperation(
     int MeasuredQaSamples = 0,
     int MeasuredLoadUnloadSamples = 0,
     string? WorkflowStatus = null,
-    bool ManualWorkflowReporting = false);
+    bool ManualWorkflowReporting = false,
+    bool? ManualProductionReporting = null);
 
 /// <summary>A production status reported by hand; <see cref="EventId"/> is null when nothing changed.</summary>
 internal sealed record PlannerWorkflowStatusReport(

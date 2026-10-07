@@ -572,7 +572,8 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
 
     /// <summary>
     /// A planner reports the workflow status of an operation on a Machine without DPRNT output
-    /// (owner decisions 2026-09-29). The Server records the Production Run workflow event that
+    /// (owner decisions 2026-09-29), or the setup statuses on a DPRNT Machine whose package for the
+    /// operation has no Server verification (owner decision 2026-10-07). The Server records the Production Run workflow event that
     /// telemetry would have produced, so tablets, the QC queue and the Timeline see the same
     /// status. Every status after "ready for setup" means the Machine works on the operation, so
     /// a not-started or paused operation is started first (with the usual start rules).
@@ -591,10 +592,16 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 "The operation is finished; its production status can no longer change.");
         if (execution.AssignmentId is null || execution.MachineId is null)
             throw new BatchOperationNotAssignedException(batchOperationId);
-        if ((await SqliteMachineWorkflowReporting.ReadMachinesWithDprntAsync(connection, transaction, cancellationToken))
-            .Contains(execution.MachineId))
+        var mode = SqliteMachineWorkflowReporting.Mode(
+            execution.MachineId, batchOperationId,
+            await SqliteMachineWorkflowReporting.ReadMachinesWithDprntAsync(connection, transaction, cancellationToken),
+            await SqliteMachineWorkflowReporting.ReadVerifiedPackagesAsync(connection, transaction, cancellationToken));
+        if (mode == WorkflowReportingMode.Machine)
             throw new ManualWorkflowStatusException("machine_reports_workflow",
-                "This Machine reports its production status through DPRNT. To report it by hand, switch the Machine's DPRNT output off in Setup → Machine connection.");
+                "This Machine reports this operation's status through DPRNT: its package has Server verification, so the Offset Loader starts the setup. To report it by hand, switch the Machine's DPRNT output off in Setup → Machine connection.");
+        if (mode == WorkflowReportingMode.SetupByHand && status == ManualWorkflowStatuses.InProduction)
+            throw new ManualWorkflowStatusException("machine_reports_production",
+                "This Machine reports production through DPRNT: after QC pass (Ready For Production) its next cycle start starts production.");
 
         string? runId;
         await using (var read = connection.CreateCommand())

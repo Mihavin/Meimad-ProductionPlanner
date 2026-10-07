@@ -4817,5 +4817,10 @@
   "Machine usage per machine and overall, and each machine's DPRNT log": "Загрузка по станкам и в целом, а также журнал DPRNT каждого станка",
   "Loading the DPRNT log...": "Загрузка журнала DPRNT...",
   "Choose a machine and press Load log. Without dates the whole log is loaded.": "Выберите станок и нажмите «Загрузить журнал». Без дат загружается весь журнал.",
-  "DPRNT log": "Журнал DPRNT"
+  "DPRNT log": "Журнал DPRNT",
+  "This Machine counts production through DPRNT, but its package has no Server verification, so no Offset Loader reports the setup: report Setup Run, QC and Ready For Production here.": "Станок считает производство через DPRNT, но у его пакета нет проверки сервером, поэтому никакой загрузчик коррекций не сообщает о наладке: отмечайте здесь Setup Run, ОТК и Ready For Production.",
+  "This Machine reports production through DPRNT: after Ready For Production its next cycle start starts production.": "Станок сообщает о производстве через DPRNT: после Ready For Production его следующий запуск цикла начинает производство.",
+  "This Machine counts its parts through DPRNT.": "Станок считает свои детали через DPRNT.",
+  "This Machine reports this operation's status through DPRNT: its package has Server verification, so the Offset Loader starts the setup. To report it by hand, switch the Machine's DPRNT output off in Setup → Machine connection.": "Станок сообщает статус этой операции через DPRNT: у его пакета есть проверка сервером, поэтому наладку начинает загрузчик коррекций. Чтобы отмечать вручную, выключите вывод DPRNT станка в Настройки → Подключение станка.",
+  "This Machine reports production through DPRNT: after QC pass (Ready For Production) its next cycle start starts production.": "Станок сообщает о производстве через DPRNT: после приёмки ОТК (Ready For Production) его следующий запуск цикла начинает производство."
 }

@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Meimad.Planner.Server.Application.ProductionRuns;
 using Meimad.Planner.Server.Domain.Cnc;
 using Meimad.Planner.Server.Persistence;
 using Meimad.Planner.Server.Tests.ToolPreparations;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Meimad.Planner.Server.Tests.MachineAssignments;
 
@@ -76,7 +78,7 @@ public sealed class ManualWorkflowStatusApiTests
     }
 
     [Fact]
-    public async Task A_machine_with_dprnt_output_reports_itself_until_its_dprnt_output_is_switched_off()
+    public async Task A_dprnt_machine_without_a_verified_package_gets_its_setup_reported_by_hand_and_counts_production_itself()
     {
         await using var server = await ToolPreparationApiTests.TestServer.StartAsync(verificationEnabled: false);
         await ReserveMaterialAsync(server);
@@ -88,16 +90,68 @@ public sealed class ManualWorkflowStatusApiTests
             VALUES ('connection-package', 'machine-package', 'CUSTOM', 1, 'OFFLINE', 1000,
                 3000, 30000, 1, 0, '{"dprnt":{"source":"TCP"}}', 14, 1, '2026-09-01T08:00:00Z', '2026-09-01T08:00:00Z');
             """);
-        Assert.False((await BoardOperationAsync(server.Client)).GetProperty("manualWorkflowReporting").GetBoolean());
-        using var refused = await server.Client.PostAsJsonAsync(Status, new { status = "IN_SETUP_RUN" });
-        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
-        Assert.Contains("machine_reports_workflow", await refused.Content.ReadAsStringAsync(), StringComparison.Ordinal);
 
+        // No package with Server verification: no Offset Loader can start the setup, so the planner
+        // reports setup, QC and QC pass (owner decision 2026-10-07); production stays with DPRNT.
+        var operation = await BoardOperationAsync(server.Client);
+        Assert.True(operation.GetProperty("manualWorkflowReporting").GetBoolean());
+        Assert.False(operation.GetProperty("manualProductionReporting").GetBoolean());
+        using (var production = await server.Client.PostAsJsonAsync(Status, new { status = "IN_PRODUCTION" }))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, production.StatusCode);
+            Assert.Contains("machine_reports_production", await production.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        }
+        await ReportAsync(server.Client, "IN_SETUP_RUN");
+        await ReportAsync(server.Client, "IN_QC");
+        await ReportAsync(server.Client, "READY_FOR_PRODUCTION");
+
+        // After QC pass the Machine's next cycle start is production.
+        var programId = (string)(await server.ScalarAsync(
+            "SELECT id FROM production_run_programs WHERE production_run_id = 'run:batch-operation:operation-package';"))!;
+        var cycle = await server.Application.Services.GetRequiredService<IProductionRunCncObservationRepository>()
+            .ConsumeCycleEventAsync(new CncCycleObservation(
+                "machine-package", "CYCLE_START", "NC-1-S-1", 1, 10, null, programId, "MEIMAD/V/1/EVENT/CST/ID/NC-1-S-1"), default);
+        Assert.True(cycle.Accepted, cycle.Code);
+        Assert.Equal("IN_PRODUCTION", (await BoardOperationAsync(server.Client)).GetProperty("workflowStatus").GetString());
+        using (var parts = await server.Client.PostAsJsonAsync(
+                   "/api/v1/batch-operations/operation-package/machined-parts", new { quantity = 2 }))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, parts.StatusCode);
+            Assert.Contains("machine_reports_workflow", await parts.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        }
+
+        // A package with Server verification has an Offset Loader: the Machine reports everything.
+        await server.ExecuteAsync("""
+            INSERT INTO offset_loader_releases (
+                id, production_run_id, machine_id, nc_release_id, tool_table_release_id,
+                verification_release_token, created_at, created_by)
+            VALUES ('offset-verified', 'run:batch-operation:operation-package', 'machine-package', 'gcode-1', 'tools-1',
+                4242, '2026-09-01T08:00:00Z', 'test');
+            INSERT INTO production_packages (
+                id, batch_operation_id, machine_assignment_id, machine_id, tool_table_release_id, offset_loader_release_id,
+                execution_mode, verification_enabled, verification_configuration_version, verification_macro_version,
+                manifest_relative_path, manifest_hash, created_at, created_by)
+            VALUES ('package-verified', 'operation-package', 'assignment-package', 'machine-package', 'tools-1', 'offset-verified',
+                'CNC_GCODE', 1, 1, 10, 'package-verified/manifest.json',
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-09-01T08:00:00Z', 'test');
+            INSERT INTO production_package_current (batch_operation_id, machine_id, production_package_id, activated_at)
+            VALUES ('operation-package', 'machine-package', 'package-verified', '2026-09-01T08:00:00Z');
+            """);
+        Assert.False((await BoardOperationAsync(server.Client)).GetProperty("manualWorkflowReporting").GetBoolean());
+        using (var refused = await server.Client.PostAsJsonAsync(Status, new { status = "IN_SETUP_RUN" }))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+            Assert.Contains("machine_reports_workflow", await refused.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        }
+
+        // With the DPRNT output switched off everything is reported by hand again.
         await server.ExecuteAsync("""
             UPDATE machine_connections SET configuration_json = '{"dprnt":{"source":"TCP","enabled":false}}'
             WHERE id = 'connection-package';
             """);
-        Assert.True((await BoardOperationAsync(server.Client)).GetProperty("manualWorkflowReporting").GetBoolean());
+        operation = await BoardOperationAsync(server.Client);
+        Assert.True(operation.GetProperty("manualWorkflowReporting").GetBoolean());
+        Assert.True(operation.GetProperty("manualProductionReporting").GetBoolean());
         await ReportAsync(server.Client, "IN_SETUP_RUN");
     }
 

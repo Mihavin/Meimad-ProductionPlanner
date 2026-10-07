@@ -1787,13 +1787,21 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
         LoadUnloadTimeSeconds = operation.LoadUnloadTimeSeconds;
         WorkflowStatus = operation.WorkflowStatus;
         ManualWorkflowReporting = operation.ManualWorkflowReporting;
+        // A Server without the field reports every status by hand wherever it allows manual reporting.
+        ManualProductionReporting = operation.ManualProductionReporting ?? operation.ManualWorkflowReporting;
     }
 
     /// <summary>The Production Run's workflow status (READY_FOR_SETUP … IN_PRODUCTION); null when unassigned.</summary>
     public string? WorkflowStatus { get; }
 
-    /// <summary>The Machine has no DPRNT output, so the planner reports the production status by hand.</summary>
+    /// <summary>
+    /// The planner reports the workflow status by hand: on a Machine without DPRNT output, or the setup
+    /// statuses on a DPRNT Machine whose package has no Server verification (owner decision 2026-10-07).
+    /// </summary>
     public bool ManualWorkflowReporting { get; }
+
+    /// <summary>The planner also reports In Production and machined parts (no DPRNT output).</summary>
+    public bool ManualProductionReporting { get; }
 
     public bool IsWorkflowReadyForSetup => WorkflowStatus == "READY_FOR_SETUP";
     public bool IsWorkflowInSetupRun => WorkflowStatus is "IN_SETUP_RUN" or "IN_SETUP";
@@ -1801,14 +1809,25 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public bool IsWorkflowReadyForProduction => WorkflowStatus == "READY_FOR_PRODUCTION";
     public bool IsWorkflowInProduction => WorkflowStatus == "IN_PRODUCTION";
     public bool CanReportWorkflow => ManualWorkflowReporting && MachineId is not null && Status is not ("completed" or "cancelled");
-    public bool CanReportMachinedParts => ManualWorkflowReporting && MachineId is not null && Status == "in_progress";
+    public bool CanReportProductionStatus => CanReportWorkflow && ManualProductionReporting;
+    public bool CanReportMachinedParts => ManualProductionReporting && MachineId is not null && Status == "in_progress";
     public bool CanMarkFinished => MachineId is not null && Status is not ("completed" or "cancelled");
     public string WorkflowStatusText => WorkflowStatus is null ? string.Empty : WorkflowStatusLabel(WorkflowStatus);
     public string WorkflowReportingToolTip => MachineId is null
         ? "Assign the operation to a Machine first."
-        : ManualWorkflowReporting
+        : ManualProductionReporting
             ? "This Machine has no DPRNT output: report its production status here. The Server records it like the Machine would."
-            : "This Machine reports its production status through DPRNT. To report it by hand, switch the Machine's DPRNT output off in Setup → Machine connection.";
+            : ManualWorkflowReporting
+                ? "This Machine counts production through DPRNT, but its package has no Server verification, so no Offset Loader reports the setup: report Setup Run, QC and Ready For Production here."
+                : "This Machine reports its production status through DPRNT. To report it by hand, switch the Machine's DPRNT output off in Setup → Machine connection.";
+
+    public string ProductionReportingToolTip => ManualWorkflowReporting && !ManualProductionReporting
+        ? "This Machine reports production through DPRNT: after Ready For Production its next cycle start starts production."
+        : WorkflowReportingToolTip;
+
+    public string MachinedPartsToolTip => ManualWorkflowReporting && !ManualProductionReporting
+        ? "This Machine counts its parts through DPRNT."
+        : "Set how many parts are machined so far. The Timeline then plans only the remaining parts. Needs a running operation on a Machine without DPRNT output.";
 
     internal static string WorkflowStatusLabel(string status) => status switch
     {

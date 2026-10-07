@@ -4817,5 +4817,10 @@
   "Machine usage per machine and overall, and each machine's DPRNT log": "ניצולת מכונות לפי מכונה ובסך הכול, ויומן ה-DPRNT של כל מכונה",
   "Loading the DPRNT log...": "טוען את יומן ה-DPRNT...",
   "Choose a machine and press Load log. Without dates the whole log is loaded.": "בחרו מכונה ולחצו על טעינת יומן. בלי תאריכים נטען היומן כולו.",
-  "DPRNT log": "יומן DPRNT"
+  "DPRNT log": "יומן DPRNT",
+  "This Machine counts production through DPRNT, but its package has no Server verification, so no Offset Loader reports the setup: report Setup Run, QC and Ready For Production here.": "המכונה סופרת ייצור דרך DPRNT, אבל לחבילה שלה אין אימות שרת, ולכן אף מטעין Offset לא מדווח על הכיוון: דווחו כאן Setup Run, בקרת איכות ו-Ready For Production.",
+  "This Machine reports production through DPRNT: after Ready For Production its next cycle start starts production.": "המכונה מדווחת על ייצור דרך DPRNT: אחרי Ready For Production, הפעלת המחזור הבאה שלה מתחילה את הייצור.",
+  "This Machine counts its parts through DPRNT.": "המכונה סופרת את החלקים שלה דרך DPRNT.",
+  "This Machine reports this operation's status through DPRNT: its package has Server verification, so the Offset Loader starts the setup. To report it by hand, switch the Machine's DPRNT output off in Setup → Machine connection.": "המכונה מדווחת על מצב הפעולה הזו דרך DPRNT: לחבילה שלה יש אימות שרת, ולכן מטעין ה-Offset מתחיל את הכיוון. כדי לדווח ידנית, כבו את פלט ה-DPRNT של המכונה בהגדרות ← חיבור מכונה.",
+  "This Machine reports production through DPRNT: after QC pass (Ready For Production) its next cycle start starts production.": "המכונה מדווחת על ייצור דרך DPRNT: אחרי אישור בקרת איכות (Ready For Production), הפעלת המחזור הבאה שלה מתחילה את הייצור."
 }

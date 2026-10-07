@@ -1142,6 +1142,14 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 
 **Tests:** `TimelineCalculationEngineTests.Locked_simultaneous_members_are_set_up_one_after_the_other_by_the_one_qualified_setup_worker`; the other locked-group tests keep their results.
 
+## Setup reported by hand on DPRNT Machines without Server verification (2026-10-07)
+
+**Problem:** Machine 15 (DPRNT output, package built with Server verification disabled) stayed "Ready for setup": only the verification Offset Loader prints the `OLC` event that starts the setup, a DPRNT `CYCLE_START` is accepted only after `QC_PASS` (anomaly `cycle_started_before_qc_pass`), and the manual status menu was hidden for every DPRNT Machine.
+
+**Owner decision (2026-10-07):** option B, "Allow manual reporting on DPRNT machines" (rather than treating the first cycle start as the setup run).
+
+**Implemented:** each Planning Board operation has a reporting mode: manual (no DPRNT; every status and machined parts), setup by hand (DPRNT and no current package with Server verification for the operation on that Machine; Ready for Setup, Setup Run, Passed to QC and Ready For Production), or machine (DPRNT and a verified package). `manualWorkflowReporting` is true for the first two and the new `manualProductionReporting` only for the first. `POST .../workflow-status` refuses `IN_PRODUCTION` on a DPRNT Machine with `409 machine_reports_production`; machined parts stay with DPRNT. After a hand-reported QC pass the Machine's next `CST` is accepted as production. The client enables In Production and Report machined parts only with `manualProductionReporting` and explains why in the tooltips. **Test:** `ManualWorkflowStatusApiTests.A_dprnt_machine_without_a_verified_package_gets_its_setup_reported_by_hand_and_counts_production_itself`; client `RealTimesAndManualWorkflowTests`.
+
 ## Permanent DPRNT log (2026-10-07, schema v96)
 
 **Request (2026-10-07):** the owner asked for the full DPRNT log of Machine 15 for all time, "not only MEIMAD events". The Server had kept only `MEIMAD/` lines (as `DPRINT_EVENT` raw telemetry, pruned after 14 days) and discarded every other line, so the full history could not be recovered; the owner approved capturing every line from now on.

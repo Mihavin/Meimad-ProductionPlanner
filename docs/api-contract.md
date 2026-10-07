@@ -2797,8 +2797,10 @@ Owner decisions 2026-09-29: on the Planning Board, the planner reports the produ
 
   - Any status after `READY_FOR_SETUP` starts a not-started or paused operation first, under the usual start rules (first in the backlog, no other running operation, readiness).
   - It returns `{ batchOperationId, machineId, status, previousStatus, eventId, recordedAt }`. `eventId` is null when the run already had that status.
+  - On a Machine with DPRNT output the setup statuses (`READY_FOR_SETUP`, `IN_SETUP_RUN`, `IN_QC`, `READY_FOR_PRODUCTION`) are still reported here when the operation's current Production Package has no Server verification, because no Offset Loader event can start its setup (owner decision 2026-10-07). `IN_PRODUCTION` stays with the Machine: after `QC_PASS` its next DPRNT `CYCLE_START` starts production.
   - Errors:
-    - `409 machine_reports_workflow` for a Machine with DPRNT;
+    - `409 machine_reports_workflow` for a Machine with DPRNT whose current package for the operation has Server verification;
+    - `409 machine_reports_production` for `IN_PRODUCTION` on a Machine with DPRNT;
     - `409 operation_finished`;
     - `409 operation_not_assigned`;
     - `422` for an unknown status;
@@ -2815,7 +2817,8 @@ Owner decisions 2026-09-29: on the Planning Board, the planner reports the produ
   - A hand-reported `IN_QC` enters the QC queue like a tablet's.
 - Planning Board operations add:
   - `workflowStatus` (the projected status of the run, null when unassigned);
-  - `manualWorkflowReporting` (the Machine has no DPRNT).
+  - `manualWorkflowReporting` (the planner reports statuses: the Machine has no DPRNT, or it has DPRNT and the operation's current package has no Server verification);
+  - `manualProductionReporting` (the planner also reports `IN_PRODUCTION` and machined parts: the Machine has no DPRNT).
 - Timeline: a running operation whose run is `IN_QC` has no setup left, and one that is `READY_FOR_PRODUCTION` or `IN_PRODUCTION` has no setup or QC left.
 - Finish:
   - `POST …/finish` also accepts `not_started` and `suspended`. It marks an operation finished outside the plan (actual start stays empty) and closes an active pause.

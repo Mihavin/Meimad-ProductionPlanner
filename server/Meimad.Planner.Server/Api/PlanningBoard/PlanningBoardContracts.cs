@@ -115,7 +115,8 @@ internal sealed record PlanningBoardOperationResponse(
     int MeasuredQaSamples,
     int MeasuredLoadUnloadSamples,
     string? WorkflowStatus,
-    bool ManualWorkflowReporting)
+    bool ManualWorkflowReporting,
+    bool ManualProductionReporting)
 {
     internal static PlanningBoardOperationResponse FromApplication(
         PlanningBoardOperation operation) => new(
@@ -192,7 +193,8 @@ internal sealed record PlanningBoardOperationResponse(
         operation.MeasuredQaSamples,
         operation.MeasuredLoadUnloadSamples,
         operation.WorkflowStatus,
-        operation.ManualWorkflowReporting);
+        operation.ManualWorkflowReporting,
+        operation.ManualProductionReporting);
 }
 
 internal sealed record PlanningBoardMachineResponse(

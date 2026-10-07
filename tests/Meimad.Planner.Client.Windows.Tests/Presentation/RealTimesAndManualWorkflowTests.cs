@@ -52,6 +52,25 @@ public sealed class RealTimesAndManualWorkflowTests
     }
 
     [Fact]
+    public void A_dprnt_machine_without_a_verified_package_offers_the_setup_statuses_but_not_production()
+    {
+        // Owner decision 2026-10-07: no Offset Loader reports the setup, so the planner does; the
+        // Machine's DPRNT still reports production and counts parts.
+        var setupByHand = Operation("READY_FOR_SETUP", manualReporting: true, manualProduction: false);
+        Assert.True(setupByHand.CanReportWorkflow);
+        Assert.False(setupByHand.CanReportProductionStatus);
+        Assert.False(setupByHand.CanReportMachinedParts);
+        Assert.Contains("no Server verification", setupByHand.WorkflowReportingToolTip, StringComparison.Ordinal);
+        Assert.Contains("next cycle start starts production", setupByHand.ProductionReportingToolTip, StringComparison.Ordinal);
+        Assert.Equal("This Machine counts its parts through DPRNT.", setupByHand.MachinedPartsToolTip);
+
+        // Without the field (an older Server) a manual Machine still reports every status.
+        var manual = Operation("IN_PRODUCTION", manualReporting: true);
+        Assert.True(manual.CanReportProductionStatus);
+        Assert.True(manual.CanReportMachinedParts);
+    }
+
+    [Fact]
     public void Statistics_rows_offer_nc_for_the_cycle_and_real_times_where_they_apply()
     {
         var machine = new PlannerOperationMachineTimes(
@@ -80,10 +99,11 @@ public sealed class RealTimesAndManualWorkflowTests
         Assert.Equal("Operation", loading.UsedText);
     }
 
-    private static PlanningOperationViewModel Operation(string workflowStatus, bool manualReporting) =>
+    private static PlanningOperationViewModel Operation(string workflowStatus, bool manualReporting, bool? manualProduction = null) =>
         new(new PlanningBoardOperation(
             "operation-1", "batch-1", "B-1", "case-1", "PN-1", 10, "Mill",
             "mill", 60, 60, "in_progress", "machine-1", 0,
             WorkflowStatus: workflowStatus,
-            ManualWorkflowReporting: manualReporting));
+            ManualWorkflowReporting: manualReporting,
+            ManualProductionReporting: manualProduction));
 }

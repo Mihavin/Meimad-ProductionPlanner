@@ -120,7 +120,8 @@ internal sealed record PlanningBoardOperation(
     int MeasuredQaSamples = 0,
     int MeasuredLoadUnloadSamples = 0,
     string? WorkflowStatus = null,
-    bool ManualWorkflowReporting = false);
+    bool ManualWorkflowReporting = false,
+    bool ManualProductionReporting = false);
 
 /// <summary>
 /// The unassigned pool of the Machines tab lists only Machine work that is released for production

@@ -5,7 +5,11 @@ using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
 
-/// <summary>The workflow statuses a planner may report for a Machine without DPRNT output.</summary>
+/// <summary>
+/// The workflow statuses a planner may report: all of them on a Machine without DPRNT output, and
+/// the setup statuses (everything but <see cref="InProduction"/>) on a DPRNT Machine whose package
+/// for the operation has no Server verification (owner decision 2026-10-07).
+/// </summary>
 internal static class ManualWorkflowStatuses
 {
     internal const string ReadyForSetup = "READY_FOR_SETUP";
@@ -43,13 +47,57 @@ internal static class ManualWorkflowStatuses
     };
 }
 
+/// <summary>Who reports an operation's workflow statuses.</summary>
+internal enum WorkflowReportingMode
+{
+    /// <summary>The planner reports every status and the machined parts (no DPRNT output).</summary>
+    Manual,
+
+    /// <summary>
+    /// The planner reports setup, QC and QC pass; the Machine's DPRNT reports production and counts
+    /// parts. A DPRNT Machine whose package has no Server verification has no Offset Loader event
+    /// that could start the setup (owner decision 2026-10-07).
+    /// </summary>
+    SetupByHand,
+
+    /// <summary>The Machine reports everything through DPRNT and its package's verification.</summary>
+    Machine
+}
+
 /// <summary>
 /// Which Machines report their own workflow: a CNC Machine whose enabled connection reads a DPRNT
 /// source. Every other Machine (manual, no connection, or DPRNT output switched off) gets its
-/// workflow statuses reported by hand on the Planning Board (owner decision 2026-09-29).
+/// workflow statuses reported by hand on the Planning Board (owner decision 2026-09-29). On a DPRNT
+/// Machine the setup statuses are still reported by hand unless the operation's current package has
+/// Server verification, whose Offset Loader reports the setup (owner decision 2026-10-07).
 /// </summary>
 internal static class SqliteMachineWorkflowReporting
 {
+    internal static WorkflowReportingMode Mode(
+        string machineId, string batchOperationId, IReadOnlySet<string> machinesWithDprnt,
+        IReadOnlySet<(string BatchOperationId, string MachineId)> verifiedPackages) =>
+        !machinesWithDprnt.Contains(machineId) ? WorkflowReportingMode.Manual
+        : verifiedPackages.Contains((batchOperationId, machineId)) ? WorkflowReportingMode.Machine
+        : WorkflowReportingMode.SetupByHand;
+
+    /// <summary>The operations whose current Production Package (on its Machine) has Server verification.</summary>
+    internal static async Task<IReadOnlySet<(string BatchOperationId, string MachineId)>> ReadVerifiedPackagesAsync(
+        SqliteConnection connection, SqliteTransaction? transaction, CancellationToken token)
+    {
+        var operations = new HashSet<(string, string)>();
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT current.batch_operation_id, current.machine_id
+            FROM production_package_current current
+            JOIN production_packages package ON package.id = current.production_package_id
+            WHERE package.verification_enabled = 1;
+            """;
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token)) operations.Add((reader.GetString(0), reader.GetString(1)));
+        return operations;
+    }
+
     internal static async Task<IReadOnlySet<string>> ReadMachinesWithDprntAsync(
         SqliteConnection connection, SqliteTransaction? transaction, CancellationToken token)
     {
