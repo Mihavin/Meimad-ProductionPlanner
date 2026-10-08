@@ -1,4 +1,5 @@
 using System.Text;
+using System.Data;
 using Microsoft.Data.SqlClient;
 
 namespace Meimad.Planner.Server.Application.Kitaron.Push;
@@ -28,7 +29,7 @@ internal sealed class SqlServerKitaronPushTarget : IKitaronPushTarget
                 "SELECT s.[auto], s.[NUMBER], s.[ActionNumber], "
                 + "CAST(CASE WHEN r.[RauteClosed] = 1 OR r.[Stoped] = 1 THEN 1 ELSE 0 END AS bit)");
             foreach (var column in safeColumns) select.Append(", s.[").Append(column).Append(']');
-            select.Append(" FROM dbo.TSubRootCard s WITH (NOLOCK) JOIN dbo.TRootCard r WITH (NOLOCK) ON r.[NUMBER] = s.[NUMBER] WHERE s.[NUMBER] IN (");
+            select.Append(" FROM dbo.TSubRootCard s JOIN dbo.TRootCard r ON r.[NUMBER] = s.[NUMBER] WHERE s.[NUMBER] IN (");
             for (var index = 0; index < chunk.Length; index++)
             {
                 if (index > 0) select.Append(", ");
@@ -60,29 +61,87 @@ internal sealed class SqlServerKitaronPushTarget : IKitaronPushTarget
     {
         await using var sql = new SqlConnection(ConnectionString(connection, password, readOnly: false));
         await sql.OpenAsync(cancellationToken);
+        await WriteAsync(sql, writes, cancellationToken);
+    }
+
+    // The caller opens the connection; this overload also permits isolated SQL Server acceptance tests.
+    internal static async Task WriteAsync(SqlConnection sql, IReadOnlyList<KitaronPushWrite> writes,
+        CancellationToken cancellationToken)
+    {
         await using (var settings = sql.CreateCommand())
         {
-            // Wait at most 15 seconds for a row a Kitaron user is editing, then give up without changes.
             settings.CommandText = "SET XACT_ABORT ON; SET LOCK_TIMEOUT 15000;";
             await settings.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        await using var transaction = (SqlTransaction)await sql.BeginTransactionAsync(cancellationToken);
-        foreach (var write in writes)
+        await using var transaction = (SqlTransaction)await sql.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        // Stable lock order; all rows/fields in this run remain one atomic unit.
+        foreach (var group in writes.GroupBy(x => (x.WorkOrderNumber, x.RowId))
+                     .OrderBy(x => x.Key.WorkOrderNumber).ThenBy(x => x.Key.RowId))
         {
+            var expected = group.First().Expected;
+            if (expected.RowId != group.Key.RowId || expected.WorkOrderNumber != group.Key.WorkOrderNumber
+                || group.Select(x => Column(x.Column)).Distinct(StringComparer.Ordinal).Count() != group.Count()
+                || group.Any(x => !KitaronPushComparison.Matches(expected, x.Expected)
+                    || x.Expected.Values.Count != expected.Values.Count || !expected.Values.ContainsKey(Column(x.Column))))
+                throw KitaronPushComparison.Conflict(group.Key.RowId);
+
+            var columns = expected.Values.Keys.Select(Column).Order(StringComparer.Ordinal).ToArray();
+            await using (var check = sql.CreateCommand())
+            {
+                check.Transaction = transaction;
+                check.CommandText = "SELECT s.[auto], s.[NUMBER], s.[ActionNumber], "
+                    + "CAST(CASE WHEN r.[RauteClosed] = 1 OR r.[Stoped] = 1 THEN 1 ELSE 0 END AS bit), "
+                    + string.Join(", ", columns.Select(c => $"s.[{c}]"))
+                    + " FROM dbo.TRootCard r WITH (UPDLOCK, HOLDLOCK)"
+                    + " JOIN dbo.TSubRootCard s WITH (UPDLOCK, HOLDLOCK) ON r.[NUMBER] = s.[NUMBER]"
+                    + " WHERE s.[NUMBER] = @number;";
+                check.Parameters.AddWithValue("@number", group.Key.WorkOrderNumber);
+                await using var reader = await check.ExecuteReaderAsync(cancellationToken);
+                KitaronOperationRow? current = null;
+                var matchingOperations = 0;
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    var action = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+                    if (KitaronPushPlanner.ParseActionNumber(action) == KitaronPushPlanner.ParseActionNumber(expected.ActionNumber))
+                        matchingOperations++;
+                    if (Convert.ToInt64(reader.GetValue(0)) != group.Key.RowId) continue;
+                    if (current is not null) throw KitaronPushComparison.Conflict(group.Key.RowId);
+                    var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                    for (var i = 0; i < columns.Length; i++)
+                        values[columns[i]] = reader.IsDBNull(i + 4) ? null : reader.GetValue(i + 4);
+                    current = new(Convert.ToInt64(reader.GetValue(0)), Convert.ToInt32(reader.GetValue(1)),
+                        action, reader.GetBoolean(3), values);
+                }
+                if (!KitaronPushComparison.Matches(expected, current) || matchingOperations != 1)
+                    throw KitaronPushComparison.Conflict(group.Key.RowId);
+            }
+
             await using var command = sql.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText =
-                $"UPDATE dbo.TSubRootCard SET [{Column(write.Column)}] = @value WHERE [auto] = @row AND [NUMBER] = @number;";
-            command.Parameters.AddWithValue("@value", write.Value);
-            command.Parameters.AddWithValue("@row", write.RowId);
-            command.Parameters.AddWithValue("@number", write.WorkOrderNumber);
-            var changed = await command.ExecuteNonQueryAsync(cancellationToken);
-            if (changed != 1)
-            {
-                throw new InvalidOperationException(
-                    $"Kitaron operation row {write.RowId} of Work Order {write.WorkOrderNumber} no longer exists.");
-            }
+            var fields = group.ToArray();
+            // OUTPUT INTO isolates our affected-row count from AFTER-trigger row counts/NOCOUNT.
+            // An INSTEAD OF trigger could report a row without applying it, so refuse that unsupported schema.
+            command.CommandText = """
+                IF EXISTS (SELECT 1 FROM sys.triggers WHERE parent_id = OBJECT_ID(N'dbo.TSubRootCard')
+                    AND is_instead_of_trigger = 1 AND is_disabled = 0)
+                    THROW 51000, 'Kitaron push does not support enabled INSTEAD OF triggers.', 1;
+                DECLARE @changed TABLE (id bigint);
+                """
+                + "UPDATE dbo.TSubRootCard SET "
+                + string.Join(", ", fields.Select((x, i) => $"[{Column(x.Column)}] = @value{i}"))
+                + " OUTPUT inserted.[auto] INTO @changed WHERE [auto] = @row AND [NUMBER] = @number;"
+                + " SELECT @changedCount = COUNT_BIG(*) FROM @changed;";
+            for (var i = 0; i < fields.Length; i++)
+                command.Parameters.AddWithValue("@value" + i, fields[i].Value);
+            command.Parameters.AddWithValue("@row", group.Key.RowId);
+            command.Parameters.AddWithValue("@number", group.Key.WorkOrderNumber);
+            var count = command.Parameters.Add("@changedCount", SqlDbType.BigInt);
+            count.Direction = ParameterDirection.Output;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            var changed = Convert.ToInt64(count.Value);
+            if (changed != 1) throw KitaronPushComparison.Conflict(group.Key.RowId);
         }
         await transaction.CommitAsync(cancellationToken);
     }

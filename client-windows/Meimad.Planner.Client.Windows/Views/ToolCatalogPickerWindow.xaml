@@ -1,8 +1,8 @@
-<Window x:Class="Meimad.Planner.Client.Windows.Views.ToolCatalogPickerWindow"
+<Window Style="{DynamicResource {x:Type Window}}" x:Class="Meimad.Planner.Client.Windows.Views.ToolCatalogPickerWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Pick a catalog tool" Width="860" Height="520" MinWidth="640" MinHeight="360"
-        WindowStartupLocation="CenterOwner" Background="{StaticResource CanvasBrush}">
+        WindowStartupLocation="CenterOwner" Background="{DynamicResource CanvasBrush}">
   <Grid Margin="12">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
@@ -30,7 +30,7 @@
         <Button Content="Use this tool" Width="120" Margin="0,0,8,0" Click="Use_Click" IsDefault="True" />
         <Button Content="Cancel" Width="90" IsCancel="True" />
       </StackPanel>
-      <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
+      <TextBlock x:Name="StatusText" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
     </DockPanel>
   </Grid>
 </Window>

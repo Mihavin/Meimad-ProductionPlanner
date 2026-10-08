@@ -228,7 +228,7 @@ internal sealed class MachineAssignmentService
         BatchOperationExecutionAction action,
         OperationPauseReason? pauseReason,
         EditAuthority editAuthority,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string? readinessStamp = null)
     {
         if (string.IsNullOrWhiteSpace(batchOperationId))
         {
@@ -243,7 +243,7 @@ internal sealed class MachineAssignmentService
             pauseReason,
             timeProvider.GetUtcNow(),
             editAuthority,
-            cancellationToken);
+            cancellationToken, readinessStamp);
     }
 
     internal Task<IReadOnlyList<FinishedOperation>> ListFinishedOperationsAsync(

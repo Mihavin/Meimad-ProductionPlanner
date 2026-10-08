@@ -1,3 +1,5 @@
+using Meimad.Planner.Server.Application.ProductionPackages;
+using Meimad.Planner.Server.Api.ProductionPackages;
 using Meimad.Planner.Server.Application.ToolPreparations;
 using Meimad.Planner.Server.Domain.ToolPreparations;
 using Meimad.Planner.Server.Application.Accounts;
@@ -25,7 +27,7 @@ internal static class ToolPreparationEndpoints
     {
         try
         {
-            return Results.Ok(ToolPreparationResponse.FromDomain(await service.ReadAsync(operationId, token)));
+            return Results.Ok(ToolPreparationResponse.FromDomain(await service.ReadAsync(operationId, token, ProductionPackageEndpoints.Selection(context))));
         }
         catch (Exception exception) when (TryMapError(exception, context, out var error))
         {
@@ -44,7 +46,7 @@ internal static class ToolPreparationEndpoints
             return identityError!;
         try
         {
-            var view = await service.SaveAsync(operationId, request.ToDomain(), userId!, token);
+            var view = await service.SaveAsync(operationId, request.ToDomain(), userId!, token, ProductionPackageEndpoints.Selection(context));
             return Results.Ok(ToolPreparationResponse.FromDomain(view));
         }
         catch (Exception exception) when (TryMapError(exception, context, out var error))
@@ -57,6 +59,7 @@ internal static class ToolPreparationEndpoints
     {
         result = exception switch
         {
+            ProductionPackageBuildException conflict => PlanningHttpSupport.Error(409, conflict.Code, conflict.Message, context),
             ToolPreparationNotFoundException => PlanningHttpSupport.Error(
                 StatusCodes.Status404NotFound, "resource_not_found", exception.Message, context),
             ToolPreparationConflictException conflict => PlanningHttpSupport.Error(
@@ -167,7 +170,8 @@ internal sealed record ToolPreparationResponse(
     string? MachineSpindleAdaptorId,
     string? MachinePullStudId,
     IReadOnlyList<SpindleAdaptor> SpindleAdaptors,
-    IReadOnlyList<PullStud> PullStuds)
+    IReadOnlyList<PullStud> PullStuds,
+    ProductionPackageContext? Context = null)
 {
     internal static ToolPreparationResponse FromDomain(ToolPreparationView view)
     {
@@ -193,6 +197,6 @@ internal sealed record ToolPreparationResponse(
             view.ToolTableFileName, view.Current?.VersionNumber ?? 0, view.Current?.ToolPreparationId,
             view.Current?.SavedAt, view.Current?.SavedBy, view.Current?.Comment, view.Current?.ContentHash,
             view.Current?.ToolTableReleaseId, tools, machine?.SpindleAdaptorId, machine?.PullStudId,
-            view.Spindle?.Adaptors ?? [], view.Spindle?.PullStuds ?? []);
+            view.Spindle?.Adaptors ?? [], view.Spindle?.PullStuds ?? [], view.Context);
     }
 }

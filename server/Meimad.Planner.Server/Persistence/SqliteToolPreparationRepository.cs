@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.ProductionPackages;
 using System.Globalization;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.ToolPreparations;
@@ -8,12 +9,17 @@ namespace Meimad.Planner.Server.Persistence;
 
 internal sealed class SqliteToolPreparationRepository(SqliteDatabase database) : IToolPreparationRepository
 {
-    public async Task<ToolPreparationView?> ReadViewAsync(string batchOperationId, CancellationToken cancellationToken)
+    public Task<ToolPreparationView?> ReadViewAsync(string batchOperationId, CancellationToken cancellationToken)
+        => ReadViewAsync(batchOperationId, null, cancellationToken);
+
+    public async Task<ToolPreparationView?> ReadViewAsync(string batchOperationId, ProductionPackageSelection? selection, CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: true);
-        var readiness = await SqliteProductionReadinessContextReader.ReadAsync(
-            connection, transaction, batchOperationId, cancellationToken);
+        var exact = await SqliteProductionPackageContext.ResolveAsync(connection, transaction, batchOperationId, selection, cancellationToken);
+        if (exact is null) return null;
+        var readiness = await SqliteProductionReadinessContextReader.ReadForPackageAsync(
+            connection, transaction, exact, cancellationToken);
         if (readiness?.MachineId is null) return null;
         if (readiness.ActiveToolTableReleaseId is null)
             throw new ToolPreparationValidationException(
@@ -48,16 +54,25 @@ internal sealed class SqliteToolPreparationRepository(SqliteDatabase database) :
         await transaction.CommitAsync(cancellationToken);
         return new ToolPreparationView(
             batchOperationId, readiness.MachineId, machineNumber, machineName, processType, ncDialect, offsetKind,
-            readiness.ActiveToolTableReleaseId, toolTableRevision, toolTableFileName, released, current, spindle);
+            readiness.ActiveToolTableReleaseId, toolTableRevision, toolTableFileName, released, current, spindle, exact);
     }
+
+    public Task<ToolPreparation> SaveAsync(ToolPreparation preparation, int expectedVersion, CancellationToken cancellationToken)
+        => SaveAsync(preparation, expectedVersion, null, cancellationToken);
 
     public async Task<ToolPreparation> SaveAsync(
         ToolPreparation preparation,
         int expectedVersion,
-        CancellationToken cancellationToken)
+        ProductionPackageSelection? selection, CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        var exact = await SqliteProductionPackageContext.ResolveAsync(connection, transaction, preparation.BatchOperationId, selection, cancellationToken);
+        if (exact is null || exact.MachineId != preparation.MachineId)
+            throw new ProductionPackageBuildException("production_package_context_changed", "The Machine assignment changed; refresh the preparation queue.");
+        var readiness = await SqliteProductionReadinessContextReader.ReadForPackageAsync(connection, transaction, exact, cancellationToken);
+        if (readiness.ActiveToolTableReleaseId != preparation.ToolTableReleaseId)
+            throw new ToolPreparationConflictException("tool_preparation_tool_table_changed", "The released Tool Table changed; reload before saving.");
         await using (var check = connection.CreateCommand())
         {
             check.Transaction = transaction;

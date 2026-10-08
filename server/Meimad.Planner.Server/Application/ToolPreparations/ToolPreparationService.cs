@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.ProductionPackages;
 using Meimad.Planner.Server.Domain.ToolPreparations;
 
 namespace Meimad.Planner.Server.Application.ToolPreparations;
@@ -10,6 +11,11 @@ internal interface IToolPreparationRepository
     /// Machine assignment.
     /// </summary>
     Task<ToolPreparationView?> ReadViewAsync(string batchOperationId, CancellationToken cancellationToken);
+
+    Task<ToolPreparationView?> ReadViewAsync(string operationId, ProductionPackageSelection? selection, CancellationToken token)
+        => selection is null ? ReadViewAsync(operationId, token) : throw new NotSupportedException();
+    Task<ToolPreparation> SaveAsync(ToolPreparation preparation, int version, ProductionPackageSelection? selection, CancellationToken token)
+        => selection is null ? SaveAsync(preparation, version, token) : throw new NotSupportedException();
 
     /// <summary>Appends the next version; the caller has already checked the expected version.</summary>
     Task<ToolPreparation> SaveAsync(
@@ -33,10 +39,10 @@ internal sealed class ToolPreparationConflictException(string code, string messa
 /// </summary>
 internal sealed class ToolPreparationService(IToolPreparationRepository repository, TimeProvider timeProvider)
 {
-    internal async Task<ToolPreparationView> ReadAsync(string batchOperationId, CancellationToken cancellationToken = default)
+    internal async Task<ToolPreparationView> ReadAsync(string batchOperationId, CancellationToken cancellationToken = default, ProductionPackageSelection? selection = null)
     {
         var operationId = Required(batchOperationId);
-        return await repository.ReadViewAsync(operationId, cancellationToken)
+        return await repository.ReadViewAsync(operationId, selection, cancellationToken)
             ?? throw new ToolPreparationNotFoundException("The Batch Operation has no current Machine assignment.");
     }
 
@@ -44,10 +50,10 @@ internal sealed class ToolPreparationService(IToolPreparationRepository reposito
         string batchOperationId,
         ToolPreparationUpdate update,
         string savedBy,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, ProductionPackageSelection? selection = null)
     {
         ArgumentNullException.ThrowIfNull(update);
-        var view = await ReadAsync(batchOperationId, cancellationToken);
+        var view = await ReadAsync(batchOperationId, cancellationToken, selection);
         var actor = savedBy?.Trim();
         if (string.IsNullOrEmpty(actor))
             throw new ToolPreparationValidationException("tool_preparation_user_required", "The saving user identity is required.");
@@ -73,7 +79,7 @@ internal sealed class ToolPreparationService(IToolPreparationRepository reposito
             string.IsNullOrWhiteSpace(update.Comment) ? null : update.Comment.Trim(),
             ToolPreparationValidator.ContentHash(tools),
             tools);
-        var saved = await repository.SaveAsync(preparation, currentVersion, cancellationToken);
+        var saved = await repository.SaveAsync(preparation, currentVersion, view.Context?.Selection ?? selection, cancellationToken);
         return view with { Current = saved };
     }
 

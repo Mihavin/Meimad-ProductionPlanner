@@ -41,6 +41,10 @@ internal static class ProductionBatchEndpoints
         {
             return Results.Ok(await service.PreviewRefreshFromCaseAsync(batchId, cancellationToken));
         }
+        catch (Meimad.Planner.Server.Application.ProductionPackages.ProductionPackageBuildException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, httpContext);
+        }
         catch (ProductionBatchNotFoundException)
         {
             return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Production Batch was not found.", httpContext);
@@ -72,6 +76,10 @@ internal static class ProductionBatchEndpoints
                 summary.ProcessRevisionNotSwitched ?? []));
         }
         catch (ProductionBatchReleaseException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, httpContext);
+        }
+        catch (Meimad.Planner.Server.Application.ProductionPackages.ProductionPackageBuildException exception)
         {
             return Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, httpContext);
         }

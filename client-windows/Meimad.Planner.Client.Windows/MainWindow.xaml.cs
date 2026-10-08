@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        ThemeToggle.Content = Themes.WorkbenchTheme.Current == "graphite" ? "Light workshop" : "Graphite control room";
         LanguageSelector.SelectedValue = LocalizationService.Current.CurrentLanguage;
         viewModel = new MainWindowViewModel(
             new ClientSettingsStore(),
@@ -47,6 +48,22 @@ public partial class MainWindow : Window
         refreshTimer.Tick += RefreshTimerOnTick;
         Loaded += OnLoaded;
         Closed += OnClosed;
+    }
+
+    private void ThemeToggle_Click(object sender, RoutedEventArgs e)
+    {
+        Themes.WorkbenchTheme.Apply(Themes.WorkbenchTheme.Current == "graphite" ? "light" : "graphite");
+        ThemeToggle.Content = LocalizationService.Current.Translate(
+            Themes.WorkbenchTheme.Current == "graphite" ? "Light workshop" : "Graphite control room");
+    }
+
+    private void Workspace_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button { Tag: string value } && int.TryParse(value, out var index))
+        {
+            WorkspaceTabs.SelectedIndex = index;
+            if (index == 4) AdministrationView.OpenIntegrations();
+        }
     }
 
     private async void PlanningBoardOpenOperationRequested(object? sender, PlanningOperationViewModel operation)

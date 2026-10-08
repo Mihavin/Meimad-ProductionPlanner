@@ -15,12 +15,26 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
     public async Task<ProductionPackageBuildContext?> ReadBuildContextAsync(
         string batchOperationId,
         CancellationToken cancellationToken)
+        => await ReadBuildContextAsync(batchOperationId, null, cancellationToken);
+
+    public async Task<ProductionPackageBuildContext?> ReadBuildContextAsync(
+        string batchOperationId, ProductionPackageSelection? selection, CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
-        await using var transaction = connection.BeginTransaction(deferred: true);
-        var readiness = await SqliteProductionReadinessContextReader.ReadAsync(
-            connection, transaction, batchOperationId, cancellationToken);
-        if (readiness is null) return null;
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        var result = await ReadBuildContextAsync(connection, transaction, batchOperationId, selection, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
+    private static async Task<ProductionPackageBuildContext?> ReadBuildContextAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string batchOperationId,
+        ProductionPackageSelection? selection, CancellationToken cancellationToken)
+    {
+        var context = await SqliteProductionPackageContext.ResolveAsync(connection, transaction, batchOperationId, selection, cancellationToken);
+        if (context is null) return null;
+        var readiness = await SqliteProductionReadinessContextReader.ReadForPackageAsync(connection, transaction, context, cancellationToken);
+        context = context with { ProcessRevisionId = readiness.ActiveProcessRevisionId };
         var evaluated = ProductionReadinessEvaluator.Evaluate(readiness);
 
         await using var command = connection.CreateCommand();
@@ -28,12 +42,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         command.CommandText = """
             SELECT assignment.id,machine.id,machine.number,machine.name,machine.execution_mode,
                    case_record.name,source_operation.name,
-                   (SELECT program.production_run_id
-                    FROM production_run_programs program
-                    JOIN production_run_outputs output
-                      ON output.production_run_program_id=program.id
-                    WHERE output.batch_operation_id=operation.id
-                    ORDER BY program.sequence_position,program.id LIMIT 1),
+                   assignment.production_run_id,
                    settings.enabled,settings.version,settings.challenge_program_number,
                    settings.verify_program_number,settings.expected_macro_version,
                    settings.event_sequence_variable,
@@ -43,19 +52,25 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                    machine.nc_dialect,machine.machine_type,machine.tool_diameter_offset_kind,
                    connection.configuration_json
             FROM batch_operations operation
-            JOIN case_operations source_operation ON source_operation.id=operation.source_case_operation_id
+            JOIN case_operations source_operation ON source_operation.id=COALESCE(
+                (SELECT case_operation_id FROM process_revisions WHERE id=$processId),operation.source_case_operation_id)
             JOIN cases case_record ON case_record.id=source_operation.case_id
-            JOIN machine_assignments assignment ON assignment.batch_operation_id=operation.id
+            JOIN machine_assignments assignment ON assignment.id=$assignmentId
              AND assignment.released_at IS NULL
             JOIN machines machine ON machine.id=assignment.machine_id
             LEFT JOIN cnc_verification_settings settings ON settings.machine_id=machine.id
             LEFT JOIN machine_connections connection ON connection.machine_id=machine.id
-            LEFT JOIN production_package_current current ON current.batch_operation_id=operation.id
+            LEFT JOIN production_package_context_current current ON current.machine_assignment_id=assignment.id
+             AND current.production_run_program_id=$programId AND current.production_run_output_id=$outputId
             LEFT JOIN machine_package_capabilities package_capability ON package_capability.machine_id=machine.id
             WHERE operation.id=$operationId
-            ORDER BY assignment.id LIMIT 1;
+            ;
             """;
         command.Parameters.AddWithValue("$operationId", batchOperationId);
+        command.Parameters.AddWithValue("$assignmentId", context.MachineAssignmentId);
+        command.Parameters.AddWithValue("$programId", context.ProductionRunProgramId);
+        command.Parameters.AddWithValue("$outputId", context.ProductionRunOutputId);
+        command.Parameters.AddWithValue("$processId", Db(context.ProcessRevisionId));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         var assignmentId = reader.GetString(0);
@@ -126,7 +141,12 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             connection, transaction, readiness.ActiveToolTableReleaseId, cancellationToken);
         var preparation = await SqliteToolPreparationRepository.ReadLatestAsync(
             connection, transaction, batchOperationId, machineId, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        var publicationVersion = await ReadPublicationVersionAsync(connection, transaction, context, cancellationToken);
+        await using var loader = connection.CreateCommand();
+        loader.Transaction = transaction;
+        loader.CommandText = "SELECT offset_loader_release_id || ':' || version || ':' || machine_id FROM production_run_current_offset_loaders WHERE production_run_id=$run;";
+        loader.Parameters.AddWithValue("$run", Db(runId));
+        var loaderStamp = await loader.ExecuteScalarAsync(cancellationToken) as string;
         return new(
             batchOperationId, runId, runNumber, assignmentId, machineId, machineNumber, machineName,
             executionMode, partName, operationName,
@@ -134,7 +154,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             readiness.ActiveToolTableReleaseId, tool.OriginalName, tool.StoredPath, tool.Hash,
             verification, directConfigured, directOnline, manualDummyAllowed, currentPackageId, readiness,
             ncDialect, processType, toolDiameterOffsetKind, releasedTools, preparation, partCounting,
-            subprograms);
+            subprograms, context, publicationVersion, loaderStamp);
     }
 
     private static async Task<IReadOnlyList<ProductionPackageSubprogramSource>> ReadSubprogramsAsync(
@@ -251,13 +271,96 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             "Could not allocate a unique Production Run number.");
     }
 
-    public async Task ActivateAsync(
+    public async Task<ProductionPackageRecord?> ReadRequestAsync(ProductionPackageRequest request, CancellationToken token)
+    {
+        await using var connection = await database.OpenConnectionAsync(token);
+        return await ReadRequestAsync(connection, null, request, token);
+    }
+
+    private static async Task<ProductionPackageRecord?> ReadRequestAsync(SqliteConnection connection,
+        SqliteTransaction? transaction, ProductionPackageRequest request, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT request_hash,result_json FROM production_package_requests WHERE actor_id=$actor AND request_id=$request;";
+        command.Parameters.AddWithValue("$actor", request.ActorId);
+        command.Parameters.AddWithValue("$request", request.RequestId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)) return null;
+        if (reader.GetString(0) != request.RequestHash)
+            throw new ProductionPackageBuildException("production_package_request_conflict",
+                "This request key was already used with different package inputs. Review the request; use a new key only for deliberate regeneration.");
+        return JsonSerializer.Deserialize<ProductionPackageRecord>(reader.GetString(1))
+            ?? throw new InvalidDataException("The package request receipt is corrupt.");
+    }
+
+    public async Task<bool> IsReferencedAsync(string packageId, CancellationToken token)
+    {
+        await using var connection = await database.OpenConnectionAsync(token);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM production_packages WHERE id=$id);";
+        command.Parameters.AddWithValue("$id", packageId);
+        return Convert.ToInt64(await command.ExecuteScalarAsync(token), CultureInfo.InvariantCulture) != 0;
+    }
+
+    private static async Task<long> ReadPublicationVersionAsync(SqliteConnection connection,
+        SqliteTransaction transaction, ProductionPackageContext context, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT version FROM production_package_publication_versions
+            WHERE machine_assignment_id=$assignment AND production_run_program_id=$program AND production_run_output_id=$output;
+            """;
+        command.Parameters.AddWithValue("$assignment", context.MachineAssignmentId);
+        command.Parameters.AddWithValue("$program", context.ProductionRunProgramId);
+        command.Parameters.AddWithValue("$output", context.ProductionRunOutputId);
+        var value = await command.ExecuteScalarAsync(token);
+        return value is null or DBNull ? 0 : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+    }
+
+    public async Task<ProductionPackageRecord> PublishAsync(ProductionPackageRecord package,
+        OffsetLoaderPublication? loader, ProductionPackageBuildContext observed,
+        ProductionPackageRequest? request, CancellationToken token)
+    {
+        await using var connection = await database.OpenConnectionAsync(token);
+        // Take the write reservation before reading any precondition. Competing publishers
+        // serialize here; no generation or file hashing takes place under this reservation.
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        if (request is not null && await ReadRequestAsync(connection, transaction, request, token) is { } receipt)
+            return receipt;
+        if (package.Context is not { } exact)
+            throw new ProductionPackageBuildException("production_package_context_required", "An exact context is required.");
+        var current = await ReadBuildContextAsync(connection, transaction, package.BatchOperationId, exact.Selection, token)
+            ?? throw new ProductionPackageBuildException("production_package_context_changed", "The assignment is no longer current.");
+        if (current.PublicationVersion != observed.PublicationVersion || current.CurrentPackageId != observed.CurrentPackageId
+            || package.SupersedesPackageId != current.CurrentPackageId)
+            throw new ProductionPackageBuildException("production_package_publication_conflict",
+                "Another package was published or retired during this build. Refresh and review the current package before regenerating.");
+        if (ProductionPackagePublication.Fingerprint(current, package.ToolOffsetMode)
+            != ProductionPackagePublication.Fingerprint(observed, package.ToolOffsetMode))
+            throw new ProductionPackageBuildException("production_package_context_changed",
+                "Package inputs, measurements, Machine configuration or the Run's Offset Loader changed during generation. Refresh before rebuilding.");
+        await WriteAsync(connection, transaction, package, loader, token);
+        if (request is not null)
+            await ExecuteAsync(connection, transaction, """
+                INSERT INTO production_package_requests(actor_id,request_id,request_hash,production_package_id,result_json,completed_at)
+                VALUES($actor,$request,$hash,$package,$result,$at);
+                """, token, ("$actor",request.ActorId),("$request",request.RequestId),("$hash",request.RequestHash),
+                ("$package",package.ProductionPackageId),("$result",JsonSerializer.Serialize(package)),("$at",Format(package.CreatedAt)));
+        await transaction.CommitAsync(token);
+        return package;
+    }
+
+    private static async Task WriteAsync(
+        SqliteConnection connection, SqliteTransaction transaction,
         ProductionPackageRecord package,
         OffsetLoaderPublication? offsetLoader,
         CancellationToken cancellationToken)
     {
-        await using var connection = await database.OpenConnectionAsync(cancellationToken);
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        if (package.Context is not { } exact)
+            throw new ProductionPackageBuildException("production_package_context_required", "An exact Run/program/output context is required.");
+        await SqliteProductionPackageContext.ResolveAsync(connection, transaction, package.BatchOperationId, exact.Selection, cancellationToken);
         if (!await ContextStillMatchesAsync(connection, transaction, package, cancellationToken))
             throw new ProductionPackageBuildException(
                 "production_package_context_changed",
@@ -269,13 +372,14 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                     id,production_run_id,machine_id,nc_release_id,tool_table_release_id,
                     verification_release_token,artifact_hash,created_at,created_by,metadata_json)
                 VALUES ($id,$runId,$machineId,$ncId,$toolId,$token,$hash,$at,$by,
-                        json_object('productionPackageId',$packageId));
+                        json_object('productionPackageId',$packageId,'machineAssignmentId',$assignmentId,'productionRunProgramId',$programId,'productionRunOutputId',$outputId));
                 """, cancellationToken,
                 ("$id", offsetLoader.ReleaseId), ("$runId", package.ProductionRunId!),
                 ("$machineId", package.MachineId), ("$ncId", package.GCodeReleaseId!),
                 ("$toolId", package.ToolTableReleaseId), ("$token", offsetLoader.ReleaseToken),
                 ("$hash", offsetLoader.ArtifactHash), ("$at", Format(package.CreatedAt)),
-                ("$by", package.CreatedBy), ("$packageId", package.ProductionPackageId));
+                ("$by", package.CreatedBy), ("$packageId", package.ProductionPackageId),
+                ("$assignmentId",exact.MachineAssignmentId),("$programId",exact.ProductionRunProgramId),("$outputId",exact.ProductionRunOutputId));
         }
 
         await ExecuteAsync(connection, transaction, """
@@ -300,6 +404,19 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             ("$manifestPath", package.ManifestRelativePath), ("$manifestHash", package.ManifestHash),
             ("$at", Format(package.CreatedAt)), ("$by", package.CreatedBy),
             ("$supersedes", Db(package.SupersedesPackageId)), ("$preparationId", Db(package.ToolPreparationId)));
+
+        await ExecuteAsync(connection, transaction, """
+            INSERT INTO production_package_contexts(production_package_id,machine_assignment_id,
+                production_run_program_id,production_run_output_id,context_json)
+            VALUES($package,$assignment,$program,$output,$json);
+            INSERT INTO production_package_context_current(machine_assignment_id,production_run_program_id,
+                production_run_output_id,production_package_id)
+            VALUES($assignment,$program,$output,$package)
+            ON CONFLICT(machine_assignment_id,production_run_program_id,production_run_output_id)
+            DO UPDATE SET production_package_id=excluded.production_package_id;
+            """, cancellationToken, ("$package",package.ProductionPackageId),("$assignment",exact.MachineAssignmentId),
+            ("$program",exact.ProductionRunProgramId),("$output",exact.ProductionRunOutputId),
+            ("$json",JsonSerializer.Serialize(exact)));
 
         foreach (var artifact in package.Artifacts)
         {
@@ -326,6 +443,9 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                 ("$newId", package.ProductionPackageId), ("$at", Format(package.CreatedAt)));
         }
 
+        // Keep the old operation-only projection only when it cannot alias another live context.
+        if ((await SqliteProductionPackageContext.ListAsync(connection,transaction,package.BatchOperationId,cancellationToken)).Count == 1
+            && await IsLegacyAssignmentAsync(connection,transaction,exact,cancellationToken))
         await ExecuteAsync(connection, transaction, """
             INSERT INTO production_package_current (
                 batch_operation_id,machine_id,production_package_id,activated_at)
@@ -360,14 +480,57 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             await SqliteSetupRestart.PinNewPackageAsync(
                 connection, transaction, package.BatchOperationId, package.MachineAssignmentId,
                 package.ProductionPackageId, package.GCodeReleaseId, package.CreatedAt, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
     }
 
-    public async Task<ProductionPackageRecord?> ReadCurrentAsync(
-        string batchOperationId,
-        CancellationToken cancellationToken)
+    public Task<ProductionPackageRecord?> ReadCurrentAsync(string batchOperationId, CancellationToken cancellationToken)
+        => ReadCurrentAsync(batchOperationId, null, cancellationToken);
+
+    public async Task<ProductionPackageRecord?> ReadCurrentAsync(string batchOperationId,
+        ProductionPackageSelection? selection, CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: true);
+        var context = await SqliteProductionPackageContext.ResolveAsync(connection,transaction,batchOperationId,selection,cancellationToken);
+        if (context is null) return null;
+        return await ReadCurrentAsync(connection,transaction,context,cancellationToken);
+    }
+
+    internal static async Task<ProductionPackageRecord?> ReadCurrentAsync(SqliteConnection connection,
+        SqliteTransaction transaction, ProductionPackageContext context, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT package.id,package.batch_operation_id,package.production_run_id,
+                   package.machine_assignment_id,package.machine_id,package.gcode_release_id,
+                   package.tool_table_release_id,package.offset_loader_release_id,
+                   package.execution_mode,package.verification_enabled,
+                   package.verification_configuration_version,package.verification_macro_version,
+                   package.manifest_relative_path,package.manifest_hash,package.created_at,
+                   package.created_by,package.supersedes_package_id,package.tool_offset_mode,
+                   connection.enabled,connection.allow_write,connection.connection_status,
+                   package.package_number,package.tool_preparation_id
+            FROM production_package_context_current current
+            JOIN production_packages package ON package.id=current.production_package_id
+            LEFT JOIN machine_connections connection ON connection.machine_id=package.machine_id
+            WHERE current.machine_assignment_id=$assignment AND current.production_run_program_id=$program
+                AND current.production_run_output_id=$output;
+            """;
+        command.Parameters.AddWithValue("$assignment",context.MachineAssignmentId);
+        command.Parameters.AddWithValue("$program",context.ProductionRunProgramId);
+        command.Parameters.AddWithValue("$output",context.ProductionRunOutputId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        var record = ReadPackage(reader, []);
+        await reader.DisposeAsync();
+        record = record with { Context = await ReadContextAsync(connection,transaction,record.ProductionPackageId,cancellationToken) };
+        if (record.Context is null || !await ContextStillMatchesAsync(connection,transaction,record,cancellationToken)) return null;
+        return record with { Artifacts = await ReadArtifactsAsync(connection,record.ProductionPackageId,cancellationToken,transaction) };
+    }
+
+    public async Task<ProductionPackageRecord?> ReadHistoricalAsync(string packageId, CancellationToken token)
+    {
+        await using var connection = await database.OpenConnectionAsync(token);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT package.id,package.batch_operation_id,package.production_run_id,
@@ -379,60 +542,36 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                    package.created_by,package.supersedes_package_id,package.tool_offset_mode,
                    connection.enabled,connection.allow_write,connection.connection_status,
                    package.package_number,package.tool_preparation_id
-            FROM production_package_current current
-            JOIN production_packages package ON package.id=current.production_package_id
-            JOIN machine_assignments assignment
-              ON assignment.id=package.machine_assignment_id
-             AND assignment.batch_operation_id=package.batch_operation_id
-             AND assignment.machine_id=package.machine_id
-             AND assignment.released_at IS NULL
-            JOIN batch_operations operation ON operation.id=package.batch_operation_id
-            JOIN machines machine ON machine.id=package.machine_id
-            JOIN process_revisions process
-              ON process.case_operation_id=operation.source_case_operation_id AND process.is_active=1
-             AND process.tool_table_release_id=package.tool_table_release_id
-            LEFT JOIN cnc_verification_settings settings ON settings.machine_id=package.machine_id
+            FROM production_packages package
             LEFT JOIN machine_connections connection ON connection.machine_id=package.machine_id
-            LEFT JOIN machine_package_capabilities package_capability ON package_capability.machine_id=package.machine_id
-            WHERE current.batch_operation_id=$operationId
-              AND machine.execution_mode=package.execution_mode
-              AND (package.tool_offset_mode='MEASURED'
-                   OR COALESCE(package_capability.allow_manual_dummy_tool_offsets,0)=1)
-              AND ((package.execution_mode='MANUAL' AND package.gcode_release_id IS NULL)
-                   OR (package.execution_mode='CNC_GCODE'
-                       AND package.gcode_release_id=COALESCE(
-                           assignment.selected_gcode_release_id,
-                           (SELECT release.id FROM gcode_releases release
-                            JOIN machine_supported_postprocessors supported
-                              ON supported.machine_id=package.machine_id
-                             AND supported.postprocessor_id=release.postprocessor_id
-                            WHERE release.process_revision_id=process.id
-                              AND release.post_specific_revision=(
-                                  SELECT MAX(latest.post_specific_revision)
-                                  FROM gcode_releases latest
-                                  WHERE latest.process_revision_id=release.process_revision_id
-                                    AND latest.postprocessor_id=release.postprocessor_id)
-                            ORDER BY release.id LIMIT 1))))
-              AND (package.execution_mode='MANUAL'
-                   OR (package.verification_enabled=0 AND COALESCE(settings.enabled,0)=0)
-                   OR (package.verification_enabled=1 AND settings.enabled=1
-                       AND settings.version=package.verification_configuration_version
-                       AND settings.expected_macro_version=package.verification_macro_version))
-              AND (package.tool_offset_mode<>'MEASURED'
-                   OR package.tool_preparation_id IS (
-                       SELECT preparation.id FROM tool_preparations preparation
-                       WHERE preparation.batch_operation_id=package.batch_operation_id
-                         AND preparation.machine_id=package.machine_id
-                       ORDER BY preparation.version_number DESC LIMIT 1))
-            ;
+            WHERE package.id=$id;
             """;
-        command.Parameters.AddWithValue("$operationId", batchOperationId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken)) return null;
-        var record = ReadPackage(reader, []);
+        command.Parameters.AddWithValue("$id",packageId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)) return null;
+        var record=ReadPackage(reader,[]);
         await reader.DisposeAsync();
-        var artifacts = await ReadArtifactsAsync(connection, record.ProductionPackageId, cancellationToken);
-        return record with { Artifacts = artifacts };
+        return record with { Context=await ReadContextAsync(connection,null,packageId,token),
+            Artifacts=await ReadArtifactsAsync(connection,packageId,token) };
+    }
+
+    private static async Task<ProductionPackageContext?> ReadContextAsync(SqliteConnection connection,
+        SqliteTransaction? transaction,string packageId,CancellationToken token)
+    {
+        await using var command=connection.CreateCommand(); command.Transaction=transaction;
+        command.CommandText="SELECT context_json FROM production_package_contexts WHERE production_package_id=$id";
+        command.Parameters.AddWithValue("$id",packageId);
+        return await command.ExecuteScalarAsync(token) is string json ? JsonSerializer.Deserialize<ProductionPackageContext>(json) : null;
+    }
+
+    private static async Task<bool> IsLegacyAssignmentAsync(SqliteConnection connection,SqliteTransaction transaction,
+        ProductionPackageContext context,CancellationToken token)
+    {
+        await using var command=connection.CreateCommand(); command.Transaction=transaction;
+        command.CommandText="SELECT EXISTS(SELECT 1 FROM machine_assignments WHERE id=$id AND batch_operation_id=$operation)";
+        command.Parameters.AddWithValue("$id",context.MachineAssignmentId);
+        command.Parameters.AddWithValue("$operation",context.BatchOperationId);
+        return (long)(await command.ExecuteScalarAsync(token))! == 1;
     }
 
     private static async Task<bool> ContextStillMatchesAsync(
@@ -441,6 +580,17 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         ProductionPackageRecord package,
         CancellationToken token)
     {
+        if (package.Context is not { } context) return false;
+        var live = (await SqliteProductionPackageContext.ListAsync(connection, transaction, package.BatchOperationId, token))
+            .SingleOrDefault(row => row.MachineAssignmentId == context.MachineAssignmentId
+                && row.ProductionRunId == context.ProductionRunId && row.ProductionRunProgramId == context.ProductionRunProgramId
+                && row.ProductionRunOutputId == context.ProductionRunOutputId && row.MachineId == context.MachineId);
+        if (live is null || live.TargetQuantity != context.TargetQuantity
+            || live.OutputAllocationStamp != context.OutputAllocationStamp) return false;
+        var readiness=await SqliteProductionReadinessContextReader.ReadForPackageAsync(connection,transaction,context,token);
+        var effective=package.ExecutionMode == "MANUAL" ? null : ProductionReadinessEvaluator.Evaluate(readiness).EffectiveGCodeReleaseId;
+        if (readiness.ActiveProcessRevisionId != context.ProcessRevisionId || readiness.ActiveToolTableReleaseId != package.ToolTableReleaseId
+            || effective != package.GCodeReleaseId) return false;
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -448,34 +598,19 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                 SELECT 1
                 FROM batch_operations operation
                 JOIN machine_assignments assignment
-                  ON assignment.batch_operation_id=operation.id
-                 AND assignment.id=$assignmentId
+                  ON assignment.id=$assignmentId
                  AND assignment.machine_id=$machineId
                  AND assignment.released_at IS NULL
                 JOIN machines machine
                   ON machine.id=assignment.machine_id
                  AND machine.execution_mode=$mode
                 JOIN process_revisions process
-                  ON process.case_operation_id=operation.source_case_operation_id
+                  ON process.id=$processId
                  AND process.is_active=1
                  AND process.tool_table_release_id=$toolId
                 LEFT JOIN cnc_verification_settings settings ON settings.machine_id=machine.id
                 LEFT JOIN machine_package_capabilities package_capability ON package_capability.machine_id=machine.id
                 WHERE operation.id=$operationId
-                  AND (($mode='MANUAL' AND $gcodeId IS NULL)
-                       OR ($mode='CNC_GCODE' AND $gcodeId=COALESCE(
-                           assignment.selected_gcode_release_id,
-                           (SELECT release.id FROM gcode_releases release
-                            JOIN machine_supported_postprocessors supported
-                              ON supported.machine_id=machine.id
-                             AND supported.postprocessor_id=release.postprocessor_id
-                            WHERE release.process_revision_id=process.id
-                              AND release.post_specific_revision=(
-                                  SELECT MAX(latest.post_specific_revision)
-                                  FROM gcode_releases latest
-                                  WHERE latest.process_revision_id=release.process_revision_id
-                                    AND latest.postprocessor_id=release.postprocessor_id)
-                            ORDER BY release.id LIMIT 1))))
                   AND ($offsetMode='MEASURED'
                        OR COALESCE(package_capability.allow_manual_dummy_tool_offsets,0)=1)
                   AND ($mode='MANUAL'
@@ -497,6 +632,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                            ORDER BY preparation.version_number DESC LIMIT 1))
             );
             """;
+        command.Parameters.AddWithValue("$processId", Db(context.ProcessRevisionId));
         command.Parameters.AddWithValue("$operationId", package.BatchOperationId);
         command.Parameters.AddWithValue("$assignmentId", package.MachineAssignmentId);
         command.Parameters.AddWithValue("$machineId", package.MachineId);
@@ -529,10 +665,11 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
     }
 
     private static async Task<IReadOnlyList<ProductionPackageArtifact>> ReadArtifactsAsync(
-        SqliteConnection connection, string packageId, CancellationToken token)
+        SqliteConnection connection, string packageId, CancellationToken token, SqliteTransaction? transaction = null)
     {
         var values = new List<ProductionPackageArtifact>();
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT id,artifact_type,logical_path,stored_relative_path,file_size,file_hash,source_release_id
             FROM production_package_artifacts WHERE production_package_id=$id ORDER BY logical_path;

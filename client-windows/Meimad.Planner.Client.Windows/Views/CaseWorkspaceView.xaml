@@ -13,8 +13,8 @@
         </Style>
     </UserControl.Resources>
 
-    <Border Background="{StaticResource PanelBrush}"
-            BorderBrush="#D8DDE3"
+    <Border Background="{DynamicResource PanelBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
             BorderThickness="1"
             CornerRadius="5"
             Padding="12">
@@ -33,7 +33,7 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <StackPanel>
-                    <TextBlock Text="CASE POOL" FontWeight="Bold" Foreground="{StaticResource MutedTextBrush}" />
+                    <TextBlock Text="CASE POOL" FontWeight="Bold" Foreground="{DynamicResource MutedTextBrush}" />
                     <TextBlock Text="Part masters from the Server" FontSize="17" FontWeight="SemiBold" Margin="0,3,0,9" />
                     <TextBlock Text="Search Part Number, name, or customer" Style="{StaticResource FieldLabel}" />
                     <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
@@ -42,7 +42,7 @@
                         <Button DockPanel.Dock="Left" Content="{Binding PoolFilterButtonText}" Click="OpenPoolFilters_Click"
                                 ToolTip="Open the Case pool filters (all conditions combine with AND)." Margin="0,0,8,0" />
                         <TextBlock Text="{Binding PoolFilterSummary}" TextWrapping="Wrap" VerticalAlignment="Center"
-                                   Foreground="{StaticResource MutedTextBrush}" ToolTip="All conditions must match (AND)." />
+                                   Foreground="{DynamicResource MutedTextBrush}" ToolTip="All conditions must match (AND)." />
                     </DockPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,14">
                         <Button Command="{Binding SearchCommand}" Style="{StaticResource TemplateIconButton}"
@@ -57,25 +57,25 @@
                 <ListBox x:Name="CasePoolList" Grid.Row="2"
                          ItemsSource="{Binding Cases}"
                          SelectedItem="{Binding SelectedCase}"
-                         BorderBrush="#D8DDE3"
+                         BorderBrush="{DynamicResource BorderBrush}"
                          HorizontalContentAlignment="Stretch"
                          ScrollViewer.VerticalScrollBarVisibility="Visible"
                          ScrollViewer.CanContentScroll="True"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <Border Padding="7" Margin="1" BorderBrush="#E2E6EA" BorderThickness="0,0,0,1">
+                            <Border Padding="7" Margin="1" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="68" />
                                         <ColumnDefinition Width="9" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <Border Width="68" Height="52" Background="#EEF1F4" BorderBrush="#D4D9DE" BorderThickness="1">
+                                    <Border Width="68" Height="52" Background="{DynamicResource RaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                                         <Grid>
                                             <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
                                             <TextBlock Text="No preview" FontSize="9"
-                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Foreground="{DynamicResource MutedTextBrush}"
                                                        HorizontalAlignment="Center" VerticalAlignment="Center">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
@@ -92,7 +92,7 @@
                                     </Border>
                                     <StackPanel Grid.Column="2" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding PartNumber}" FontSize="15" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Text="{Binding Customer}" Foreground="{StaticResource MutedTextBrush}" Margin="0,2,0,2" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Customer}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,2,0,2" TextTrimming="CharacterEllipsis" />
                                         <TextBlock Text="{Binding ActiveStateText}" FontWeight="SemiBold" />
                                     </StackPanel>
                                 </Grid>
@@ -101,7 +101,7 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
                 <TextBlock Grid.Row="3" Text="{Binding StatusMessage}" TextWrapping="Wrap"
-                           Foreground="{StaticResource MutedTextBrush}" Margin="0,10,0,0" />
+                           Foreground="{DynamicResource MutedTextBrush}" Margin="0,10,0,0" />
             </Grid>
 
             <Grid Grid.Column="2">
@@ -126,10 +126,10 @@
                         <Button Content="Refresh Case" Command="{Binding RefreshDetailsCommand}" Margin="0" />
                     </StackPanel>
                     <StackPanel>
-                        <TextBlock Text="{Binding FormHeading}" FontWeight="Bold" Foreground="{StaticResource MutedTextBrush}" />
+                        <TextBlock Text="{Binding FormHeading}" FontWeight="Bold" Foreground="{DynamicResource MutedTextBrush}" />
                         <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
                             <TextBlock Text="{Binding PartNumber}" FontSize="22" FontWeight="Bold" />
-                            <Border Background="#E8EEF4" CornerRadius="3" Padding="8,3" Margin="10,0,0,0">
+                            <Border Background="{DynamicResource RaisedBrush}" CornerRadius="3" Padding="8,3" Margin="10,0,0,0">
                                 <TextBlock Text="{Binding ActiveStateText}" FontWeight="SemiBold" />
                             </Border>
                         </StackPanel>
@@ -144,13 +144,13 @@
                                       PanningMode="VerticalOnly"
                                       Padding="14">
                             <StackPanel>
-                                <Border Background="#FFF4CE" BorderBrush="#D6B656" BorderThickness="1" Padding="10" Margin="0,0,0,10">
+                                <Border Background="{DynamicResource WarningSurfaceBrush}" BorderBrush="{DynamicResource WarningTextBrush}" BorderThickness="1" Padding="10" Margin="0,0,0,10">
                                     <TextBlock Text="{Binding CaseAuthorityText}" TextWrapping="Wrap" FontWeight="SemiBold" />
                                 </Border>
-                                <Border Height="120" Background="#EEF1F4" BorderBrush="#D4D9DE" BorderThickness="1" Margin="0,0,0,10">
+                                <Border Height="120" Background="{DynamicResource RaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Margin="0,0,0,10">
                                     <Grid>
                                         <Image Source="{Binding DetailPreview}" Stretch="Uniform" />
-                                        <TextBlock Text="No preview" Foreground="{StaticResource MutedTextBrush}"
+                                        <TextBlock Text="No preview" Foreground="{DynamicResource MutedTextBrush}"
                                                    HorizontalAlignment="Center" VerticalAlignment="Center">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
@@ -196,11 +196,11 @@
                                 </StackPanel>
                                 <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Notes}" IsReadOnly="{Binding IsUnlockedFieldsReadOnly}" AcceptsReturn="True" MinHeight="90" TextWrapping="Wrap"/></StackPanel>
                                 <DockPanel>
-                                    <TextBlock Text="Saving requires an account that may edit Cases." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Text="Saving requires an account that may edit Cases." Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" />
                                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                         <Button Content="Cancel New Case" Command="{Binding CancelCreateCommand}">
                                             <Button.Style>
-                                                <Style TargetType="Button">
+                                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding IsCreating}" Value="True">
@@ -268,28 +268,28 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="230" />
                                 </Grid.ColumnDefinitions>
-                                <Border BorderBrush="#C7D1DB" BorderThickness="1" CornerRadius="4">
+                                <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4">
                                     <views:StepViewerControl x:Name="StepViewer" />
                                 </Border>
-                                <Border Grid.Column="1" Margin="8,0,0,0" Padding="12" BorderBrush="#C7D1DB"
-                                        BorderThickness="1" CornerRadius="4" Background="#F7F9FB">
+                                <Border Grid.Column="1" Margin="8,0,0,0" Padding="12" BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="1" CornerRadius="4" Background="{DynamicResource RaisedBrush}">
                                     <StackPanel>
                                         <TextBlock Text="Model files" FontWeight="SemiBold" FontSize="15" />
-                                        <TextBlock Margin="0,4,0,8" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
+                                        <TextBlock Margin="0,4,0,8" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"
                                                    Text="STEP/STL files linked to this Case by path: the part model, rest-material stock, fixtures. The primary part model opens first." />
                                         <ListBox x:Name="ModelFilesList" ItemsSource="{Binding ModelFiles}" SelectedItem="{Binding SelectedModelFile}"
-                                                 MaxHeight="160" BorderBrush="#C7D1DB" HorizontalContentAlignment="Stretch"
+                                                 MaxHeight="160" BorderBrush="{DynamicResource BorderBrush}" HorizontalContentAlignment="Stretch"
                                                  MouseDoubleClick="ModelFilesList_MouseDoubleClick">
                                             <ListBox.ItemTemplate>
                                                 <DataTemplate>
                                                     <StackPanel Margin="0,1">
                                                         <DockPanel>
-                                                            <TextBlock DockPanel.Dock="Right" Text="{Binding PrimaryText}" Foreground="#1B6E3A"
+                                                            <TextBlock DockPanel.Dock="Right" Text="{Binding PrimaryText}" Foreground="{DynamicResource SuccessTextBrush}"
                                                                        FontSize="11" FontWeight="SemiBold" Margin="6,0,0,0" />
                                                             <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
                                                                        ToolTip="{Binding FilePath}" />
                                                         </DockPanel>
-                                                        <TextBlock FontSize="11" Foreground="#5B6B7A">
+                                                        <TextBlock FontSize="11" Foreground="{DynamicResource MutedTextBrush}">
                                                             <Run Text="{Binding KindText, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding FormatText, Mode=OneWay}" />
                                                         </TextBlock>
                                                     </StackPanel>
@@ -297,7 +297,7 @@
                                             </ListBox.ItemTemplate>
                                         </ListBox>
                                         <TextBlock Text="{Binding ModelFilesStatus}" Margin="0,4,0,6" FontSize="11"
-                                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                                                   Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" />
                                         <DockPanel Margin="0,0,0,6">
                                             <ComboBox x:Name="StepAddKindCombo" DockPanel.Dock="Left" Width="118" SelectedIndex="0"
                                                       IsEnabled="{Binding CanManageModelFiles}" Margin="0,0,6,0"
@@ -318,7 +318,7 @@
                                         </WrapPanel>
                                         <Separator Margin="0,4,0,10" />
                                         <TextBlock Text="Measure" FontWeight="SemiBold" FontSize="15" />
-                                        <TextBlock Margin="0,4,0,8" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
+                                        <TextBlock Margin="0,4,0,8" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"
                                                    Text="Pick a tool, then click vertices, edges or faces. Esc cancels. Left-drag orbits, right-drag pans, wheel zooms." />
                                         <WrapPanel>
                                             <Button Content="Point" Click="StepTool_Click" Tag="point" ToolTip="Coordinates of a vertex" />
@@ -331,26 +331,26 @@
                                             <Button Content="Volume" Click="StepTool_Click" Tag="volume" ToolTip="Volume, surface, centroid and bounding box" />
                                             <Button Content="Clear" Click="StepClearMeasurement_Click" Margin="0" ToolTip="Cancel the tool and remove every measurement" />
                                         </WrapPanel>
-                                        <Border Padding="8" Margin="0,6,0,0" Background="#EAF0F5" CornerRadius="3">
+                                        <Border Padding="8" Margin="0,6,0,0" Background="{DynamicResource RaisedBrush}" CornerRadius="3">
                                             <TextBlock x:Name="StepMeasurementText" TextWrapping="Wrap"
                                                        Text="Select a measurement tool." />
                                         </Border>
-                                        <TextBlock Margin="0,10,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
+                                        <TextBlock Margin="0,10,0,0" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"
                                                    Text="STEP values are exact OpenCascade geometry in millimetres; STL meshes support point, distance and volume tools. Measurements stay attached while rotating or zooming." />
                                         <Separator Margin="0,12" />
                                         <TextBlock Text="Bounding box / reference" FontWeight="SemiBold" FontSize="15" />
-                                        <TextBlock Margin="0,4,0,8" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
+                                        <TextBlock Margin="0,4,0,8" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"
                                                    Text="The orange wire box uses Model XYZ by default. For a custom reference, click three base-plane vertices and then two direction vertices." />
                                         <Button Content="Base face + direction edge" Click="StepReferenceFace_Click" Margin="0,0,0,6" />
                                         <Button Content="3 base points + 2 direction points" Click="StepReferencePoints_Click" Margin="0,0,0,6" />
                                         <WrapPanel><Button Content="Flip X" Click="StepFlipX_Click" /><Button Content="Flip Y" Click="StepFlipY_Click" /><Button Content="Flip Z" Click="StepFlipZ_Click" /><Button Content="Clear reference" Click="StepReferenceClear_Click" Margin="0" /></WrapPanel>
-                                        <Border Padding="8" Margin="0,8,0,0" Background="#FFF2D9" CornerRadius="3">
+                                        <Border Padding="8" Margin="0,8,0,0" Background="{DynamicResource WarningSurfaceBrush}" CornerRadius="3">
                                             <TextBlock x:Name="StepBoundingBoxText" TextWrapping="Wrap" Text="Open a STEP model to calculate its bounding box." />
                                         </Border>
                                     </StackPanel>
                                 </Border>
                             </Grid>
-                            <TextBlock Grid.Row="2" Margin="0,8,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
+                            <TextBlock Grid.Row="2" Margin="0,8,0,0" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"
                                        Text="Linked model files load automatically when the Case is selected (primary part model first; stock and fixtures are drawn translucent). Left-drag rotates, right-drag pans, the wheel zooms, and Fit resets the framing. Snapshot saves a PNG and places its path in the Case picture field; press Save Case to commit that change." />
                         </Grid>
                         </ScrollViewer>
@@ -377,10 +377,10 @@
                                     </Button>
                                 </StackPanel>
                                 <TextBlock Text="{Binding OperationListAuthorityText}"
-                                           Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                           Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
                             </DockPanel>
-                            <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="#F6F8FA"
-                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
+                            <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="{DynamicResource RaisedBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -416,9 +416,9 @@
                                         <StackPanel Style="{StaticResource FormField}" Margin="0,20,12,8"><CheckBox Content="Respect Israel Master Calendar" IsChecked="{Binding NewOperationRespectMasterCalendar}" /></StackPanel>
                                     </UniformGrid>
                                     <TextBlock Text="INDEPENDENT uses no referenced operation. SEQUENTIAL and PARALLEL_CAPABLE require one. LOCKED_SIMULTANEOUS also requires a group key. The Server validates the complete dependency graph."
-                                               TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
+                                               TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,10" />
                                     <DockPanel>
-                                        <TextBlock Text="Saving requires an account that may edit Cases." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="Saving requires an account that may edit Cases." Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" />
                                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                             <Button Content="Cancel" Command="{Binding CancelCreateOperationCommand}" />
                                             <Button Content="{Binding OperationSaveButtonText}" Command="{Binding CreateOperationCommand}" Margin="0" />
@@ -450,18 +450,18 @@
                                     <DataGridTextColumn Header="Cycle (HH:mm:ss)" Binding="{Binding CycleTimePerPartDisplay}" Width="120" />
                                 </DataGrid.Columns>
                             </DataGrid>
-                            <Border Grid.Row="3" Margin="0,14,0,0" Padding="14" Background="#F6F8FA"
-                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
+                            <Border Grid.Row="3" Margin="0,14,0,0" Padding="14" Background="{DynamicResource RaisedBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4">
                                 <StackPanel>
                                     <DockPanel Margin="0,0,0,10">
                                         <Button DockPanel.Dock="Right" Content="Refresh G-code" Command="{Binding RefreshGCodeCommand}" Margin="8,0,0,0"/>
                                         <StackPanel>
                                             <TextBlock Text="Released G-code" FontSize="17" FontWeight="Bold"/>
-                                            <TextBlock Text="{Binding ActiveProcessRevisionText}" Foreground="{StaticResource MutedTextBrush}"/>
+                                            <TextBlock Text="{Binding ActiveProcessRevisionText}" Foreground="{DynamicResource MutedTextBrush}"/>
                                         </StackPanel>
                                     </DockPanel>
                                     <TextBlock Text="Select an Operation above to manage its released production artifacts. Meimad has no Draft G-code state."
-                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
 
                                     <TextBlock Text="Postprocessor status (display only)" FontWeight="SemiBold" Margin="0,0,0,5"/>
                                     <DataGrid ItemsSource="{Binding GCodePostprocessors}"
@@ -602,8 +602,8 @@
                                     </DataGrid>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Row="4" Margin="0,14,0,0" Padding="14" Background="#F6F8FA"
-                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4" DataContext="{Binding Requirements}">
+                            <Border Grid.Row="4" Margin="0,14,0,0" Padding="14" Background="{DynamicResource RaisedBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" DataContext="{Binding Requirements}">
                                 <StackPanel>
                                     <DockPanel Margin="0,0,0,6">
                                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -613,11 +613,11 @@
                                         </StackPanel>
                                         <StackPanel>
                                             <TextBlock Text="Auxiliary steps of the selected Operation" FontSize="17" FontWeight="Bold"/>
-                                            <TextBlock Text="{Binding Summary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/>
+                                            <TextBlock Text="{Binding Summary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/>
                                         </StackPanel>
                                     </DockPanel>
                                     <TextBlock Text="Inspection, deburring, packing, plating and similar steps run on Workstations, External Resources or Employees before or after the Machine. The Server places them automatically around the Machine anchor on the Timeline; the planner can pin a step there. Steps from Kitaron follow the station decisions in Setup."
-                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                     <DataGrid ItemsSource="{Binding Requirements}" SelectedItem="{Binding SelectedRequirement}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MaxHeight="220">
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="Step" Binding="{Binding StepText}" Width="55"/>
@@ -632,7 +632,7 @@
                                             <DataGridTextColumn Header="State" Binding="{Binding ActiveLabel}" Width="70"/>
                                         </DataGrid.Columns>
                                     </DataGrid>
-                                    <Border Padding="12" Margin="0,10,0,0" Background="White" BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4"
+                                    <Border Padding="12" Margin="0,10,0,0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4"
                                             Visibility="{Binding IsEditing, Converter={StaticResource BooleanToVisibilityConverter}}">
                                         <StackPanel>
                                             <TextBlock Text="{Binding EditorHeading}" FontWeight="Bold" Margin="0,0,0,8"/>
@@ -651,9 +651,9 @@
                                                 <StackPanel Style="{StaticResource FormField}"><TextBlock Text="After step (same side of the Machine)" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding PredecessorOptions}" SelectedItem="{Binding SelectedPredecessor}" DisplayMemberPath="DisplayName"/></StackPanel>
                                                 <StackPanel Style="{StaticResource FormField}" Margin="0,20,12,8"><CheckBox Content="Active" IsChecked="{Binding IsActive}"/></StackPanel>
                                             </UniformGrid>
-                                            <TextBlock Text="An External step takes its duration from the External Resource's promised lead time and safety buffer. FORWARD steps follow the Machine finish, BACKWARD steps precede the Machine start." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                            <TextBlock Text="An External step takes its duration from the External Resource's promised lead time and safety buffer. FORWARD steps follow the Machine finish, BACKWARD steps precede the Machine start." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                             <DockPanel>
-                                                <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                                <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
                                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                                     <Button Content="Cancel" Command="{Binding CancelCommand}" />
                                                     <Button Content="Save step" Command="{Binding SaveCommand}" Margin="0" />
@@ -661,7 +661,7 @@
                                             </DockPanel>
                                         </StackPanel>
                                     </Border>
-                                    <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                    <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,6,0,0"
                                                Visibility="{Binding IsEditing, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
                                 </StackPanel>
                             </Border>
@@ -673,7 +673,7 @@
                             <StackPanel Margin="18">
                                 <TextBlock Text="Components / Sub-Cases" FontSize="20" FontWeight="SemiBold" />
                                 <TextBlock Text="Quantity is required per one parent Case. Imported child Cases do not receive automatic Orders or Work Orders."
-                                           Foreground="#667085" Margin="0,4,0,12" TextWrapping="Wrap" />
+                                           Foreground="{DynamicResource MutedTextBrush}" Margin="0,4,0,12" TextWrapping="Wrap" />
                                 <DataGrid ItemsSource="{Binding Components}" SelectedItem="{Binding SelectedComponent}"
                                           AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="150">
                                     <DataGrid.Columns>
@@ -753,10 +753,10 @@
                                     </Button>
                                 </StackPanel>
                                 <TextBlock Text="{Binding OrderListAuthorityText}" TextWrapping="Wrap"
-                                           Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                           Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" />
                             </DockPanel>
-                            <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="#F6F8FA"
-                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
+                            <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="{DynamicResource RaisedBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -778,7 +778,7 @@
                                     </UniformGrid>
                                     <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderNotes}" AcceptsReturn="True" MinHeight="65" TextWrapping="Wrap"/></StackPanel>
                                     <DockPanel>
-                                        <TextBlock Text="{Binding OrderAuthorityText}" Foreground="{StaticResource MutedTextBrush}"
+                                        <TextBlock Text="{Binding OrderAuthorityText}" Foreground="{DynamicResource MutedTextBrush}"
                                                    TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0" />
                                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                             <Button Content="Cancel" Command="{Binding CancelCreateOrderCommand}" />
@@ -803,7 +803,7 @@
                             <StackPanel Grid.Row="3" Margin="0,16,0,0">
                                 <TextBlock Text="Parent-derived Orders (read-only)" FontSize="18" FontWeight="SemiBold" />
                                 <TextBlock Text="These are projections of parent demand through component quantity. Create child Work Orders from the remaining quantity; no duplicate Order is created."
-                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,3,0,8" />
+                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,3,0,8" />
                                 <DataGrid ItemsSource="{Binding DerivedOrders}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="120">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="Parent Order" Binding="{Binding SourceOrderNumber}" Width="140" />
@@ -823,7 +823,7 @@
                     </TabItem>
                     <TabItem Header="Work Orders">
                         <TabItem.Style>
-                            <Style TargetType="TabItem">
+                            <Style TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
                                 <Setter Property="Visibility" Value="Collapsed" />
                                 <Style.Triggers><DataTrigger Binding="{Binding CanShowBatches}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
                             </Style>
@@ -854,10 +854,10 @@
                                             ToolTip="Requires at least one defined Case Operation; the Server never invents a route." />
                                 </StackPanel>
                                 <TextBlock Text="{Binding BatchListAuthorityText}" TextWrapping="Wrap"
-                                           Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                           Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" />
                             </DockPanel>
-                            <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="#F6F8FA"
-                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4" MaxHeight="390">
+                            <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="{DynamicResource RaisedBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" MaxHeight="390">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -887,9 +887,9 @@
                                             </DataGrid.Columns>
                                         </DataGrid>
                                         <TextBlock Text="The Server validates that planned quantity equals all allocations and instantiates Work Order Operations from the current Case route."
-                                                   TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
+                                                   TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,10" />
                                         <DockPanel>
-                                            <TextBlock Text="Status and instantiated route remain Server-owned." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Text="Status and instantiated route remain Server-owned." Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" />
                                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                                 <Button Content="Cancel" Command="{Binding CancelCreateBatchCommand}" />
                                                 <Button Content="{Binding BatchSaveButtonText}" Command="{Binding CreateBatchCommand}" Margin="0" />
@@ -917,8 +917,8 @@
                                     <DataGridTextColumn Header="Route revision" Binding="{Binding RouteRevision}" Width="110" />
                                 </DataGrid.Columns>
                             </DataGrid>
-                            <Border Grid.Row="3" Padding="12" Margin="0,10,0,0" Background="#F6F8FA"
-                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
+                            <Border Grid.Row="3" Padding="12" Margin="0,10,0,0" Background="{DynamicResource RaisedBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4">
                                 <StackPanel>
                                     <StackPanel DataContext="{Binding WorkOrderMaterialOrders}" Margin="0,0,0,12">
                                         <DockPanel>
@@ -929,7 +929,7 @@
                                             </StackPanel>
                                             <StackPanel>
                                                 <TextBlock Text="Kitaron material orders" FontWeight="Bold"/>
-                                                <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,0"/>
+                                                <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" Margin="0,3,0,0"/>
                                             </StackPanel>
                                         </DockPanel>
                                         <DataGrid ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
@@ -957,7 +957,7 @@
                                     </DockPanel>
                                     <TextBlock Text="{Binding BatchMaterialMessage}" TextWrapping="Wrap" Margin="0,7,0,8"/>
                                     <TextBlock Text="Only locally verified receipts appear here. Historical Kitaron approvals never create trusted availability. Enter exactly how many pieces this Work Order reserves from each receipt."
-                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                     <DataGrid ItemsSource="{Binding MaterialReceiptReservations}" AutoGenerateColumns="False"
                                               CanUserAddRows="False" MinHeight="90" MaxHeight="170" Margin="0,0,0,10">
                                         <DataGrid.Columns>
@@ -977,7 +977,7 @@
                                     </UniformGrid>
                                     <DockPanel>
                                         <Button DockPanel.Dock="Right" Content="Record verified receipt" Command="{Binding RecordMaterialReceiptCommand}"/>
-                                        <TextBlock Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
+                                        <TextBlock Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"
                                                    Text="If material is short: edit this Work Order and its explicit allocations to reduce quantity; create a second Work Order for a ready/waiting split; or keep the full quantity and wait. Quantity edits recalculate the timeline and readiness."/>
                                     </DockPanel>
                                 </StackPanel>
@@ -988,7 +988,7 @@
                 </TabControl>
             </Grid>
 
-            <Border Grid.Column="2" Background="#F6F7F9" BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
+            <Border Grid.Column="2" Background="{DynamicResource RaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4">
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Visibility" Value="Collapsed" />
@@ -1002,7 +1002,7 @@
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                     <TextBlock Text="Select a Case" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" />
                     <TextBlock Text="Case form, Operations, Orders, and Work Orders will appear here."
-                               Foreground="{StaticResource MutedTextBrush}" Margin="0,7,0,0" />
+                               Foreground="{DynamicResource MutedTextBrush}" Margin="0,7,0,0" />
                 </StackPanel>
             </Border>
         </Grid>

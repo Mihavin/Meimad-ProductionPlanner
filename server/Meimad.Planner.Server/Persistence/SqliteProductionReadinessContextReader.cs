@@ -5,6 +5,58 @@ namespace Meimad.Planner.Server.Persistence;
 
 internal static class SqliteProductionReadinessContextReader
 {
+    internal static async Task<ProductionReadinessContext> ReadForPackageAsync(
+        SqliteConnection connection, SqliteTransaction? transaction,
+        Application.ProductionPackages.ProductionPackageContext context, CancellationToken token, bool useProgramRevision = false)
+    {
+        var basis = (await ReadManyAsync(connection, transaction, [context.BatchOperationId], token, context.MachineAssignmentId)).GetValueOrDefault(context.BatchOperationId)
+            ?? throw new Application.ProductionPackages.ProductionPackageBuildException("production_package_context_changed", "The Operation no longer exists.");
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT machine.execution_mode,machine.usable_tool_positions,
+                process.id,process.tool_table_release_id,tools.required_tool_count,process.case_operation_id,
+                COALESCE(program.production_gcode_release_id,program.selected_gcode_release_id),
+                program.production_gcode_release_id IS NOT NULL,
+                run.legacy_batch_operation_id=output.batch_operation_id
+                    AND (SELECT COUNT(*) FROM production_run_programs p WHERE p.production_run_id=run.id)=1
+                    AND (SELECT COUNT(*) FROM production_run_outputs o WHERE o.production_run_program_id=program.id)=1
+            FROM production_run_outputs output
+            JOIN production_run_programs program ON program.id=output.production_run_program_id
+            JOIN production_runs run ON run.id=program.production_run_id
+            JOIN machines machine ON machine.id=$machine
+            LEFT JOIN process_revisions process ON process.id=COALESCE(program.production_process_revision_id,program.process_revision_id)
+            LEFT JOIN tool_table_releases tools ON tools.id=process.tool_table_release_id
+            WHERE output.id=$output;
+            """;
+        command.Parameters.AddWithValue("$machine", context.MachineId);
+        command.Parameters.AddWithValue("$output", context.ProductionRunOutputId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)) throw new Application.ProductionPackages.ProductionPackageBuildException("production_package_context_changed", "The selected output no longer exists.");
+        if (!useProgramRevision && !reader.IsDBNull(8) && reader.GetBoolean(8) && basis.MachineAssignmentId == context.MachineAssignmentId)
+            return basis;
+        var mode=reader.GetString(0);
+        int? capacity=reader.IsDBNull(1)?null:reader.GetInt32(1);
+        string? process=reader.IsDBNull(2)?null:reader.GetString(2);
+        string? tools=reader.IsDBNull(3)?null:reader.GetString(3);
+        int? count=reader.IsDBNull(4)?null:reader.GetInt32(4);
+        string? recipeOperation=reader.IsDBNull(5)?null:reader.GetString(5);
+        string? release=reader.IsDBNull(6)?null:reader.GetString(6);
+        var pinned=reader.GetBoolean(7);
+        await reader.DisposeAsync();
+        var supported=await ReadSupportedPostprocessorsAsync(connection,transaction,[context.MachineId],token);
+        var releases=recipeOperation is null ? [] : await ReadReleasesAsync(connection,transaction,[recipeOperation],token);
+        var preparations=await ReadToolPreparationFactsAsync(connection,transaction,[context.BatchOperationId],token);
+        var result = basis with { MachineAssignmentId=context.MachineAssignmentId, MachineId=context.MachineId,
+            ExecutionMode=mode, UsableToolPositions=capacity, ActiveProcessRevisionId=process,
+            ActiveToolTableReleaseId=tools, RequiredToolCount=count,
+            SupportedPostprocessorIds=supported.GetValueOrDefault(context.MachineId) ?? [],
+            Releases=recipeOperation is null ? [] : releases.GetValueOrDefault(recipeOperation) ?? [],
+            SelectedGCodeReleaseId=release, ProductionPinned=pinned, ReplacedGCodeReleaseId=null,
+            ToolOffsetMode="MEASURED", ToolPreparation=preparations.GetValueOrDefault((context.BatchOperationId,context.MachineId)) };
+        return await WithOffsetModeAsync(connection, transaction, result, token, context.ProductionRunOutputId);
+    }
+
     private const int ChunkSize = 500;
 
     internal static async Task<ProductionReadinessContext?> ReadAsync(
@@ -21,13 +73,13 @@ internal static class SqliteProductionReadinessContextReader
         SqliteConnection connection,
         SqliteTransaction? transaction,
         IReadOnlyCollection<string> batchOperationIds,
-        CancellationToken token)
+        CancellationToken token, string? assignmentId = null)
     {
         var ids = batchOperationIds.Distinct(StringComparer.Ordinal).ToArray();
         var result = new Dictionary<string, ProductionReadinessContext>(StringComparer.Ordinal);
         if (ids.Length == 0) return result;
 
-        var rows = await ReadOperationRowsAsync(connection, transaction, ids, token);
+        var rows = await ReadOperationRowsAsync(connection, transaction, ids, token, assignmentId);
         if (rows.Count == 0) return result;
 
         var materials = await ReadMaterialsAsync(
@@ -66,10 +118,102 @@ internal static class SqliteProductionReadinessContextReader
                 materialComment,
                 row.MachineId is null ? null : preparations.GetValueOrDefault((row.BatchOperationId, row.MachineId)),
                 row.ReplacedReleaseId,
-                row.ProductionPinned);
+                row.ProductionPinned, ExecutionContextVersion: row.ExecutionContextVersion);
         }
 
+        foreach (var id in result.Keys.ToArray())
+            result[id] = await WithOffsetModeAsync(connection, transaction,
+                result[id] with { AmbiguousExecutionContext = rows.Count(row => row.BatchOperationId == id) > 1 }, token);
         return result;
+    }
+
+    private static async Task<ProductionReadinessContext> WithOffsetModeAsync(SqliteConnection connection,
+        SqliteTransaction? transaction, ProductionReadinessContext context, CancellationToken token, string? outputId = null)
+    {
+        if (context.MachineAssignmentId is null) return context;
+        var release = ProductionReadinessEvaluator.Evaluate(context).EffectiveGCodeReleaseId;
+        context = await WithExecutionEvidenceAsync(connection, transaction, context, release, token);
+        await using var query = connection.CreateCommand();
+        query.Transaction = transaction;
+        query.CommandText = """
+            SELECT COUNT(*), COALESCE(MIN(package.tool_offset_mode='MANUAL_DUMMY'),0),
+                (SELECT COUNT(*) FROM tool_table_release_tools WHERE tool_table_release_id=$tools AND is_active=1)
+            FROM production_package_context_current current
+            JOIN production_packages package ON package.id=current.production_package_id
+            JOIN production_package_contexts binding ON binding.production_package_id=package.id
+            JOIN production_run_outputs output ON output.id=current.production_run_output_id
+            JOIN production_run_programs program ON program.id=output.production_run_program_id
+            JOIN machine_assignments assignment ON assignment.id=current.machine_assignment_id
+                AND assignment.production_run_id=program.production_run_id AND assignment.released_at IS NULL
+            JOIN machine_package_capabilities capability ON capability.machine_id=assignment.machine_id
+            LEFT JOIN cnc_verification_settings settings ON settings.machine_id=assignment.machine_id
+            WHERE current.machine_assignment_id=$assignment AND output.batch_operation_id=$operation
+                AND ($output IS NULL OR output.id=$output)
+                AND package.production_run_id=program.production_run_id
+                AND package.machine_assignment_id=assignment.id
+                AND json_extract(binding.context_json,'$.TargetQuantity')=output.target_quantity
+                AND json_extract(binding.context_json,'$.OutputAllocationStamp')=(
+                    SELECT group_concat(evidence, '|') FROM
+                        (SELECT sibling.id || ':' || sibling.target_quantity || ':' || sibling.quantity_per_cycle
+                            || ':' || COALESCE(sibling.revision_output_id,'') AS evidence
+                         FROM production_run_outputs sibling WHERE sibling.production_run_program_id=program.id ORDER BY sibling.id))
+                AND package.machine_id=$machine AND json_extract(binding.context_json,'$.ProcessRevisionId') IS $process
+                AND package.gcode_release_id IS $release AND package.tool_table_release_id IS $tools
+                AND capability.allow_manual_dummy_tool_offsets=1
+                AND (package.execution_mode='MANUAL' OR (package.verification_enabled=1 AND settings.enabled=1
+                    AND package.verification_configuration_version=settings.version))
+            """;
+        query.Parameters.AddWithValue("$assignment", context.MachineAssignmentId);
+        query.Parameters.AddWithValue("$operation", context.BatchOperationId);
+        query.Parameters.AddWithValue("$output", (object?)outputId ?? DBNull.Value);
+        query.Parameters.AddWithValue("$machine", (object?)context.MachineId ?? DBNull.Value);
+        query.Parameters.AddWithValue("$process", (object?)context.ActiveProcessRevisionId ?? DBNull.Value);
+        query.Parameters.AddWithValue("$release", (object?)release ?? DBNull.Value);
+        query.Parameters.AddWithValue("$tools", (object?)context.ActiveToolTableReleaseId ?? DBNull.Value);
+        await using var reader = await query.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)) return context;
+        return context with { ReleasedToolCount = reader.GetInt32(2),
+            ToolOffsetMode = reader.GetInt32(0) == 1 && reader.GetBoolean(1) ? "MANUAL_DUMMY" : "MEASURED" };
+    }
+
+    private static async Task<ProductionReadinessContext> WithExecutionEvidenceAsync(SqliteConnection connection,
+        SqliteTransaction? transaction, ProductionReadinessContext context, string? release, CancellationToken token)
+    {
+        await using var query = connection.CreateCommand();
+        query.Transaction = transaction;
+        query.CommandText = """
+            SELECT COALESCE(settings.enabled,0), COALESCE(settings.version,0),
+                current.offset_loader_release_id, current.version, session.id, session.state,
+                COALESCE(connection.enabled,0), connection.configuration_json
+            FROM machine_assignments assignment
+            LEFT JOIN cnc_verification_settings settings ON settings.machine_id=assignment.machine_id
+            LEFT JOIN machine_connections connection ON connection.machine_id=assignment.machine_id
+            LEFT JOIN production_run_current_offset_loaders current ON current.production_run_id=assignment.production_run_id
+                AND current.machine_id=assignment.machine_id
+            LEFT JOIN cnc_setup_verification_sessions session ON session.production_run_id=assignment.production_run_id
+                AND session.machine_id=assignment.machine_id AND session.nc_release_id=$release
+                AND session.offset_loader_release_id=current.offset_loader_release_id AND session.state IN ('ARMED','PENDING','SUCCEEDED')
+            WHERE assignment.id=$assignment AND assignment.released_at IS NULL;
+            """;
+        query.Parameters.AddWithValue("$assignment", context.MachineAssignmentId!);
+        query.Parameters.AddWithValue("$release", (object?)release ?? DBNull.Value);
+        await using var reader = await query.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)) return context;
+        var source = SqliteProductionPackageRepository.DprntSource(reader.IsDBNull(7) ? null : reader.GetString(7));
+        var required = reader.GetBoolean(0) && context.ExecutionMode == "CNC_GCODE" && reader.GetBoolean(6)
+            && source is not null && source != Domain.Cnc.CncDprntSources.None;
+        var dprnt = context.ExecutionMode == "CNC_GCODE" && reader.GetBoolean(6)
+            && source is not null && source != Domain.Cnc.CncDprntSources.None;
+        var succeeded = !reader.IsDBNull(5) && reader.GetString(5) == "SUCCEEDED";
+        var loaderObserved = !reader.IsDBNull(4);
+        var values = new object[reader.FieldCount]; reader.GetValues(values);
+        await reader.DisposeAsync();
+        var reporting = SqliteMachineWorkflowReporting.Mode(context.MachineId!, context.BatchOperationId,
+            dprnt ? new HashSet<string>([context.MachineId!]) : new HashSet<string>(),
+            await SqliteMachineWorkflowReporting.ReadVerifiedPackagesAsync(connection, transaction, token));
+        return context with { VerificationRequired = required, VerificationSucceeded = succeeded,
+            ManualSetupReportingSupported = reporting != WorkflowReportingMode.Machine, LoaderExecutionObserved = loaderObserved,
+            ExecutionEvidenceStamp = ProductionActionPolicy.Stamp(new { required, values = values.Select(x => x is DBNull ? null : x).ToArray() }) };
     }
 
     private sealed record OperationRow(
@@ -85,13 +229,14 @@ internal static class SqliteProductionReadinessContextReader
         string? SelectedReleaseId,
         string BatchId,
         string? ReplacedReleaseId,
-        bool ProductionPinned);
+        bool ProductionPinned,
+        string ExecutionContextVersion);
 
     private static async Task<List<OperationRow>> ReadOperationRowsAsync(
         SqliteConnection connection,
         SqliteTransaction? transaction,
         IReadOnlyList<string> ids,
-        CancellationToken token)
+        CancellationToken token, string? assignmentId)
     {
         var rows = new List<OperationRow>();
         foreach (var chunk in ids.Chunk(ChunkSize))
@@ -121,7 +266,10 @@ internal static class SqliteProductionReadinessContextReader
                        restart.replaced_gcode_release_id,
                        CASE WHEN operation.status <> 'not_started' AND restart.id IS NULL
                                  AND operation.production_gcode_release_id IS NOT NULL
-                            THEN 1 ELSE 0 END
+                            THEN 1 ELSE 0 END,
+                       operation.version || ':' || operation.status || ':' || COALESCE(assignment.version,'none')
+                           || ':' || COALESCE(assignment.production_run_id,'none') || ':' ||
+                           COALESCE((SELECT version FROM production_runs WHERE id=assignment.production_run_id),'none')
                 FROM batch_operations operation
                 -- An operation back in setup for a newer local G-code version (schema v90) keeps
                 -- its process revision and tool table, and chooses its release again like one that
@@ -132,6 +280,7 @@ internal static class SqliteProductionReadinessContextReader
                 LEFT JOIN machine_assignments assignment
                   ON assignment.batch_operation_id = operation.id
                  AND assignment.released_at IS NULL
+                 AND ($assignmentId IS NULL OR assignment.id=$assignmentId)
                 LEFT JOIN machines machine ON machine.id = assignment.machine_id
                 LEFT JOIN process_revisions active_process
                   ON active_process.case_operation_id = operation.source_case_operation_id
@@ -142,6 +291,7 @@ internal static class SqliteProductionReadinessContextReader
                   ON pinned_tools.id = operation.production_tool_table_release_id
                 WHERE operation.id IN ({InList(command, chunk)});
                 """;
+            command.Parameters.AddWithValue("$assignmentId", (object?)assignmentId ?? DBNull.Value);
             await using var reader = await command.ExecuteReaderAsync(token);
             while (await reader.ReadAsync(token))
             {
@@ -149,7 +299,7 @@ internal static class SqliteProductionReadinessContextReader
                     reader.GetString(0), reader.GetString(1), String(reader, 2), String(reader, 3),
                     String(reader, 4), Int(reader, 5), String(reader, 6), String(reader, 7),
                     Int(reader, 8), String(reader, 9), reader.GetString(10),
-                    String(reader, 11), reader.GetInt64(12) == 1));
+                    String(reader, 11), reader.GetInt64(12) == 1, reader.GetString(13)));
             }
         }
 

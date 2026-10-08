@@ -1330,6 +1330,40 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
             NullLogger<CncDprintEventIngestionService>.Instance);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Readiness_blocks_a_new_CNC_start_but_preserves_the_end_of_an_accepted_physical_cycle(bool loseBeforeStart)
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        await PrepareProductionApprovalAsync(fixture.Database);
+        async Task RemoveMaterial()
+        {
+            await using var connection = await fixture.Database.OpenConnectionAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM batch_material_reservations;";
+            await command.ExecuteNonQueryAsync();
+        }
+        if (loseBeforeStart) await RemoveMaterial();
+        var repository = new SqliteProductionRunCncObservationRepository(fixture.Database, new FixedTimeProvider(Now));
+        var start = await repository.ConsumeCycleEventAsync(new("machine-verification", "CYCLE_START", "readiness-start",
+            401, 10, "run-verification", "654321", "test"), default);
+        if (loseBeforeStart)
+        {
+            Assert.False(start.Accepted);
+            Assert.Equal("production_not_ready", start.Code);
+        }
+        else
+        {
+            Assert.True(start.Accepted, start.Code);
+            await RemoveMaterial();
+            var end = await repository.ConsumeCycleEventAsync(new("machine-verification", "CYCLE_END", "readiness-end",
+                402, 10, "run-verification", "654321", "test"), default);
+            Assert.True(end.CycleCompleted, end.Code);
+        }
+    }
+
     private static async Task PrepareProductionApprovalAsync(
         SqliteDatabase database, bool approve = true)
     {
@@ -1361,14 +1395,20 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
             VALUES('case-operation-verification-coupled','case-verification-coupled',10,0,'Mill');
             INSERT INTO production_batches(id,case_id,batch_number,status,planned_quantity)
             VALUES('batch-verification-coupled','case-verification-coupled','B-2','in_production',2);
+            INSERT INTO verified_material_receipts(id,case_id,quantity,received_at,verified_at,verified_by,source,created_at,updated_at)
+            VALUES('receipt-coupled','case-verification-coupled',2,$at,$at,'user','LOCAL_VERIFIED',$at,$at);
+            INSERT INTO batch_material_reservations(id,receipt_id,production_batch_id,quantity,reserved_at,reserved_by,created_at,updated_at)
+            VALUES('reserve-coupled','receipt-coupled','batch-verification-coupled',2,$at,'user',$at,$at);
             INSERT INTO batch_operations(id,production_batch_id,source_case_operation_id,
                 operation_number,route_position,name,status)
             VALUES('operation-verification-coupled','batch-verification-coupled',
                    'case-operation-verification-coupled',10,0,'Mill','started');
-            INSERT INTO production_run_outputs(id,production_run_program_id,batch_operation_id,
+            INSERT INTO manufacturing_program_revision_outputs(id,process_revision_id,case_operation_id,quantity_per_cycle,display_order,execution_metadata_json,created_at)
+            VALUES('recipe-output-coupled','process-verification','case-operation-verification-coupled',2,1,'{}',$at);
+            INSERT INTO production_run_outputs(id,production_run_program_id,batch_operation_id,revision_output_id,
                 quantity_per_cycle,target_quantity,produced_quantity,status,version,created_at,updated_at)
             VALUES('output-verification-coupled','run-program-verification',
-                   'operation-verification-coupled',2,2,0,'ALLOCATED',1,$at,$at);
+                   'operation-verification-coupled','recipe-output-coupled',2,2,0,'ALLOCATED',1,$at,$at);
             """;
         command.Parameters.AddWithValue("$at", Now.ToString("O"));
         await command.ExecuteNonQueryAsync();
@@ -1539,25 +1579,33 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
             VALUES('case-operation-verification','case-verification',10,0,'Mill');
             INSERT INTO production_batches(id,case_id,batch_number,status,planned_quantity)
             VALUES('batch-verification','case-verification','B-1','in_production',1);
+            INSERT INTO verified_material_receipts(id,case_id,quantity,received_at,verified_at,verified_by,source,created_at,updated_at)
+            VALUES('receipt-verification','case-verification',1,$at,$at,'user','LOCAL_VERIFIED',$at,$at);
+            INSERT INTO batch_material_reservations(id,receipt_id,production_batch_id,quantity,reserved_at,reserved_by,created_at,updated_at)
+            VALUES('reserve-verification','receipt-verification','batch-verification',1,$at,'user',$at,$at);
             INSERT INTO batch_operations(id,production_batch_id,source_case_operation_id,operation_number,route_position,name,status)
             VALUES('operation-verification','batch-verification','case-operation-verification',10,0,'Mill','started');
             INSERT INTO postprocessors(id,name)VALUES('post-verification','Post');
-            INSERT INTO tool_table_releases(id,case_operation_id,revision_number,original_file_name,stored_relative_path,file_size,file_hash,released_at,released_by,release_comment,created_at,updated_at)
-            VALUES('tools-verification','case-operation-verification',1,'tools.csv','tools/1.csv',1,$hash,$at,'user','release',$at,$at);
+            INSERT INTO tool_table_releases(id,case_operation_id,revision_number,original_file_name,stored_relative_path,file_size,file_hash,released_at,released_by,release_comment,created_at,updated_at,required_tool_count)
+            VALUES('tools-verification','case-operation-verification',1,'tools.csv','tools/1.csv',1,$hash,$at,'user','release',$at,$at,0);
             INSERT INTO process_revisions(id,case_operation_id,revision_number,is_active,tool_table_release_id,created_at,created_by,change_description,version,updated_at,manufacturing_program_id)
             VALUES('process-verification','case-operation-verification',1,1,'tools-verification',$at,'user','release',1,$at,'case-operation:case-operation-verification');
+            INSERT INTO manufacturing_program_revision_outputs(id,process_revision_id,case_operation_id,quantity_per_cycle,display_order,execution_metadata_json,created_at)
+            VALUES('recipe-output-verification','process-verification','case-operation-verification',1,0,'{}',$at);
             INSERT INTO gcode_releases(id,case_operation_id,process_revision_id,postprocessor_id,post_specific_revision,original_file_name,stored_relative_path,file_size,file_hash,released_at,released_by,change_scope,release_comment,tool_table_release_id,created_at,updated_at)
-            VALUES('gcode-verification','case-operation-verification','process-verification','post-verification',1,'part.nc','gcode/part.nc',1,$hash,$at,'user','LOCAL_POST_REVISION','release','tools-verification',$at,$at);
+            VALUES('gcode-verification','case-operation-verification','process-verification','post-verification',2,'part.nc','gcode/part.nc',1,$hash,$at,'user','LOCAL_POST_REVISION','release','tools-verification',$at,$at);
             INSERT INTO gcode_releases(id,case_operation_id,process_revision_id,postprocessor_id,post_specific_revision,original_file_name,stored_relative_path,file_size,file_hash,released_at,released_by,change_scope,release_comment,tool_table_release_id,created_at,updated_at)
-            VALUES('gcode-historical','case-operation-verification','process-verification','post-verification',2,'old.nc','gcode/old.nc',1,$hash,$at,'user','LOCAL_POST_REVISION','historical','tools-verification',$at,$at);
+            VALUES('gcode-historical','case-operation-verification','process-verification','post-verification',1,'old.nc','gcode/old.nc',1,$hash,$at,'user','LOCAL_POST_REVISION','historical','tools-verification',$at,$at);
             INSERT INTO gcode_release_verification_hooks(gcode_release_id,hook_version,invocation_kind,invocation_number,nc_identity_token,line_number,created_at,updated_at)
             VALUES('gcode-verification',1,'G65',9002,654321,3,$at,$at);
+            INSERT INTO machine_supported_postprocessors(machine_id,postprocessor_id,created_at,updated_at)
+            VALUES('machine-verification','post-verification',$at,$at);
             INSERT INTO production_runs(id,status,shared_setup_seconds,setup_snapshot_json,structure_locked_at,version,created_at,updated_at)
             VALUES('run-verification','PLANNED',0,'{}',NULL,1,$at,$at);
             INSERT INTO production_run_programs(id,production_run_id,manufacturing_program_id,process_revision_id,selected_gcode_release_id,production_gcode_release_id,sequence_position,target_cycle_count,completed_cycle_count,status,legacy_unmanaged,version,created_at,updated_at)
             VALUES('run-program-verification','run-verification','case-operation:case-operation-verification','process-verification','gcode-verification','gcode-historical',0,1,0,'ACTIVE',0,1,$at,$at);
-            INSERT INTO production_run_outputs(id,production_run_program_id,batch_operation_id,quantity_per_cycle,target_quantity,produced_quantity,status,version,created_at,updated_at)
-            VALUES('output-verification','run-program-verification','operation-verification',1,1,0,'ALLOCATED',1,$at,$at);
+            INSERT INTO production_run_outputs(id,production_run_program_id,batch_operation_id,revision_output_id,quantity_per_cycle,target_quantity,produced_quantity,status,version,created_at,updated_at)
+            VALUES('output-verification','run-program-verification','operation-verification','recipe-output-verification',1,1,0,'ALLOCATED',1,$at,$at);
             INSERT INTO machine_assignments(id,batch_operation_id,machine_id,backlog_position,planning_mode,production_run_id)
             VALUES('assignment-verification','operation-verification','machine-verification',0,'manual','run-verification');
             UPDATE production_runs SET status='IN_PROGRESS',structure_locked_at=$at WHERE id='run-verification';

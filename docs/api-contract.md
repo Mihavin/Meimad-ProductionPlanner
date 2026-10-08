@@ -1,5 +1,60 @@
 # API Contract
 
+## C07 Kitaron push concurrency
+
+`POST /api/v1/kitaron/push/preview` additionally returns `previewStamp`. A subsequent manual `POST /api/v1/kitaron/push/run` may supply `If-Kitaron-Preview-Match: <previewStamp>`; Windows supplies the last displayed preview's stamp. A changed effective plan/settings/target returns `409 kitaron_push_conflict` before writing and instructs the caller to refresh Preview. Run requests without a stamp remain compatible: they calculate a fresh plan, not confirmation of any older displayed preview.
+
+Every run, stamped or unstamped, revalidates ERP row identity, unique operation match, open/not-stopped status and exact mapped comparison values under SQL transaction locks. Any mismatch returns the same conflict code and rolls back the whole push, including independent Work Orders. There is no conflict retry. Permissions and the four-column allowlist are unchanged. AFTER triggers execute normally; enabled INSTEAD OF triggers are refused. Isolated SQL Server acceptance remains pending. Existing failure receipts do not solve uncertain external commit outcomes; that remains C08 work.
+
+
+## C05 readiness decisions (complete locally; D2 approved 2026-10-08)
+
+Operation readiness responses add optional `actions`: entries contain `action` (`Plan`, `CreatePackage`, `RecordSetupStart`, `RunStart`, `RecordProduction`), `isAllowed`, `contextStamp` and `reasons`. Each reason contains `code`, `requiredEvidence`, `currentEvidence`, `classification` (`SATISFIED`, `ATTENTION`, `BLOCKING`) and `message`. These are server preparation decisions, not permission grants or replacements for allocation/Machine compatibility validation. Material can be ATTENTION during planning/package preparation while blocking production. `CreatePackage` describes the default MEASURED request: current physical offset confirmation or an existing Manual/Dummy package does not substitute for the released tools' measurements. Explicit Manual/Dummy creation still validates its Machine capability and required verification hooks. Existing `isReadyForProduction` describes preparation readiness; use the RecordProduction decision to inspect the additional configured controller-verification boundary.
+
+Run readiness adds `contextStamp` and RunStart/RecordProduction decisions. GET uses a consistent database snapshot. POST `/api/v1/production-runs/{runId}/start` continues to require its existing `If-Match`; an optional `If-Readiness-Match` carries the exact unquoted `contextStamp`. A mismatch returns 409 `production_readiness_changed`. Independently of that optional header, the service's observed evidence is compared again inside the write transaction, before any status/pin change. Legacy callers omitting the header receive current commit-time validation but cannot detect changes since their earlier UI read. Start/Resume and new cycle requests reject missing prerequisites atomically; identical cycle retries return their original receipt first. A cycle with unfulfilled configured exact verification returns 409 `production_verification_required`.
+
+Manual production-status and quantity-report mutations also reevaluate the shared production policy in their transaction. RecordSetupStart requires engineering/tool prerequisites and actual loader evidence or the existing supported manual reporting mode; material is attention for setup, blocking for production. The operation `/start` endpoint also accepts `If-Readiness-Match` from its RunStart readiness decision; the Windows client performs that preflight read and sends the stamp. An operation with multiple live assignments reports a blocking execution-context reason instead of being allowed to start through the operation-only mutation. CNC cycle starts revalidate the same production policy atomically; their rejection code is returned to ingestion/logging. Ends of already accepted physical cycles remain evidence and are counted even if readiness subsequently changes. QC, verification protocol and tablet command scope are unchanged. No new physical-handoff mutation or controller commissioning guarantee is introduced. D2 mode policies were explicitly approved on 2026-10-08: unknown capacity blocks a managed process requiring tools, zero-tool processes remain allowed, and unmanaged legacy operations retain NC/tool-release exemptions while requiring material readiness and valid execution context. Controller commissioning remains separate.
+
+
+## C04 package publication and retries (2026-10-08)
+
+`POST /api/v1/batch-operations/{operationId}/production-package` accepts `Idempotency-Key`: 1-128 printable ASCII characters without whitespace after trimming. Windows supplies a fresh GUID for a deliberate creation and retains that key and the original C03 context for retry after a transport failure, timeout or Server error in the same signed-in client session. A successful reply or definite client/conflict refusal ends that pending command.  A row that disappears from the Server queue after an uncertain response remains locally visible with an explicit unconfirmed-result fact so the original action can recover its receipt. This local retry row is not Server readiness evidence. Restarting/disconnecting the client clears its in-memory pending commands; API callers requiring recovery across their own restart must persist the key and original request.
+
+Keys are scoped to the authenticated actor and the create-package command. The request hash covers the normalized operation ID and offset mode, plus the exact supplied C03 selection/stamp (null for a legacy operation-only request). Same actor/key/hash returns the original persisted `201` body and immutable Location, including package number, artifacts, predecessor and creation time, even after the package is superseded or its assignment changes. It does not republish the historical package or claim it is current now. Authentication is checked before receipt lookup. A different actor has a separate key space.
+
+- `409 production_package_request_conflict`: the key already completed with different request fields. No generation/publication is performed for a known conflict.
+- `422 production_package_request_key_invalid`: malformed key.
+- `409 production_package_publication_conflict`: current package ID/version changed during generation, including retirement followed by restoration of the same ID. Refresh and review before deliberate regeneration.
+- `409 production_package_context_changed`: generation inputs, measurements, configuration or Run Offset Loader binding changed before activation.
+- `422 production_package_staged_corrupt`: generated file length/hash failed final verification. Previous current pointers are retained.
+
+Legacy requests without a key remain supported and get the same publication compare-and-swap protection, but cannot recover a lost result idempotently. They must upgrade to keyed requests for that guarantee. Successful keyed receipt, package/artifact records, exact current pointer, invalidation/predecessor and applicable Run Offset Loader pointer commit together. Concurrent identical requests may stage files independently, but only one result is committed; the other returns its receipt. Failed generation creates no completed receipt. Number allocation may leave gaps after a failed or duplicate staged build.
+
+All generated artifacts are staged/hashed outside the short write transaction and re-read after placement; read-only file handles prevent concurrent writes/deletion during publication on Windows. Existing sources are never rewritten. On an uncertain commit outcome, cleanup checks durable package references with a fresh uncancelled read; referenced or uncheckable files are retained. D04 restart reconciliation remains pending. Existing package-generation permissions, CNC verification/loader execution semantics and manifest v3 are unchanged.
+
+## C03 exact Production Package context (2026-10-08)
+
+Preparation queue rows now identify `(machineAssignmentId, productionRunProgramId, productionRunOutputId)` and include `context`: those IDs plus `productionRunId`, `batchOperationId`, Server-resolved `machineId`, `processRevisionId`, opaque `contextStamp`, integer `targetQuantity`, one-based `programNumber`, and opaque `outputAllocationStamp`. One operation may have multiple rows. `recipeCaseId` / `recipeCaseOperationId` identify the program's engineering owner for NC/tool-file actions; `caseId` / `caseOperationId` still identify the demand output. Tool-preparation responses and Production Package responses include this context too.
+
+Existing package POST/GET/artifact GET and tool-preparation GET/PUT accept query parameters `machineAssignmentId`, `productionRunId`, `productionRunProgramId`, `productionRunOutputId`, plus optional `contextStamp`. All four IDs must be supplied together. Windows sends the observed stamp on package creation and tool edits. Current package reads/downloads use the four IDs and revalidate current content; ordinary execution-version advancement does not make an otherwise valid package stale. None of these fields selects or changes the planner's Machine. The Server validates membership, outstanding quantity, recipe output/cycle quantities and the active assignment; activation repeats validation in its write transaction.
+
+- `409 production_package_context_required`: incomplete identity.
+- `409 production_package_context_ambiguous`: an operation-only request has multiple live contexts; upgrade/refresh and select a queue row.
+- `409 production_package_context_changed`: identity is no longer live or the supplied stamp is stale; refresh and review the assignment.
+- `409 production_package_context_invalid`: program outputs disagree with recipe or cycle quantities.
+
+An operation-only legacy request resolves only when exactly one live context exists. With none, current-package GET returns 404 and creation refuses with the existing assignment-missing build error. Other engineering/build errors remain 422. Tool saving still requires `toolroom.prepare`, expected tool-preparation version and the matching Tool Table release; package generation retains its existing signed-in-user permission.
+
+Manifest schema **v3** adds the exact `context` to existing v2 fields. Loader release metadata links `productionPackageId`, assignment, program and output. The loader verification authority remains Run/Machine/NC/Offset Loader; this does not add a new CNC handshake or concurrent per-program verification state.
+
+`GET /api/v1/production-packages/{packageId}` and `/api/v1/production-packages/{packageId}/artifacts/{artifactId}` inspect immutable history, including cancelled/superseded work. Both require Windows sign-in; artifacts retain path and checksum validation. They do not declare the package current or change workflow. POST Location names this immutable package resource. Pre-v99 packages remain inspectable with null context; their manifests are not rewritten or arbitrarily promoted into exact current pointers. Regenerate from the queue to obtain a current v3 package.
+
+Work Order setup restart retains its supported single-program/single-output legacy behavior, validates its exact live Run/Machine, and retires only that Run's context pointers. Ambiguous split or multi-output restart returns 409 rather than restarting an arbitrarily selected program. A replacement package cannot resolve another assignment's open restart. Export remains neither handoff proof nor setup start.
+
+## C01 timing consistency (2026-10-08)
+
+No request/response shape changes. Planning Board, Timeline and Case Operation time-statistics use the existing `measured_median` semantics for retained manual measurements, including setup; the timeline no longer substitutes a global-log average/latest-boundary value. Existing manual reports still carry per-part seconds when reporting a part time. Sample counts in measured results mean the retained last-10 window, not production quantity. Unknown/malformed timing does not become zero-duration evidence. Diagnostic `manual_timing_warnings` and aggregate checkpoints are Server persistence views, not a new public endpoint. Manual correction/retraction commands remain unsupported, and this change grants no additional mutation permissions.
+
 ## Audit repairs: auxiliary pins and cycle retries (2026-10-08)
 
 `GET /api/v1/timeline` auxiliary resource intervals now include `pinVersion`, an integer stamp for `(operationId, requirementId)`. Zero means no pin has ever been retained; a cleared pin retains its positive stamp. Clients must use the displayed stamp, including for create after clear.
@@ -10,7 +65,7 @@ Set rejects unrelated/inactive requirements (`auxiliary_pin_requirement_mismatch
 
 Production Run cycle retries retain global `(source, sourceEventId)` deduplication. The persisted Run ID, program ID and observation instant must also match; compare instants in UTC, not their textual offsets. Identical retries return the original `completedCycleCount`, `wasDuplicate=true`, and the current projection of that same original Run, even with a stale original If-Match. A changed Run/program/time returns 409 `cycle_event_binding_conflict`, with no count/allocation change. This command always represents one physical cycle; it has no caller-supplied count. Authentication/permissions are checked before returning a duplicate.
 
-The [approved stage-gate matrix](implementation-plan.md#audit-handoff-2026-10-08) is a target for C05/U02, not a new implemented endpoint contract. Handoff is tracking only; package generation keeps its existing any-signed-in-Windows-user permission.
+The [approved stage-gate matrix](implementation-plan.md#audit-handoff-2026-10-08) is implemented by the C05 readiness contracts above; U02 preparation/handoff UI work remains separate. Handoff is tracking only; package generation keeps its existing any-signed-in-Windows-user permission.
 
 **Accounts replace Single Edit Mode (schema v86, owner decision 2026-09-27).** Every Windows-client
 API call carries `Authorization: Bearer <session token>` from `POST /api/v1/auth/sign-in`; each
@@ -2236,7 +2291,7 @@ a latest workflow projection of `READY_FOR_SETUP`, `IN_SETUP`, or
 second sign-off. The client cannot supply a Machine or release selection. The
 Server resolves current authoritative context, validates all prerequisites,
 atomically builds/activates the package, and returns `201`. Missing/stale or
-incompatible facts return `422` with a precise build error.
+incompatible engineering facts return `422`; C03 identity ambiguity/staleness returns `409` as specified above.
 
 `GET /api/v1/batch-operations/{operationId}/production-package` returns only
 the exact currently valid package or `404`. `GET
@@ -2249,7 +2304,7 @@ hash, superseded predecessor, artifact hashes and source releases, plus
 `directTransferOnline`. Offline direct transfer never disables file export or
 downgrades configured verification.
 
-Manifest schema v2 records `placeholderProtocolVersion`, authoritative
+Manifest schema v3 adds the C03 `context` described above and records `placeholderProtocolVersion`, authoritative
 `partName` and `operationName`, exact Run/Operation/Machine/NC/Tool Table/Offset
 Loader identities, input hashes, creator and Server timestamp, selected offset
 mode, supersession, and the generation-relevant Machine capability snapshot. It

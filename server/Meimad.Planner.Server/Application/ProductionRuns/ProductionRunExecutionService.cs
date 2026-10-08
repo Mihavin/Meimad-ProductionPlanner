@@ -5,7 +5,7 @@ namespace Meimad.Planner.Server.Application.ProductionRuns;
 
 internal interface IProductionRunExecutionRepository
 {
-    Task<ProductionRun> StartAsync(string runId, int expectedVersion, EditAuthority authority, CancellationToken token);
+    Task<ProductionRun> StartAsync(string runId, int expectedVersion, EditAuthority authority, CancellationToken token, string? readinessStamp = null);
     Task<ProductionRun> ActivateProgramAsync(string runId, string programId, int expectedVersion, EditAuthority authority, CancellationToken token);
     Task<ProductionRunCycleResult> RecordCycleAsync(string runId, string programId, int expectedVersion, RecordProductionRunCycleCommand command, EditAuthority authority, CancellationToken token);
     Task<ProductionRun> SuspendAsync(string runId, int expectedVersion, string reason, EditAuthority authority, CancellationToken token);
@@ -20,12 +20,14 @@ internal sealed class ProductionRunExecutionService(
     IProductionRunExecutionRepository repository,
     ProductionRunReadinessService readiness)
 {
-    internal async Task<ProductionRun> StartAsync(string id, int version, EditAuthority authority, CancellationToken token)
+    internal async Task<ProductionRun> StartAsync(string id, int version, EditAuthority authority, CancellationToken token, string? observedStamp = null)
     {
         var result = await readiness.ReadAsync(id, token);
+        if (observedStamp is not null && observedStamp != result.ContextStamp)
+            throw new ProductionRunStateException("production_readiness_changed", "Readiness changed since it was displayed. Refresh the Run and review its prerequisites.");
         if (!result.IsReadyForProduction)
             throw new ProductionRunStateException("production_not_ready", "Production Run readiness has blocking components.");
-        return await repository.StartAsync(id, version, authority, token);
+        return await repository.StartAsync(id, version, authority, token, result.ContextStamp);
     }
     internal Task<ProductionRun> ActivateProgramAsync(string id, string programId, int version, EditAuthority authority, CancellationToken token) =>
         repository.ActivateProgramAsync(Clean(id), Clean(programId), version, authority, token);

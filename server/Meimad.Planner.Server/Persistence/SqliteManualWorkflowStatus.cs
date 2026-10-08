@@ -88,10 +88,30 @@ internal static class SqliteMachineWorkflowReporting
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT current.batch_operation_id, current.machine_id
-            FROM production_package_current current
-            JOIN production_packages package ON package.id = current.production_package_id
-            WHERE package.verification_enabled = 1;
+            SELECT package.batch_operation_id, package.machine_id
+            FROM production_packages package
+            JOIN machine_assignments assignment ON assignment.id=package.machine_assignment_id
+                AND assignment.production_run_id=package.production_run_id AND assignment.machine_id=package.machine_id
+                AND assignment.released_at IS NULL
+            JOIN production_runs run ON run.id=assignment.production_run_id
+                AND run.status IN ('DRAFT','PLANNED','IN_PROGRESS','SUSPENDED')
+            WHERE package.verification_enabled = 1 AND (
+                EXISTS (
+                    SELECT 1 FROM production_package_context_current current
+                    JOIN production_run_outputs output ON output.id=current.production_run_output_id
+                        AND output.production_run_program_id=current.production_run_program_id
+                        AND output.batch_operation_id=package.batch_operation_id
+                        AND output.status IN ('ALLOCATED','IN_PRODUCTION')
+                    JOIN production_run_programs program ON program.id=output.production_run_program_id
+                        AND program.production_run_id=run.id AND program.status IN ('PLANNED','ACTIVE','SUSPENDED')
+                    WHERE current.production_package_id=package.id AND current.machine_assignment_id=assignment.id)
+                OR (EXISTS (SELECT 1 FROM production_package_current legacy WHERE legacy.production_package_id=package.id)
+                    AND NOT EXISTS (SELECT 1 FROM production_package_context_current current WHERE current.machine_assignment_id=assignment.id)
+                    AND (SELECT COUNT(*) FROM production_run_outputs output
+                        JOIN production_run_programs program ON program.id=output.production_run_program_id
+                        WHERE program.production_run_id=run.id AND output.batch_operation_id=package.batch_operation_id
+                            AND program.status IN ('PLANNED','ACTIVE','SUSPENDED')
+                            AND output.status IN ('ALLOCATED','IN_PRODUCTION'))=1));
             """;
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token)) operations.Add((reader.GetString(0), reader.GetString(1)));

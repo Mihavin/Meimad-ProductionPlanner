@@ -81,13 +81,13 @@ internal sealed class KitaronPushService
     internal async Task<KitaronPushResult> PreviewAsync(CancellationToken cancellationToken)
     {
         var (connection, password) = await ConnectionAsync(cancellationToken);
-        var plan = await PlanAsync(connection, password, cancellationToken);
+        var (plan, stamp) = await PlanAsync(connection, password, cancellationToken);
         return new KitaronPushResult(null, false, timeProvider.GetUtcNow(), plan.OperationsMatched,
-            plan.OperationsSkipped, plan.Changes, plan.Notes);
+            plan.OperationsSkipped, plan.Changes, plan.Notes, stamp);
     }
 
     /// <summary>Writes the changes into Kitaron in one transaction and logs the run.</summary>
-    internal async Task<KitaronPushResult> RunAsync(string trigger, string? requestedBy, CancellationToken cancellationToken)
+    internal async Task<KitaronPushResult> RunAsync(string trigger, string? requestedBy, CancellationToken cancellationToken, string? expectedPreviewStamp = null)
     {
         if (!await gate.WaitAsync(0, cancellationToken))
             throw new KitaronPushBlockedException("A push to Kitaron is already running. Try again in a moment.");
@@ -99,7 +99,10 @@ internal sealed class KitaronPushService
             try
             {
                 var (connection, password) = await ConnectionAsync(cancellationToken);
-                plan = await PlanAsync(connection, password, cancellationToken);
+                var planned = await PlanAsync(connection, password, cancellationToken);
+                plan = planned.Plan;
+                if (expectedPreviewStamp is not null && !string.Equals(expectedPreviewStamp, planned.Stamp, StringComparison.Ordinal))
+                    throw new KitaronPushConflictException("The Kitaron push preview changed. Nothing was written. Refresh Preview and review the current values.");
                 if (plan.Writes.Count > 0)
                     await target.WriteAsync(connection, password, plan.Writes, cancellationToken);
             }
@@ -132,14 +135,17 @@ internal sealed class KitaronPushService
     internal Task<DateTimeOffset?> LastAutomaticRunStartedAtAsync(CancellationToken cancellationToken) =>
         repository.LastAutomaticRunStartedAtAsync(cancellationToken);
 
-    private async Task<KitaronPushPlanner.Plan> PlanAsync(
+    private async Task<(KitaronPushPlanner.Plan Plan, string Stamp)> PlanAsync(
         StoredKitaronConnectionSettings connection, string password, CancellationToken cancellationToken)
     {
         var settings = await repository.GetSettingsAsync(cancellationToken);
         var active = settings.Mappings.Where(mapping => mapping.Enabled).ToArray();
         var operations = await repository.ReadOperationsAsync(cancellationToken);
         if (active.Length == 0 || operations.Count == 0)
-            return KitaronPushPlanner.Build(settings.Mappings, operations, new Dictionary<string, KitaronPushForecast>(), [], factoryZone);
+        {
+            var empty = KitaronPushPlanner.Build(settings.Mappings, operations, new Dictionary<string, KitaronPushForecast>(), [], factoryZone);
+            return (empty, KitaronPushComparison.Stamp(settings, empty, connection));
+        }
 
         var forecasts = active.Any(mapping => mapping.PlannerValue.StartsWith("forecast_", StringComparison.Ordinal))
             ? await forecast.ReadAsync(cancellationToken)
@@ -149,7 +155,8 @@ internal sealed class KitaronPushService
             operations.Select(operation => operation.WorkOrderNumber).Distinct().ToArray(),
             active.Select(mapping => mapping.KitaronColumn).ToArray(),
             cancellationToken);
-        return KitaronPushPlanner.Build(settings.Mappings, operations, forecasts, rows, factoryZone);
+        var plan = KitaronPushPlanner.Build(settings.Mappings, operations, forecasts, rows, factoryZone);
+        return (plan, KitaronPushComparison.Stamp(settings, plan, connection));
     }
 
     private async Task<(StoredKitaronConnectionSettings Connection, string Password)> ConnectionAsync(

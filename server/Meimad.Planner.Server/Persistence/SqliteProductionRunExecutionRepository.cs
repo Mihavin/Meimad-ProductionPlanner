@@ -11,12 +11,26 @@ internal sealed class SqliteProductionRunExecutionRepository(
     SqliteDatabase database, TimeProvider timeProvider, IProductionRunRepository runs)
     : IProductionRunExecutionRepository
 {
-    public Task<ProductionRun> StartAsync(string runId, int expectedVersion, EditAuthority authority, CancellationToken token) =>
+    public Task<ProductionRun> StartAsync(string runId, int expectedVersion, EditAuthority authority, CancellationToken token, string? readinessStamp = null) =>
         ChangeRunAsync(runId, expectedVersion, ["PLANNED", "DRAFT"], "IN_PROGRESS", "production_run_started",
             authority, null, async (c, t, now) =>
             {
+                await SqliteProductionRunReadinessRepository.EnsureAsync(c, t, runId, token, readinessStamp);
                 await using var pin = c.CreateCommand(); pin.Transaction = t;
                 pin.CommandText = """
+                    UPDATE production_run_programs
+                    SET selected_gcode_release_id=(
+                        SELECT CASE WHEN COUNT(*)=1 THEN MIN(release.id) END FROM gcode_releases release
+                        JOIN machine_assignments assignment ON assignment.production_run_id=$id AND assignment.released_at IS NULL
+                        JOIN machine_supported_postprocessors supported ON supported.machine_id=assignment.machine_id
+                            AND supported.postprocessor_id=release.postprocessor_id
+                        JOIN machines machine ON machine.id=assignment.machine_id AND machine.execution_mode='CNC_GCODE'
+                        WHERE release.process_revision_id=production_run_programs.process_revision_id
+                            AND NOT EXISTS (SELECT 1 FROM gcode_releases newer
+                                WHERE newer.process_revision_id=release.process_revision_id
+                                  AND newer.postprocessor_id=release.postprocessor_id
+                                  AND newer.post_specific_revision>release.post_specific_revision))
+                    WHERE production_run_id=$id AND selected_gcode_release_id IS NULL;
                     UPDATE production_run_programs
                     SET production_process_revision_id=process_revision_id,
                         production_gcode_release_id=selected_gcode_release_id,
@@ -76,6 +90,7 @@ internal sealed class SqliteProductionRunExecutionRepository(
             }
         }
         await EnsureRunAsync(connection, transaction, runId, expectedVersion, ["IN_PROGRESS"], token);
+        await SqliteProductionRunReadinessRepository.EnsureAsync(connection, transaction, runId, token, physicalProduction: true);
         var now = timeProvider.GetUtcNow();
         var result = await SqliteProductionRunCycleAccounting.RecordAsync(
             connection, transaction, new(
@@ -89,7 +104,7 @@ internal sealed class SqliteProductionRunExecutionRepository(
         ChangeRunAsync(runId, expectedVersion, ["IN_PROGRESS"], "SUSPENDED", "production_run_suspended", authority, reason,
             async (c,t,now) => { await ExecuteAsync(c,t,"UPDATE production_run_programs SET status='SUSPENDED',version=version+1,updated_at=$at WHERE production_run_id=$id AND status='ACTIVE';",runId,now,token); }, token);
     public Task<ProductionRun> ResumeAsync(string runId, int expectedVersion, EditAuthority authority, CancellationToken token) =>
-        ChangeRunAsync(runId, expectedVersion, ["SUSPENDED"], "IN_PROGRESS", "production_run_resumed", authority, null, null, token);
+        ChangeRunAsync(runId, expectedVersion, ["SUSPENDED"], "IN_PROGRESS", "production_run_resumed", authority, null, async (c,t,now) => await SqliteProductionRunReadinessRepository.EnsureAsync(c,t,runId,token), token);
     public Task<ProductionRun> ResetAsync(string runId, int expectedVersion, string reason, EditAuthority authority, CancellationToken token) =>
         ChangeRunAsync(runId, expectedVersion, ["IN_PROGRESS", "SUSPENDED"], "PLANNED", "production_run_reset", authority, reason,
             async (c,t,now) =>

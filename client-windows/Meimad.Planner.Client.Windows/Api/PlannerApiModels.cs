@@ -1948,7 +1948,14 @@ internal sealed record PlannerProductionReadiness(
     IReadOnlyList<PlannerReadinessComponent> Components,
     string? EffectiveGCodeReleaseId,
     bool RequiresExplicitGCodeSelection,
-    IReadOnlyList<PlannerReadinessRelease> CompatibleGCodeReleases);
+    IReadOnlyList<PlannerReadinessRelease> CompatibleGCodeReleases,
+    IReadOnlyList<PlannerProductionActionDecision>? Actions = null);
+
+internal sealed record PlannerProductionActionReason(string Code, string RequiredEvidence,
+    string CurrentEvidence, string Classification, string Message);
+
+internal sealed record PlannerProductionActionDecision(string Action, bool IsAllowed, string ContextStamp,
+    IReadOnlyList<PlannerProductionActionReason> Reasons);
 
 internal sealed record ProductionReadinessInputUpdate(
     string? SelectedGCodeReleaseId,
@@ -2464,6 +2471,11 @@ internal sealed record PreparationReadinessFact(
     public string DisplayText => $"{Label}: {State.Replace('_', ' ')} — {Message}";
 }
 
+internal sealed record ProductionPackageContext(
+    string MachineAssignmentId, string ProductionRunId, string ProductionRunProgramId,
+    string ProductionRunOutputId, string BatchOperationId, string MachineId,
+    string? ProcessRevisionId, string ContextStamp, int TargetQuantity, int ProgramNumber = 1);
+
 internal sealed record PreparationQueueItem(
     string Stage,
     string BatchOperationId,
@@ -2483,12 +2495,16 @@ internal sealed record PreparationQueueItem(
     string WorkflowStatus,
     IReadOnlyList<PreparationReadinessFact> ReadinessFacts,
     string? CaseId = null,
-    string? CaseOperationId = null)
+    string? CaseOperationId = null, ProductionPackageContext? Context = null,
+    string? RecipeCaseId = null, string? RecipeCaseOperationId = null)
 {
+    public string RowKey => Context is null ? BatchOperationId : $"{Context.MachineAssignmentId}/{Context.ProductionRunProgramId}/{Context.ProductionRunOutputId}";
     public string MachineText => $"{MachineNumber} — {MachineName}";
     public string PartText => $"{PartNumber} — {PartName}";
     public string OperationText => $"OP{OperationNumber:00} {OperationName}";
     public string ProductionRunText => ProductionRunId ?? "Not created";
+    public string ProgramText => Context is null ? "—" : Context.ProgramNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    public string QuantityText => Context is null ? "—" : Context.TargetQuantity.ToString(System.Globalization.CultureInfo.InvariantCulture);
     public string GCodeReleaseText => GCodeReleaseId ?? "Missing / not selected";
     public string ToolTableReleaseText => ToolTableReleaseId ?? "Missing";
     public string WorkflowText => WorkflowStatus.Replace('_', ' ');
@@ -2523,7 +2539,7 @@ internal sealed record ProductionPackageInfo(
     bool FileExportAvailable,
     bool DirectTransferConfigured,
     bool DirectTransferOnline,
-    IReadOnlyList<ProductionPackageArtifactInfo> Artifacts)
+    IReadOnlyList<ProductionPackageArtifactInfo> Artifacts, ProductionPackageContext? Context = null)
 {
     public string ToolOffsetMode { get; init; } = "MEASURED";
 
@@ -2588,7 +2604,7 @@ internal sealed record PlannerToolPreparation(
     string? MachineSpindleAdaptorId = null,
     string? MachinePullStudId = null,
     IReadOnlyList<PlannerSpindleAdaptor>? SpindleAdaptors = null,
-    IReadOnlyList<PlannerPullStud>? PullStuds = null)
+    IReadOnlyList<PlannerPullStud>? PullStuds = null, ProductionPackageContext? Context = null)
 {
     /// <summary>The adaptor a tool is drawn with: its own override, else the Machine's default.</summary>
     internal PlannerSpindleAdaptor? AdaptorFor(PlannerToolPreparationTool tool) =>
@@ -3097,4 +3113,5 @@ internal sealed record KitaronPushResultInfo(
     int OperationsMatched,
     int OperationsSkipped,
     IReadOnlyList<KitaronPushChangeInfo> Changes,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    string? PreviewStamp = null);

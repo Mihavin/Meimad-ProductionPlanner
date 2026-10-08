@@ -7,7 +7,9 @@ internal sealed record ProductionRunReadiness(
     string OverallState,
     bool IsReadyForProduction,
     IReadOnlyList<ProductionRunProgramReadiness> Programs,
-    IReadOnlyList<ReadinessComponent> RunComponents);
+    IReadOnlyList<ReadinessComponent> RunComponents,
+    string? ContextStamp = null,
+    IReadOnlyList<ProductionActionDecision>? Actions = null);
 
 internal sealed record ProductionRunProgramReadiness(
     string ProductionRunProgramId,

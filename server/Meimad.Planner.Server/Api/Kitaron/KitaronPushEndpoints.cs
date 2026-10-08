@@ -66,7 +66,8 @@ internal static class KitaronPushEndpoints
         if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out var user, out var error)) return error!;
         try
         {
-            return Results.Ok(await service.RunAsync("manual", user!.UserName, cancellationToken));
+            return Results.Ok(await service.RunAsync("manual", user!.UserName, cancellationToken,
+                context.Request.Headers.TryGetValue("If-Kitaron-Preview-Match", out var stamp) ? stamp.ToString() : null));
         }
         catch (KitaronPushBlockedException exception)
         {
@@ -79,7 +80,7 @@ internal static class KitaronPushEndpoints
         Results.Ok(new { items = await service.ListChangesAsync(runId, cancellationToken) });
 
     private static IResult Blocked(KitaronPushBlockedException exception, HttpContext context) =>
-        PlanningHttpSupport.Error(StatusCodes.Status409Conflict, "kitaron_push_blocked", exception.Message, context);
+        PlanningHttpSupport.Error(StatusCodes.Status409Conflict, exception is KitaronPushConflictException ? "kitaron_push_conflict" : "kitaron_push_blocked", exception.Message, context);
 }
 
 internal sealed record KitaronPushSettingsRequest(

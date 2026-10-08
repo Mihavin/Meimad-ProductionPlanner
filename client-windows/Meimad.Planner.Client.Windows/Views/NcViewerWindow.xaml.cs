@@ -36,8 +36,10 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
         UpdateTitle(request.DocumentName, dirty: false);
         Loaded += async (_, _) => await InitializeBrowserAsync();
         Closing += OnClosing;
+        Themes.WorkbenchTheme.Changed += WorkbenchThemeChanged;
         Closed += (_, _) =>
         {
+            Themes.WorkbenchTheme.Changed -= WorkbenchThemeChanged;
             session.Dispose();
             Browser.Dispose();
             models.Clear();
@@ -94,7 +96,26 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
             if (!e.Source.StartsWith(Origin + "/", StringComparison.OrdinalIgnoreCase)) return;
             session.HandleMessage(e.WebMessageAsJson);
         };
+        core.NavigationCompleted += (_, _) => ApplyWorkbenchTheme();
         core.Navigate(Origin + PagePath);
+    }
+
+    private void WorkbenchThemeChanged(object? sender, EventArgs e) => ApplyWorkbenchTheme();
+
+    private async void ApplyWorkbenchTheme()
+    {
+        if (Browser.CoreWebView2 is null) return;
+        try
+        {
+            // Only these two application-owned constants enter the script; no document text.
+            var theme = Themes.WorkbenchTheme.Current == "light" ? "light" : "graphite";
+            await Browser.CoreWebView2.ExecuteScriptAsync(
+                $"document.documentElement.dataset.workbenchTheme = '{theme}';");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or COMException or ObjectDisposedException)
+        {
+            Trace.WriteLine($"NC viewer theme was not applied: {ex.Message}");
+        }
     }
 
     private void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)

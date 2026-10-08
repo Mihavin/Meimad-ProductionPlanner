@@ -12,6 +12,42 @@ namespace Meimad.Planner.Server.Tests.Kitaron;
 public sealed class KitaronPushServiceTests
 {
     [Fact]
+    public async Task A_stale_displayed_preview_is_refused_before_external_write()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var protection = new EphemeralDataProtectionProvider();
+        await SeedAsync(fixture.Database, protection, connectorEnabled: true);
+        var target = new FakeKitaron();
+        var service = Service(fixture.Database, protection, target);
+        var preview = await service.PreviewAsync(CancellationToken.None);
+        Assert.NotNull(preview.PreviewStamp);
+        target.EditQuantity(7d);
+        await Assert.ThrowsAsync<KitaronPushConflictException>(() =>
+            service.RunAsync("manual", "planner", CancellationToken.None, preview.PreviewStamp));
+        Assert.Empty(target.Written);
+        Assert.Equal("failed", Assert.Single(await service.ListRunsAsync(CancellationToken.None)).Status);
+        var fresh = await service.PreviewAsync(CancellationToken.None);
+        Assert.NotEqual(preview.PreviewStamp, fresh.PreviewStamp);
+        Assert.True((await service.RunAsync("manual", "planner", CancellationToken.None, fresh.PreviewStamp)).Applied);
+    }
+
+    [Fact]
+    public async Task A_transaction_comparison_conflict_is_logged_without_retry()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var protection = new EphemeralDataProtectionProvider();
+        await SeedAsync(fixture.Database, protection, connectorEnabled: true);
+        var target = new FakeKitaron { ConflictWrites = true };
+        var service = Service(fixture.Database, protection, target);
+        var error = await Assert.ThrowsAsync<KitaronPushConflictException>(() =>
+            service.RunAsync("manual", "planner", CancellationToken.None));
+        Assert.Contains("Refresh Preview", error.Message, StringComparison.Ordinal);
+        Assert.Empty(target.Written);
+        Assert.Equal(1, target.WriteCalls);
+        Assert.Equal(0, Assert.Single(await service.ListRunsAsync(CancellationToken.None)).ValuesWritten);
+    }
+
+    [Fact]
     public async Task A_push_writes_the_Planner_values_logs_them_and_a_second_push_writes_nothing()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
@@ -177,6 +213,9 @@ public sealed class KitaronPushServiceTests
         private readonly Dictionary<string, object?> values = new(StringComparer.OrdinalIgnoreCase);
 
         internal bool FailWrites { get; init; }
+        internal bool ConflictWrites { get; init; }
+        internal int WriteCalls { get; private set; }
+        internal void EditQuantity(double value) => values["OperationQty"] = value;
 
         internal List<KitaronPushWrite> Written { get; } = [];
 
@@ -196,6 +235,8 @@ public sealed class KitaronPushServiceTests
             StoredKitaronConnectionSettings connection, string password, IReadOnlyList<KitaronPushWrite> writes,
             CancellationToken cancellationToken)
         {
+            WriteCalls++;
+            if (ConflictWrites) throw KitaronPushComparison.Conflict(5001);
             if (FailWrites) throw new InvalidOperationException("Lock request time out period exceeded.");
             foreach (var write in writes)
             {

@@ -214,50 +214,23 @@ internal static class SqliteOperationTimeMeasurements
     private static async Task<IReadOnlyList<OperationTimeSample>> ReadManualReportsAsync(
         SqliteConnection connection, SqliteTransaction? transaction, string? caseOperationId, CancellationToken cancellationToken)
     {
-        var reports = new List<(string OperationId, string CaseOperationId, string MachineId, string Type, DateTimeOffset At, double? PartSeconds, string BatchNumber)>();
-        await using (var command = connection.CreateCommand())
-        {
-            command.Transaction = transaction;
-            command.CommandText = """
-                SELECT operation.id, operation.source_case_operation_id,
-                       json_extract(log.related_entity_ids_json, '$.machineId'), log.reason_code, log.occurred_at,
-                       json_extract(log.after_data_json, '$.partTimeSeconds'), batch.batch_number
-                FROM structured_event_log log
-                JOIN batch_operations operation ON operation.id = json_extract(log.related_entity_ids_json, '$.batchOperationId')
-                JOIN production_batches batch ON batch.id = operation.production_batch_id
-                WHERE log.event_type = 'manual_operation_reported'
-                  AND json_extract(log.related_entity_ids_json, '$.machineId') IS NOT NULL
-                  AND ($caseOperationId IS NULL OR operation.source_case_operation_id = $caseOperationId)
-                ORDER BY log.occurred_at;
-                """;
-            command.Parameters.AddWithValue("$caseOperationId", (object?)caseOperationId ?? DBNull.Value);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-            {
-                reports.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
-                    Parse(reader.GetString(4)), reader.IsDBNull(5) ? null : reader.GetDouble(5), reader.GetString(6)));
-            }
-        }
         var samples = new List<OperationTimeSample>();
-        foreach (var report in reports.Where(report => report.Type == "partTimeUpdate" && report.PartSeconds is > 0))
-        {
-            samples.Add(new OperationTimeSample(OperationTimeKinds.Cycle, report.CaseOperationId, report.MachineId,
-                report.PartSeconds!.Value, report.At, "MANUAL", report.BatchNumber));
-        }
-        foreach (var group in reports.GroupBy(report => (report.OperationId, report.MachineId)))
-        {
-            DateTimeOffset? start = null;
-            foreach (var report in group)
-            {
-                if (report.Type == "setupStart") start = report.At;
-                else if (report.Type == "setupEnd" && start is { } began && report.At > began)
-                {
-                    samples.Add(new OperationTimeSample(OperationTimeKinds.Setup, report.CaseOperationId, report.MachineId,
-                        (report.At - began).TotalSeconds, report.At, "MANUAL", report.BatchNumber));
-                    start = null;
-                }
-            }
-        }
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT sample.kind, operation.source_case_operation_id, sample.machine_id,
+                sample.seconds, sample.occurred_at, batch.batch_number
+            FROM manual_timing_samples sample
+            JOIN batch_operations operation ON operation.id = sample.batch_operation_id
+            JOIN production_batches batch ON batch.id = operation.production_batch_id
+            WHERE $caseOperationId IS NULL OR operation.source_case_operation_id = $caseOperationId
+            ORDER BY julianday(sample.occurred_at) DESC, sample.source_sequence DESC;
+            """;
+        command.Parameters.AddWithValue("$caseOperationId", (object?)caseOperationId ?? DBNull.Value);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            samples.Add(new OperationTimeSample(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                reader.GetDouble(3), Parse(reader.GetString(4)), "MANUAL", reader.GetString(5)));
         return samples;
     }
 
@@ -268,7 +241,7 @@ internal static class SqliteOperationTimeMeasurements
         command.CommandText = """
             SELECT COALESCE((SELECT MAX(rowid) FROM production_run_workflow_events), 0) || ':' ||
                    COALESCE((SELECT MAX(rowid) FROM production_run_cycle_attempt_outcomes), 0) || ':' ||
-                   COALESCE((SELECT MAX(occurred_at) FROM structured_event_log WHERE event_type = 'manual_operation_reported'), '');
+                   COALESCE((SELECT MAX(source_sequence) FROM manual_timing_reports), 0);
             """;
         return Convert.ToString(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) ?? string.Empty;
     }

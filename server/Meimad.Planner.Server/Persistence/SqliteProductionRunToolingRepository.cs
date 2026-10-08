@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.ProductionRuns;
 using Meimad.Planner.Server.Domain.ProductionRuns;
+using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
 
@@ -8,13 +9,20 @@ internal sealed class SqliteProductionRunToolingRepository(SqliteDatabase databa
     public async Task<ProductionRunToolingFacts> ReadAsync(string runId, CancellationToken token)
     {
         await using var connection = await database.OpenConnectionAsync(token);
+        return await ReadAsync(connection, null, runId, token);
+    }
+
+    internal static async Task<ProductionRunToolingFacts> ReadAsync(
+        SqliteConnection connection, SqliteTransaction? transaction, string runId, CancellationToken token)
+    {
         int? capacity = null;
         await using (var query = connection.CreateCommand())
         {
+            query.Transaction = transaction;
             query.CommandText = """
                 SELECT machine.usable_tool_positions
                 FROM machine_assignments assignment JOIN machines machine ON machine.id=assignment.machine_id
-                WHERE assignment.production_run_id=$id;
+                WHERE assignment.production_run_id=$id AND assignment.released_at IS NULL;
                 """;
             query.Parameters.AddWithValue("$id", runId);
             var value = await query.ExecuteScalarAsync(token);
@@ -23,10 +31,11 @@ internal sealed class SqliteProductionRunToolingRepository(SqliteDatabase databa
         var tools = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         await using (var query = connection.CreateCommand())
         {
+            query.Transaction = transaction;
             query.CommandText = """
                 SELECT lower(trim(tool.tool_identifier)), COALESCE(trim(tool.magazine_position),'')
                 FROM production_run_programs program
-                JOIN process_revisions revision ON revision.id=program.process_revision_id
+                JOIN process_revisions revision ON revision.id=COALESCE(program.production_process_revision_id,program.process_revision_id)
                 JOIN tool_table_release_tools tool ON tool.tool_table_release_id=revision.tool_table_release_id
                 WHERE program.production_run_id=$id AND tool.requires_magazine_position=1;
                 """;

@@ -236,7 +236,8 @@ internal sealed record ToolPreparationView(
     string ToolTableFileName,
     IReadOnlyList<ToolPreparationReleasedTool> ReleasedTools,
     ToolPreparation? Current,
-    SpindleLibrary? Spindle = null);
+    SpindleLibrary? Spindle = null,
+    Meimad.Planner.Server.Application.ProductionPackages.ProductionPackageContext? Context = null);
 
 internal sealed class ToolPreparationValidationException(string code, string message, string? field = null)
     : Exception(message)

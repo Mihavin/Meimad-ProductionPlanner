@@ -147,6 +147,79 @@ public sealed class OperationTimeStatisticsApiTests
     private static object Apply(string kind, string source, int expectedVersion) =>
         new { kind, source, machineId = "machine-package", expectedVersion };
 
+    [Fact]
+    public async Task Manual_measurements_survive_global_log_churn_and_timeline_uses_the_same_setup_median()
+    {
+        await using var server = await ToolPreparationApiTests.TestServer.StartAsync(verificationEnabled: false);
+        await server.ExecuteAsync("""
+            UPDATE working_calendars SET calendar_json='{"availability":[{"startsAt":"2026-09-01T00:00:00Z","endsAt":"2026-09-30T00:00:00Z"}]}' WHERE id='calendar-package';
+            INSERT INTO employee_resources(id,employee_number,name,resource_type,first_name,last_name,skills_json,assigned_calendar_id,is_active)
+            VALUES('timing-setup','TS','Setup Worker','setup_worker','Setup','Worker','["machine-package"]','calendar-package',1),
+                  ('timing-regular','TR','Regular Worker','regular_worker','Regular','Worker','[]','calendar-package',1);
+            INSERT INTO structured_event_log(id,event_type,occurred_at,user_id,related_entity_ids_json,reason_code,after_data_json)
+            SELECT id,'manual_operation_reported',at,'test',
+                '{"batchOperationId":"operation-package","machineId":"machine-package"}',kind,data
+            FROM (
+                SELECT 'manual-s1' AS id, '2026-08-01T08:00:00Z' AS at, 'setupStart' AS kind, '{}' AS data
+                UNION ALL SELECT 'manual-e1','2026-08-01T08:01:00Z','setupEnd','{}'
+                UNION ALL SELECT 'manual-s2','2026-08-02T08:00:00Z','setupStart','{}'
+                UNION ALL SELECT 'manual-e2','2026-08-02T08:03:00Z','setupEnd','{}'
+                UNION ALL SELECT 'manual-part','2026-08-02T08:04:00Z','partTimeUpdate','{"partTimeSeconds":100}'
+            );
+            """);
+        var before = await BoardOperationAsync(server.Client);
+        Assert.Equal(120, before.GetProperty("totalSetupTimeSeconds").GetDouble());
+        Assert.Equal(100, before.GetProperty("planningCycleTimePerPartSeconds").GetDouble());
+        Assert.Equal(120d, await SetupSecondsAsync(server.Client)); // Old latest-start/end override was 180.
+        await server.ExecuteAsync("""
+            WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < 5100)
+            INSERT INTO structured_event_log(id,event_type,occurred_at,user_id,related_entity_ids_json,reason_code,after_data_json)
+            SELECT 'unrelated-' || x,'manual_operation_reported','2026-09-01T08:00:00Z','test',
+                '{"batchOperationId":"unknown","machineId":"machine-package"}','partTimeUpdate','{"partTimeSeconds":1}' FROM n;
+            """);
+        var after = await BoardOperationAsync(server.Client);
+        Assert.Equal(120, after.GetProperty("totalSetupTimeSeconds").GetDouble());
+        Assert.Equal(100, after.GetProperty("planningCycleTimePerPartSeconds").GetDouble());
+        Assert.Equal(120d, await SetupSecondsAsync(server.Client));
+        // A late-arriving sample must invalidate the cache despite the newer unrelated timestamp.
+        await server.ExecuteAsync("""
+            INSERT INTO structured_event_log(id,event_type,occurred_at,user_id,related_entity_ids_json,reason_code,after_data_json)
+            VALUES('backdated','manual_operation_reported','2026-08-03T08:00:00Z','test',
+                '{"batchOperationId":"operation-package","machineId":"machine-package"}','partTimeUpdate','{"partTimeSeconds":200}');
+            """);
+        Assert.Equal(150, (await BoardOperationAsync(server.Client)).GetProperty("planningCycleTimePerPartSeconds").GetDouble());
+    }
+
+    [Fact]
+    public async Task Concurrent_reports_publish_each_sample_with_the_source_transaction()
+    {
+        await using var server = await ToolPreparationApiTests.TestServer.StartAsync(verificationEnabled: false);
+        await Task.WhenAll(Enumerable.Range(1, 10).Select(index => server.ExecuteAsync($$"""
+            INSERT INTO structured_event_log(id,event_type,occurred_at,user_id,related_entity_ids_json,reason_code,after_data_json)
+            VALUES('parallel-{{index}}','manual_operation_reported','2026-08-01T08:00:00Z','test',
+                '{"batchOperationId":"operation-package","machineId":"machine-package"}',
+                'partTimeUpdate','{"partTimeSeconds":{{index * 10}}}');
+            """)));
+        Assert.Equal(10L, await server.ScalarAsync("SELECT COUNT(*) FROM manual_timing_reports"));
+        var machine = Assert.Single((await ReadAsync(server.Client)).GetProperty("machines").EnumerateArray());
+        Assert.Equal(55, machine.GetProperty("measuredCycle").GetProperty("medianSeconds").GetDouble());
+        Assert.Equal(10, machine.GetProperty("measuredCycle").GetProperty("sampleCount").GetInt32());
+    }
+
+    private static async Task<double> SetupSecondsAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync("/api/v1/timeline?from=2026-09-01T00:00:00Z&to=2026-09-30T00:00:00Z&asOf=2026-09-01T00:00:00Z");
+        response.EnsureSuccessStatusCode();
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var setup = json.RootElement.GetProperty("machines").EnumerateArray()
+            .SelectMany(machine => machine.GetProperty("intervals").EnumerateArray())
+            .Where(interval => interval.TryGetProperty("operationId", out var id) && id.GetString() == "operation-package")
+            .SelectMany(interval => interval.GetProperty("phases").EnumerateArray())
+            .Where(phase => phase.GetProperty("type").GetString() == "setup").ToArray();
+        Assert.True(setup.Length > 0, json.RootElement.ToString());
+        return setup.Sum(phase => (phase.GetProperty("endsAt").GetDateTimeOffset() - phase.GetProperty("startsAt").GetDateTimeOffset()).TotalSeconds);
+    }
+
     private static async Task<JsonElement> ReadAsync(HttpClient client)
     {
         using var response = await client.GetAsync(Statistics);

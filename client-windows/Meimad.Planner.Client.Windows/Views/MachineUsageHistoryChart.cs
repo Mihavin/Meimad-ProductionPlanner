@@ -63,7 +63,8 @@ internal sealed class MachineUsageHistoryChart : FrameworkElement
 
     protected override void OnRender(DrawingContext context)
     {
-        context.DrawRectangle(Brushes.Transparent, null, new Rect(RenderSize));
+        // Technical plots retain the same paper/ink contrast as their printable report.
+        context.DrawRectangle(Brushes.White, null, new Rect(RenderSize));
         var days = Days;
         if (days is null || days.Count == 0 || ActualWidth <= Left + Right || ActualHeight <= Top + Bottom) return;
         var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;

@@ -17,6 +17,7 @@ internal sealed class KitaronPushViewModel : INotifyPropertyChanged
 {
     private IPlannerApiClient? apiClient;
     private bool isEditor;
+    private string? previewStamp;
     private bool isBusy;
     private bool enabled;
     private string intervalMinutes = "15";
@@ -105,6 +106,7 @@ internal sealed class KitaronPushViewModel : INotifyPropertyChanged
 
     internal void AttachSession(IPlannerApiClient? client, bool editor)
     {
+        if (!ReferenceEquals(apiClient, client) || isEditor != editor) previewStamp = null;
         apiClient = client;
         isEditor = editor;
         OnPropertyChanged(nameof(IsEditor));
@@ -163,6 +165,7 @@ internal sealed class KitaronPushViewModel : INotifyPropertyChanged
         try
         {
             var preview = await apiClient.PreviewKitaronPushAsync();
+            previewStamp = preview.PreviewStamp;
             ShowResult(preview, $"Preview: {preview.Changes.Count} values would change");
             StatusMessage = preview.Changes.Count == 0
                 ? "Kitaron already has the Planner's values; a push would write nothing."
@@ -179,7 +182,8 @@ internal sealed class KitaronPushViewModel : INotifyPropertyChanged
         StatusMessage = "Pushing to Kitaron…";
         try
         {
-            var result = await apiClient.RunKitaronPushAsync();
+            var result = await apiClient.RunKitaronPushAsync(previewStamp: previewStamp);
+            previewStamp = null;
             ShowResult(result, $"Pushed: {result.Changes.Count} values written");
             StatusMessage = result.Changes.Count == 0
                 ? "Kitaron already had the Planner's values; nothing was written."

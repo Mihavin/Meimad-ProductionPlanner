@@ -334,15 +334,15 @@ internal interface IPlannerApiClient : IDisposable
     Task<ProductionPackageInfo> CreateProductionPackageAsync(
         string batchOperationId, string clientId, string userId,
         string toolOffsetMode = "MEASURED",
-        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        CancellationToken cancellationToken = default, ProductionPackageContext? context = null, string? requestId = null) => throw new NotSupportedException();
 
     Task<ProductionPackageInfo?> GetCurrentProductionPackageAsync(
         string batchOperationId,
-        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        CancellationToken cancellationToken = default, ProductionPackageContext? context = null) => throw new NotSupportedException();
 
     Task<byte[]> ReadProductionPackageArtifactAsync(
         string batchOperationId, string artifactId,
-        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        CancellationToken cancellationToken = default, ProductionPackageContext? context = null) => throw new NotSupportedException();
 
     Task<string> ReadGCodeFileTextAsync(
         string caseId, string caseOperationId, string releaseId,
@@ -355,12 +355,12 @@ internal interface IPlannerApiClient : IDisposable
     /// <summary>The released tool rows of the operation on its assigned Machine with the latest saved measurements.</summary>
     Task<PlannerToolPreparation> GetToolPreparationAsync(
         string batchOperationId,
-        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        CancellationToken cancellationToken = default, ProductionPackageContext? context = null) => throw new NotSupportedException();
 
     /// <summary>Saves the next immutable tool preparation version (no Edit Mode; identified like package creation).</summary>
     Task<PlannerToolPreparation> SaveToolPreparationAsync(
         string batchOperationId, ToolPreparationUpdate update, string clientId, string userId,
-        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        CancellationToken cancellationToken = default, ProductionPackageContext? context = null) => throw new NotSupportedException();
 
     /// <summary>The Setup library of spindle adaptors and pull studs with every Machine's default (schema v91).</summary>
     Task<PlannerSpindleLibrary> GetSpindleLibraryAsync(CancellationToken cancellationToken = default) =>
@@ -781,7 +781,7 @@ internal interface IPlannerApiClient : IDisposable
     Task<KitaronPushResultInfo> PreviewKitaronPushAsync(CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
-    Task<KitaronPushResultInfo> RunKitaronPushAsync(CancellationToken cancellationToken = default) =>
+    Task<KitaronPushResultInfo> RunKitaronPushAsync(CancellationToken cancellationToken = default, string? previewStamp = null) =>
         throw new NotSupportedException();
 
     Task<IReadOnlyList<KitaronPushChangeInfo>> ListKitaronPushChangesAsync(
@@ -2144,15 +2144,26 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             $"api/v1/preparation-queues/{Uri.EscapeDataString(stage)}",
             cancellationToken);
 
+    private static string ContextQuery(ProductionPackageContext? context, string separator = "?", bool includeStamp = true)
+        => context is null ? string.Empty : separator + string.Join("&", new[]
+        {
+            "machineAssignmentId=" + Uri.EscapeDataString(context.MachineAssignmentId),
+            "productionRunId=" + Uri.EscapeDataString(context.ProductionRunId),
+            "productionRunProgramId=" + Uri.EscapeDataString(context.ProductionRunProgramId),
+            "productionRunOutputId=" + Uri.EscapeDataString(context.ProductionRunOutputId),
+            "contextStamp=" + Uri.EscapeDataString(context.ContextStamp)
+        }.Take(includeStamp ? 5 : 4));
+
     public async Task<ProductionPackageInfo> CreateProductionPackageAsync(
         string batchOperationId, string clientId, string userId,
         string toolOffsetMode = "MEASURED",
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, ProductionPackageContext? context = null, string? requestId = null)
     {
         using var request = CreateRequest(HttpMethod.Post,
-            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/production-package?toolOffsetMode={Uri.EscapeDataString(toolOffsetMode)}",
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/production-package?toolOffsetMode={Uri.EscapeDataString(toolOffsetMode)}" + ContextQuery(context, "&"),
             clientId);
         request.Headers.Add(UserIdHeader, userId);
+        request.Headers.Add("Idempotency-Key", requestId ?? Guid.NewGuid().ToString("N"));
         request.Content = JsonContent.Create(new { }, options: JsonOptions);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<ProductionPackageInfo>(response, cancellationToken);
@@ -2160,10 +2171,10 @@ internal sealed class PlannerApiClient : IPlannerApiClient
 
     public async Task<ProductionPackageInfo?> GetCurrentProductionPackageAsync(
         string batchOperationId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, ProductionPackageContext? context = null)
     {
         using var response = await httpClient.GetAsync(
-            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/production-package",
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/production-package" + ContextQuery(context, includeStamp: false),
             cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         return await ReadSuccessAsync<ProductionPackageInfo>(response, cancellationToken);
@@ -2171,10 +2182,10 @@ internal sealed class PlannerApiClient : IPlannerApiClient
 
     public async Task<byte[]> ReadProductionPackageArtifactAsync(
         string batchOperationId, string artifactId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, ProductionPackageContext? context = null)
     {
         using var response = await httpClient.GetAsync(
-            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/production-package/artifacts/{Uri.EscapeDataString(artifactId)}",
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/production-package/artifacts/{Uri.EscapeDataString(artifactId)}" + ContextQuery(context, includeStamp: false),
             cancellationToken);
         return await ReadBytesSuccessAsync(response, cancellationToken);
     }
@@ -2240,20 +2251,20 @@ internal sealed class PlannerApiClient : IPlannerApiClient
 
     public async Task<PlannerToolPreparation> GetToolPreparationAsync(
         string batchOperationId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, ProductionPackageContext? context = null)
     {
         using var response = await httpClient.GetAsync(
-            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/tool-preparation",
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/tool-preparation" + ContextQuery(context),
             cancellationToken);
         return await ReadSuccessAsync<PlannerToolPreparation>(response, cancellationToken);
     }
 
     public async Task<PlannerToolPreparation> SaveToolPreparationAsync(
         string batchOperationId, ToolPreparationUpdate update, string clientId, string userId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, ProductionPackageContext? context = null)
     {
         using var request = CreateRequest(HttpMethod.Put,
-            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/tool-preparation",
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/tool-preparation" + ContextQuery(context),
             clientId);
         request.Headers.Add(UserIdHeader, userId);
         request.Content = JsonContent.Create(update, options: JsonOptions);
@@ -3205,9 +3216,11 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return await ReadSuccessAsync<KitaronPushResultInfo>(response, cancellationToken);
     }
 
-    public async Task<KitaronPushResultInfo> RunKitaronPushAsync(CancellationToken cancellationToken = default)
+    public async Task<KitaronPushResultInfo> RunKitaronPushAsync(CancellationToken cancellationToken = default, string? previewStamp = null)
     {
-        using var response = await importHttpClient.PostAsync("api/v1/kitaron/push/run", null, cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/kitaron/push/run");
+        if (previewStamp is not null) request.Headers.Add("If-Kitaron-Preview-Match", previewStamp);
+        using var response = await importHttpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<KitaronPushResultInfo>(response, cancellationToken);
     }
 
@@ -3747,10 +3760,15 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         long editGeneration,
         CancellationToken cancellationToken = default)
     {
+        var readinessStamp = action == "start"
+            ? (await GetProductionReadinessAsync(batchOperationId, cancellationToken)).Actions?
+                .SingleOrDefault(value => value.Action == "RunStart")?.ContextStamp
+            : null;
         using var request = CreateRequest(
             HttpMethod.Post,
             $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/{Uri.EscapeDataString(action)}",
             clientId);
+        if (readinessStamp is not null) request.Headers.Add("If-Readiness-Match", readinessStamp);
         request.Headers.Add(
             EditGenerationHeader,
             editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));

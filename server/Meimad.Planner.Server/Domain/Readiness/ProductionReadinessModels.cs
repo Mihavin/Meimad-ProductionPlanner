@@ -80,7 +80,16 @@ internal sealed record ProductionReadinessContext(
     string? MaterialComment,
     ToolPreparationReadinessFact? ToolPreparation = null,
     string? ReplacedGCodeReleaseId = null,
-    bool ProductionPinned = false);
+    bool ProductionPinned = false,
+    string ToolOffsetMode = "MEASURED",
+    bool VerificationRequired = false,
+    bool VerificationSucceeded = false,
+    string? ExecutionEvidenceStamp = null,
+    bool AmbiguousExecutionContext = false,
+    bool ManualSetupReportingSupported = false,
+    bool LoaderExecutionObserved = false,
+    int ReleasedToolCount = 0,
+    string? ExecutionContextVersion = null);
 
 internal sealed record ReadinessComponent(
     string Key,
@@ -96,9 +105,15 @@ internal sealed record ProductionReadinessResult(
     IReadOnlyList<ReadinessComponent> Components,
     string? EffectiveGCodeReleaseId,
     bool RequiresExplicitGCodeSelection,
-    IReadOnlyList<ReadinessRelease> CompatibleGCodeReleases)
+    IReadOnlyList<ReadinessRelease> CompatibleGCodeReleases,
+    IReadOnlyList<ProductionActionDecision>? Actions = null)
 {
-    internal string Summary => !IsManaged
+    internal string Summary => IsReadyForProduction && Actions?.Any(x => x.Action == "RecordProduction"
+        && x.Reasons.Any(reason => reason.Code == "controller_verification" && reason.Classification == "BLOCKING")) == true
+        ? "Preparation ready; physical production still requires controller verification."
+        : IsReadyForProduction && Actions?.Any(x => x.Action == "RecordProduction" && !x.IsAllowed) == true
+        ? "Preparation ready; review the blocking execution-context requirements."
+        : !IsManaged
         ? IsReadyForProduction
             ? "Ready for production; this legacy Operation has no managed G-code process revision."
             : "Not ready: material is not reconciled for this legacy Operation's Production Batch."

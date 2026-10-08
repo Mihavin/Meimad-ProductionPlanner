@@ -11,8 +11,8 @@
             <Setter Property="Margin" Value="0,0,10,8" />
         </Style>
         <Style x:Key="SetupSection" TargetType="Border">
-            <Setter Property="Background" Value="White" />
-            <Setter Property="BorderBrush" Value="#D8DDE3" />
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="4" />
             <Setter Property="Padding" Value="14" />
@@ -21,10 +21,10 @@
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Foreground" Value="#52606D" />
             <Style.Triggers>
-                <DataTrigger Binding="{Binding Status}" Value="Ready"><Setter Property="Foreground" Value="#20744A" /></DataTrigger>
-                <DataTrigger Binding="{Binding Status}" Value="Warning"><Setter Property="Foreground" Value="#996C00" /></DataTrigger>
-                <DataTrigger Binding="{Binding Status}" Value="Blocked"><Setter Property="Foreground" Value="#B42318" /></DataTrigger>
-                <DataTrigger Binding="{Binding Status}" Value="Skip"><Setter Property="Foreground" Value="#667085" /></DataTrigger>
+                <DataTrigger Binding="{Binding Status}" Value="Ready"><Setter Property="Foreground" Value="{DynamicResource SuccessTextBrush}" /></DataTrigger>
+                <DataTrigger Binding="{Binding Status}" Value="Warning"><Setter Property="Foreground" Value="{DynamicResource WarningTextBrush}" /></DataTrigger>
+                <DataTrigger Binding="{Binding Status}" Value="Blocked"><Setter Property="Foreground" Value="{DynamicResource ErrorTextBrush}" /></DataTrigger>
+                <DataTrigger Binding="{Binding Status}" Value="Skip"><Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" /></DataTrigger>
             </Style.Triggers>
         </Style>
         <Style x:Key="ImportExistingOperationSection" TargetType="StackPanel" BasedOn="{StaticResource SetupField}">
@@ -68,7 +68,7 @@
         </Style>
     </UserControl.Resources>
 
-    <Grid Background="{StaticResource CanvasBrush}">
+    <Grid Background="{DynamicResource CanvasBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="12" />
@@ -105,13 +105,13 @@
                 <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal" Margin="0,7,0,0"
                             VerticalAlignment="Bottom">
                     <TextBlock Text="{Binding ConnectionHeadline}" FontWeight="Bold" Margin="0,0,8,0" />
-                    <TextBlock Text="{Binding ConnectionDetail}" Foreground="{StaticResource MutedTextBrush}"
+                    <TextBlock Text="{Binding ConnectionDetail}" Foreground="{DynamicResource MutedTextBrush}"
                                TextTrimming="CharacterEllipsis" />
                 </StackPanel>
             </Grid>
         </Border>
 
-        <TabControl Grid.Row="2">
+        <TabControl x:Name="AdministrationTabs" Grid.Row="2">
             <TabItem ToolTip="Manage working calendars, shifts, and breaks">
                 <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource CalendarButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Calendars" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="8">
@@ -146,7 +146,7 @@
                                     <Button Content="Clear" Command="{Binding ClearSetupCalendarCommand}" Margin="0" />
                                 </StackPanel>
                                 <TextBlock Text="Setup personnel may use different availability than Machines."
-                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,7,0,0" />
+                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,7,0,0" />
                                 <TextBlock Text="Israel Master Calendar" Style="{StaticResource SetupFieldLabel}" Margin="0,12,0,0" />
                                 <ComboBox ItemsSource="{Binding MasterCalendarChoices}" SelectedItem="{Binding SelectedMasterCalendar}" DisplayMemberPath="Name" />
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
@@ -162,7 +162,7 @@
                         <StackPanel IsEnabled="{Binding IsEditor}" Margin="0,0,8,0">
                             <TextBlock Text="{Binding CalendarFormHeading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10" />
                             <TextBlock Text="Legacy explicit-window calendars are read-only."
-                                       Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
+                                       Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,10" />
                             <TextBlock Text="Calendar kind" Style="{StaticResource SetupFieldLabel}" />
                             <WrapPanel Margin="0,2,0,12" IsEnabled="{Binding IsCalendarKindEditable}">
                                 <RadioButton Content="Weekly schedule" IsChecked="{Binding CalendarIsWeekly}" Margin="0,0,18,0"
@@ -219,7 +219,7 @@
                                              ToolTip="For example: A | Crew A | 0 and B | Crew B | 2. A crew starts the pattern that many days after the start date. Leave empty without a pattern." />
                                 </StackPanel>
                                 <TextBlock Text="Each employee on this Calendar follows one crew. Change a single day of an employee in the Shift Roster; its entry replaces the pattern day. Dated exceptions below are closures: no pattern shift starts that day."
-                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,12" />
+                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,12" />
                             </StackPanel>
                             <StackPanel Style="{StaticResource SetupField}" IsEnabled="{Binding IsCalendarEditable}" Visibility="{Binding CalendarIsWeekly, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <TextBlock Text="Working windows (one HH:mm-HH:mm range per line)" Style="{StaticResource SetupFieldLabel}" />
@@ -318,7 +318,7 @@
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                     <TextBlock Text="CNC_GCODE readiness accepts only released G-code from one of these explicitly selected postprocessors. MANUAL disables only the G-code requirement."
-                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,2,0,12">
                                     <CheckBox Content="Active" IsChecked="{Binding MachineIsActive}" Margin="0,0,18,0" />
@@ -331,18 +331,18 @@
                                     <Button Content="Delete" Click="DeleteMachine_Click" Margin="0" />
                                 </StackPanel>
                                 <TextBlock Text="The Server blocks unsafe deactivation/deletion when planning assignments or other references exist."
-                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
                                 <Expander Header="CNC Connection" IsExpanded="False" Margin="0,16,0,0">
                                     <StackPanel Margin="0,10,0,0">
                                         <TextBlock Text="Connection type" Style="{StaticResource SetupFieldLabel}"/>
                                         <ComboBox ItemsSource="{Binding ConnectionTypes}" SelectedItem="{Binding SelectedConnectionType}"
                                                   DisplayMemberPath="ChoiceLabel" Margin="0,2,0,3"/>
-                                        <TextBlock Text="{Binding CncAdapterAvailability}" Foreground="{StaticResource MutedTextBrush}"
+                                        <TextBlock Text="{Binding CncAdapterAvailability}" Foreground="{DynamicResource MutedTextBrush}"
                                                    TextWrapping="Wrap" Margin="0,0,0,10"/>
                                         <StackPanel Style="{StaticResource HaasAdapterSection}">
                                         <TextBlock Text="Haas NGC configuration" FontWeight="Bold" Margin="0,0,0,6"/>
                                         <TextBlock Text="Machine-side identity comes from a direct DPRNT PartName or the active NC program header. File name and O-number remain separate and never identify the Part."
-                                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                                   Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                         <UniformGrid Columns="2">
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Fixed controller IP" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasHost}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Controller MAC address" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasMacAddress}"/></StackPanel>
@@ -355,7 +355,7 @@
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Credential reference (no password)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasCredentialsReference}"/></StackPanel>
                                         </UniformGrid>
                                         <TextBlock Text="MTConnect and DPRNT are read-only. Workflow state is owned by immutable Server events, not a persistent CNC variable."
-                                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                                   Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                             <CheckBox Content="Local Net Share enabled" IsChecked="{Binding HaasLocalNetShareEnabled}" Margin="0,0,18,0"/>
                                             <CheckBox Content="Enable Server polling" IsChecked="{Binding HaasEnabled}"/>
@@ -372,7 +372,7 @@
                                         <StackPanel Style="{StaticResource FocasAdapterSection}">
                                             <TextBlock Text="FANUC FOCAS configuration" FontWeight="Bold" Margin="0,0,0,6"/>
                                             <TextBlock Text="FOCAS 2 (Fwlib64) reads controller state, executing program, part counter, spindle/feed, and alarms; it never writes. Copy the FANUC FOCAS library (Fwlib64.dll) next to the Server before enabling polling."
-                                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                                       Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                             <UniformGrid Columns="2">
                                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Fixed controller IP" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding FocasHost}"/></StackPanel>
                                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Controller MAC address" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding FocasMacAddress}"/></StackPanel>
@@ -392,11 +392,11 @@
                                                 <Button Content="Test FOCAS connection" Command="{Binding TestFocasConnectionCommand}"/>
                                             </WrapPanel>
                                         </StackPanel>
-                                        <Border BorderBrush="#D8DDE3" BorderThickness="1" Background="#F7F9FB" CornerRadius="3" Padding="9" Margin="0,10,0,0">
+                                        <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Background="{DynamicResource RaisedBrush}" CornerRadius="3" Padding="9" Margin="0,10,0,0">
                                             <StackPanel>
                                                 <TextBlock Text="DPRNT (Part identity &amp; workflow events)" FontWeight="Bold" Margin="0,0,0,4"/>
                                                 <TextBlock Text="DPRNT is shared by every connection type above and configured once here: it supplies the Part identity and MEIMAD workflow events, independent of how machine state/program/counter are read. Source TCP reads the controller (Haas) or a serial-to-Ethernet bridge on the given port. Source FILE tails a controller-written print file over a UNC share, for example a Mazak Matrix print.txt with DPR14 = 4; the Server service account needs read access, and write access when the file is emptied. Source FTP (FOCAS only) downloads that same kind of print file from the controller's own embedded FTP server, for example a Fanuc control with an Ethernet board; use the file path field for the remote path and, if the controller's FTP server requires a login, the FTP username/password fields below. Source NONE (FOCAS only) disables DPRNT entirely: no Part identity or workflow events are observed."
-                                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                                 <CheckBox Content="DPRNT output (the Machine prints Part identity and workflow events)" IsChecked="{Binding DprntEnabled}" Margin="0,0,0,8"
                                                           ToolTip="Switch off for a Machine without DPRNT output: the Server reads nothing, Production Packages print no cycle events, and the Planning Board offers the production statuses (Ready for Setup … In Production) to report by hand."
                                                           AutomationProperties.Name="DPRNT output"/>
@@ -410,7 +410,7 @@
                                                     <StackPanel Style="{StaticResource FocasAdapterSection}"><TextBlock Text="DPRNT FTP password" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding DprntFtpPassword}"/></StackPanel>
                                                 </UniformGrid>
                                                 <TextBlock Text="ON_OFFSET_LOADER empties the file after each new Offset Loader completion so it holds one setup session; AFTER_READ empties it after every read; NEVER only reads. The DPRNT source and its clear policy are saved together with whichever connection type above you save."
-                                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                                 <WrapPanel>
                                                     <StackPanel Style="{StaticResource HaasAdapterSection}" Orientation="Horizontal">
                                                         <Button Content="Test DPRNT" Command="{Binding TestHaasDprntCommand}"/>
@@ -420,13 +420,13 @@
                                                 </WrapPanel>
                                             </StackPanel>
                                         </Border>
-                                        <Border BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="3" Padding="9" Margin="0,10,0,0">
+                                        <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3" Padding="9" Margin="0,10,0,0">
                                             <TextBlock Text="{Binding HaasDiagnostics}" TextWrapping="Wrap"/>
                                         </Border>
                                         <Expander Header="Protected setup verification (commissioning gated)" Margin="0,10,0,0">
                                             <StackPanel Margin="8">
                                                 <TextBlock Text="These values configure the Server-side contract only. Keep verification disabled until the protected macros and physical Machine behavior are commissioned and proven. Variable numbers follow the Machine's NC dialect: Haas NGC #10000–#10999 with an M109 response variable (#500–#549 or #10500–#10549); FANUC and Mazak #500–#999; Okuma OSP common variables VC1–VC200 (enter the number only). Disable verification before changing a Machine's dialect."
-                                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                                 <UniformGrid Columns="2">
                                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="DPRINT transport port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationDprintPort}"/></StackPanel>
                                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Challenge program (O9xxx)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationChallengeProgram}"/></StackPanel>
@@ -451,7 +451,7 @@
                                                     <StackPanel>
                                                         <TextBlock Text="Audited recovery — no verification bypass" FontWeight="Bold"/>
                                                         <TextBlock Text="Use only to restore a valid process. Invalidate/revoke require a reason; immutable releases and workflow evidence are preserved."
-                                                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,3,0,8"/>
+                                                                   Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,3,0,8"/>
                                                         <UniformGrid Columns="2">
                                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Production Run ID" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationRecoveryRunId}"/></StackPanel>
                                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Recovery reason (required)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationRecoveryReason}"/></StackPanel>
@@ -468,11 +468,11 @@
                                             </StackPanel>
                                         </Expander>
                                         <TextBlock Text="BENCH TIMELINE" FontWeight="Bold" Margin="0,10,0,4"/>
-                                        <Border BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="3" Padding="9">
+                                        <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3" Padding="9">
                                             <TextBlock Text="{Binding HaasTimeline}" TextWrapping="Wrap" FontFamily="Consolas"/>
                                         </Border>
                                         <TextBlock Text="Direct macro writes are disabled. Protected temporary verification variables will be configured separately after controller commissioning."
-                                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                                   Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                     </StackPanel>
                                 </Expander>
                             </StackPanel>
@@ -493,7 +493,7 @@
                     </Grid.RowDefinitions>
                     <DockPanel Margin="0,0,0,6">
                         <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}" />
-                        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" />
+                        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{DynamicResource MutedTextBrush}" />
                     </DockPanel>
 
                     <Grid Grid.Row="1">
@@ -667,7 +667,7 @@
                                     <Button Content="Mark restored" Command="{Binding RestoreBreakdownCommand}" Margin="0" />
                                 </StackPanel>
                                 <TextBlock Text="Active breakdowns remain unavailable until Mark restored. Timeline recalculation never changes backlog order."
-                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
                             </StackPanel>
                         </ScrollViewer>
                     </Border>
@@ -710,13 +710,13 @@
                             </StackPanel>
                             <TextBlock Text="Examples: 3-axis milling, 4-axis milling, 5-axis milling, turning, mill-turn, conventional, automated. Capabilities allow compatible work across type names."
                                        TextWrapping="Wrap"
-                                       Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,12" />
+                                       Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,12" />
                             <StackPanel Orientation="Horizontal">
                                 <Button Content="Save Machine Type" Command="{Binding SaveMachineTypeCommand}" />
                                 <Button Content="Delete Machine Type" Click="DeleteMachineType_Click" Margin="0" />
                             </StackPanel>
                             <TextBlock Text="A Machine Type that is assigned to a Machine cannot be deleted until it is reassigned."
-                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                                       Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -747,7 +747,7 @@
                                 <Button Content="Delete postprocessor" Command="{Binding DeletePostprocessorCommand}" Margin="0"/>
                             </StackPanel>
                             <TextBlock Text="Names describe configuration only; compatibility is configured explicitly on each Machine. A mapped postprocessor cannot be deleted or deactivated."
-                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                                       Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -781,13 +781,13 @@
                                 <TextBox Text="{Binding ClientPortalCustomerId}" IsReadOnly="{Binding IsEditingClientPortalCustomer}"/>
                             </StackPanel>
                             <TextBlock Text="The portal customer id is the portal's own key and cannot be changed once mapped; remove the row and add it again to change it."
-                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                                       Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,12"/>
                             <StackPanel Orientation="Horizontal">
                                 <Button Content="Save portal customer" Command="{Binding SaveClientPortalCustomerCommand}"/>
                                 <Button Content="Remove portal customer" Click="DeleteClientPortalCustomer_Click" Margin="0"/>
                             </StackPanel>
                             <TextBlock Text="The Server pushes only customer-safe Order status for these Customers, on the next push cycle - no restart needed. Creating the customer's portal login is still a separate manual step in the portal project."
-                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                                       Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -807,7 +807,7 @@
                                 <Border Grid.Column="2" Style="{StaticResource SetupSection}">
                                     <StackPanel IsEnabled="{Binding IsEditor}">
                                         <TextBlock Text="ADD / EDIT SKILL" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
-                                        <TextBlock Text="Skills are user-defined qualifications used by resource scheduling." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                        <TextBlock Text="Skills are user-defined qualifications used by resource scheduling." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Skill name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding SkillName, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Description" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding SkillDescription}" AcceptsReturn="True" MinHeight="70"/></StackPanel>
                                         <CheckBox Content="Active" IsChecked="{Binding SkillIsActive}" Margin="0,0,0,8"/>
@@ -826,7 +826,7 @@
                                 <Border Grid.Column="2" Style="{StaticResource SetupSection}">
                                     <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel IsEnabled="{Binding IsEditor}">
                                         <TextBlock Text="ADD / EDIT WORKSTATION TYPE" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
-                                        <TextBlock Text="Examples such as Tool Room, CMM, assembly, or deburring are configuration—not fixed application types." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                        <TextBlock Text="Examples such as Tool Room, CMM, assembly, or deburring are configuration—not fixed application types." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Type name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationTypeName}"/></StackPanel>
                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Description" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationTypeDescription}" AcceptsReturn="True" MinHeight="55"/></StackPanel>
                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Property schema (JSON object)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationTypeSchema}" AcceptsReturn="True" MinHeight="90" FontFamily="Consolas"/></StackPanel>
@@ -871,8 +871,8 @@
                                 <Border Grid.Column="2" Style="{StaticResource SetupSection}">
                                     <StackPanel IsEnabled="{Binding IsEditor}">
                                         <TextBlock Text="ASSIGN SKILLS" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
-                                        <TextBlock Text="These operational Skills are separate from the existing Machine-operation qualifications on the employee record." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
-                                        <Border BorderBrush="#D8DDE3" BorderThickness="1" Padding="8" MinHeight="140" MaxHeight="330">
+                                        <TextBlock Text="These operational Skills are separate from the existing Machine-operation qualifications on the employee record." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                        <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="8" MinHeight="140" MaxHeight="330">
                                             <ScrollViewer VerticalScrollBarVisibility="Auto"><ItemsControl ItemsSource="{Binding EmployeeSkillOptions}"><ItemsControl.ItemTemplate><DataTemplate><CheckBox Content="{Binding Name}" IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,3"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></ScrollViewer>
                                         </Border>
                                         <Button Content="Save Employee Skills" Command="{Binding SaveEmployeeSkillsCommand}" HorizontalAlignment="Left" Margin="0,10,0,0"/>
@@ -906,16 +906,16 @@
                             </Grid>
                         </TabItem>
                     </TabControl>
-                    <DockPanel Grid.Row="1" Margin="2,8,2,0"><Button DockPanel.Dock="Right" Content="Refresh resource data" Command="{Binding RefreshCommand}"/><TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/></DockPanel>
+                    <DockPanel Grid.Row="1" Margin="2,8,2,0"><Button DockPanel.Dock="Right" Content="Refresh resource data" Command="{Binding RefreshCommand}"/><TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{DynamicResource MutedTextBrush}"/></DockPanel>
                 </Grid>
             </TabItem>
 
-            <TabItem Header="Kitaron Stations" ToolTip="Decide what each Kitaron route station becomes in Meimad: a Machine operation, a Workstation step, an External Resource step, or nothing">
+            <TabItem x:Name="IntegrationStationsTab" Header="Kitaron Stations" ToolTip="Decide what each Kitaron route station becomes in Meimad: a Machine operation, a Workstation step, an External Resource step, or nothing">
                 <Grid Margin="8" DataContext="{Binding KitaronStations}">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <StackPanel Grid.Row="0" Margin="2,0,2,8">
                         <TextBlock Text="KITARON ROUTE STATIONS" FontSize="17" FontWeight="Bold"/>
-                        <TextBlock Text="The Kitaron synchronization imports the route master of every linked Case. Each route step belongs to a Kitaron station; this table decides what the step becomes: a machining Case Operation with a required Machine Type, an auxiliary Workstation or External Resource step around the nearest machining operation, or nothing. Undecided stations import nothing." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                        <TextBlock Text="The Kitaron synchronization imports the route master of every linked Case. Each route step belongs to a Kitaron station; this table decides what the step becomes: a machining Case Operation with a required Machine Type, an auxiliary Workstation or External Resource step around the nearest machining operation, or nothing. Undecided stations import nothing." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                         <TextBlock Text="{Binding Summary}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,6,0,0"/>
                     </StackPanel>
                     <Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition Width="3*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
@@ -944,7 +944,7 @@
                         <Border Grid.Column="2" Style="{StaticResource SetupSection}">
                             <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel IsEnabled="{Binding IsEditor}">
                                 <TextBlock Text="DECIDE STATION" FontSize="17" FontWeight="Bold" Margin="0,0,0,6"/>
-                                <TextBlock Text="{Binding SelectedStationHint}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                <TextBlock Text="{Binding SelectedStationHint}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Import as" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding ImportRoles}" SelectedItem="{Binding ImportRole}"/></StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}" Visibility="{Binding IsMachineRole, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Required Machine Type (empty: the planner chooses per Operation)" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding MachineTypeOptions}" SelectedItem="{Binding MachineType}"/></StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}" Visibility="{Binding IsWorkstationRole, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Workstation type" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding WorkstationTypes}" SelectedItem="{Binding SelectedWorkstationType}" DisplayMemberPath="DisplayName"/></StackPanel>
@@ -955,15 +955,15 @@
                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Default minutes per work order" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MinutesPerBatch}"/></StackPanel>
                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Capacity required" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding CapacityRequired}"/></StackPanel>
                                     </UniformGrid>
-                                    <TextBlock Text="Used only when the Kitaron route step carries no time of its own. Kitaron minutes on the step always win." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <TextBlock Text="Used only when the Kitaron route step carries no time of its own. Kitaron minutes on the step always win." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                 </StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Notes" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding Notes}" AcceptsReturn="True" MinHeight="55"/></StackPanel>
                                 <WrapPanel><Button Content="Save decision" Command="{Binding SaveDecisionCommand}"/></WrapPanel>
-                                <TextBlock Text="Saving a decision starts a Kitaron synchronization on the Server. The operation lists follow the Kitaron route: operations and steps that the decisions no longer produce are removed, except those a started Work Order, a release or a pin still uses; the synchronization result names them." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                                <TextBlock Text="Saving a decision starts a Kitaron synchronization on the Server. The operation lists follow the Kitaron route: operations and steps that the decisions no longer produce are removed, except those a started Work Order, a release or a pin still uses; the synchronization result names them." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
                             </StackPanel></ScrollViewer>
                         </Border>
                     </Grid>
-                    <DockPanel Grid.Row="2" Margin="2,8,2,0"><Button DockPanel.Dock="Right" Content="Refresh stations" Command="{Binding RefreshCommand}"/><TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></DockPanel>
+                    <DockPanel Grid.Row="2" Margin="2,8,2,0"><Button DockPanel.Dock="Right" Content="Refresh stations" Command="{Binding RefreshCommand}"/><TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/></DockPanel>
                 </Grid>
             </TabItem>
 
@@ -972,7 +972,7 @@
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <StackPanel Grid.Row="0" Margin="2,0,2,8">
                         <TextBlock Text="PUSH TO KITARON" FontSize="17" FontWeight="Bold"/>
-                        <TextBlock Text="The Server writes the chosen Planner values into Kitaron's Work Order operations (TSubRootCard). An operation matches by Work Order number and operation number; Work Orders closed or stopped in Kitaron are left alone. The Planner's value replaces Kitaron's, but a value the Planner does not have yet never clears Kitaron's. Times are written in factory time." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                        <TextBlock Text="The Server writes the chosen Planner values into Kitaron's Work Order operations (TSubRootCard). An operation matches by Work Order number and operation number; Work Orders closed or stopped in Kitaron are left alone. The Planner's value replaces Kitaron's, but a value the Planner does not have yet never clears Kitaron's. Times are written in factory time." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                     </StackPanel>
                     <Border Grid.Row="1" Style="{StaticResource SetupSection}" Margin="0,0,0,8">
                         <StackPanel IsEnabled="{Binding IsEditor}">
@@ -1009,7 +1009,7 @@
                             <DockPanel>
                                 <TextBlock DockPanel.Dock="Top" Text="{Binding ResultTitle}" FontWeight="SemiBold" Margin="0,0,0,4"/>
                                 <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Notes}" Margin="0,0,0,4">
-                                    <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></DataTemplate></ItemsControl.ItemTemplate>
+                                    <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/></DataTemplate></ItemsControl.ItemTemplate>
                                 </ItemsControl>
                                 <DataGrid ItemsSource="{Binding Changes}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" AutomationProperties.Name="Kitaron push changes">
                                     <DataGrid.Columns>
@@ -1038,7 +1038,7 @@
                             </DockPanel>
                         </Border>
                     </Grid>
-                    <DockPanel Grid.Row="3" Margin="2,8,2,0"><Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}"/><TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></DockPanel>
+                    <DockPanel Grid.Row="3" Margin="2,8,2,0"><Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}"/><TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/></DockPanel>
                 </Grid>
             </TabItem>
 
@@ -1080,7 +1080,7 @@
                             </UniformGrid>
                             <StackPanel Style="{StaticResource SetupField}">
                                 <TextBlock Text="Machines this employee knows how to operate" Style="{StaticResource SetupFieldLabel}"/>
-                                <Border BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="3" Padding="8" MinHeight="44" MaxHeight="150">
+                                <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3" Padding="8" MinHeight="44" MaxHeight="150">
                                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                                         <ItemsControl ItemsSource="{Binding ResourceMachineSkills}">
                                             <ItemsControl.ItemTemplate>
@@ -1094,13 +1094,13 @@
                                     </ScrollViewer>
                                 </Border>
                                 <TextBlock Text="Select every Machine this employee is qualified to operate. Machine IDs are stored so renaming a Machine does not remove the qualification."
-                                           Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                           Foreground="{DynamicResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"/>
                             </StackPanel>
                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Notes" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceNotes}" AcceptsReturn="True" MinHeight="58" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/></StackPanel>
                             <CheckBox Content="Active" IsChecked="{Binding ResourceIsActive}" Margin="0,0,0,12"/>
                             <CheckBox Content="Respect Israel Master Calendar" IsChecked="{Binding ResourceRespectMasterCalendar}" Margin="0,0,0,12"/>
                             <StackPanel Orientation="Horizontal"><Button Content="{Binding ResourceSaveActionText}" Command="{Binding SaveResourceCommand}"/><Button Content="Delete" Click="DeleteResource_Click" Margin="0"/></StackPanel>
-                            <TextBlock Text="Inactive employees are excluded from future resource availability. The Timeline reserves active employees by role: setup needs a setup worker qualified for the Machine, QA needs a QA worker, and worker-attended load/unload needs a regular worker, each only within that employee's own calendar and exceptions." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                            <TextBlock Text="Inactive employees are excluded from future resource availability. The Timeline reserves active employees by role: setup needs a setup worker qualified for the Machine, QA needs a QA worker, and worker-attended load/unload needs a regular worker, each only within that employee's own calendar and exceptions." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
                             <Separator Margin="0,16,0,12"/>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="Refresh exceptions" Command="{Binding RefreshResourceExceptionsCommand}"/><Button Content="New exception" Command="{Binding NewResourceExceptionCommand}" Margin="0"/></StackPanel>
@@ -1143,7 +1143,7 @@
                                         ToolTip="Open the report as a printable page: print it, or save it as PDF."/>
                             </WrapPanel>
                             <TextBlock Grid.Row="1" Text="{Binding Status}" TextWrapping="Wrap" Margin="0,0,0,6"
-                                       Foreground="{StaticResource MutedTextBrush}"/>
+                                       Foreground="{DynamicResource MutedTextBrush}"/>
                             <DataGrid Grid.Row="2" ItemsSource="{Binding Employees}" SelectedItem="{Binding SelectedEmployee}"
                                       AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
                                 <DataGrid.Columns>
@@ -1159,7 +1159,7 @@
                                     <DataGridTextColumn Header="Load" Binding="{Binding LoadText}" Width="70"/>
                                     <DataGridTextColumn Header="Level" Binding="{Binding LevelText}" Width="110">
                                         <DataGridTextColumn.CellStyle>
-                                            <Style TargetType="DataGridCell">
+                                            <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
                                                 <Setter Property="FontWeight" Value="SemiBold"/>
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding LoadLevel}" Value="over"><Setter Property="Background" Value="#FDE2E1"/></DataTrigger>
@@ -1217,8 +1217,8 @@
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="To year" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HolidaySyncToYear}"/></StackPanel>
                                 </UniformGrid>
                                 <Button Content="Refresh from Hebcal" Command="{Binding SynchronizeIsraeliHolidaysCommand}" HorizontalAlignment="Left"/>
-                                <TextBlock Text="Holiday data provided by Hebcal.com (CC BY 4.0)." Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,5,0,0"/>
-                                <TextBlock Text="{Binding HolidaySyncStatus}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,7,0,0"/>
+                                <TextBlock Text="Holiday data provided by Hebcal.com (CC BY 4.0)." Foreground="{DynamicResource MutedTextBrush}" FontSize="11" Margin="0,5,0,0"/>
+                                <TextBlock Text="{Binding HolidaySyncStatus}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,7,0,0"/>
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -1233,7 +1233,7 @@
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Partial day ends (HH:mm)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding IsraeliHolidayEndsAt}"/></StackPanel>
                             </UniformGrid>
                             <StackPanel Orientation="Horizontal"><Button Content="Save holiday" Command="{Binding SaveIsraeliHolidayCommand}"/><Button Content="Delete" Click="DeleteIsraeliHoliday_Click" Margin="0"/></StackPanel>
-                            <TextBlock Text="Manual edits are preserved during later online refreshes. Calendars that opt in use this local cache, including while offline. Calendar-specific dated exceptions take precedence." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                            <TextBlock Text="Manual edits are preserved during later online refreshes. Calendars that opt in use this local cache, including while offline. Calendar-specific dated exceptions take precedence." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -1255,14 +1255,14 @@
                     <Border Grid.Row="0" Style="{StaticResource SetupSection}">
                         <StackPanel>
                             <TextBlock Text="Simple fixed-mapping Case and Order import" FontSize="18" FontWeight="Bold" />
-                            <TextBlock Text="Choose the Excel file and worksheet, preview the rows, then import. Valid rows create or match Cases by Part Number and create or match their Orders. Invalid rows are skipped with an explanation." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            <TextBlock Text="Choose the Excel file and worksheet, preview the rows, then import. Valid rows create or match Cases by Part Number and create or match their Orders. Invalid rows are skipped with an explanation." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Row="2" Style="{StaticResource SetupSection}" Background="#F3F8FF" BorderBrush="#8BB8F8">
+                    <Border Grid.Row="2" Style="{StaticResource SetupSection}" Background="{DynamicResource InfoSurfaceBrush}" BorderBrush="{DynamicResource InfoTextBrush}">
                         <StackPanel>
-                            <TextBlock Text="Fixed mapping" FontSize="17" FontWeight="Bold" Foreground="#174A7E" />
-                            <TextBlock Text="{Binding LegacyImport.FixedMappingSummary}" Foreground="#365B7D" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            <TextBlock Text="Fixed mapping" FontSize="17" FontWeight="Bold" Foreground="{DynamicResource InfoTextBrush}" />
+                            <TextBlock Text="{Binding LegacyImport.FixedMappingSummary}" Foreground="{DynamicResource InfoTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
                             <TextBlock Text="Part Number is the Case key. Order uniqueness is Case + Order Number. Existing records are matched and are not silently overwritten." FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,7,0,0" />
                         </StackPanel>
                     </Border>
@@ -1272,7 +1272,7 @@
                         <Border Grid.Row="0" Style="{StaticResource SetupSection}">
                             <StackPanel>
                                 <TextBlock Text="Workbook and worksheet" FontSize="16" FontWeight="Bold" />
-                                <TextBlock Text="Select the worksheet containing columns A, B, D, E, F, L, N, and O. Preview is read-only; Import is the only write action." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,10" />
+                                <TextBlock Text="Select the worksheet containing columns A, B, D, E, F, L, N, and O. Preview is read-only; Import is the only write action." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,10" />
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="220" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Style="{StaticResource SetupField}"><TextBlock Text="Excel workbook" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding LegacyImport.SelectedFilePath}" IsReadOnly="True" ToolTip="The source workbook is read-only." /></StackPanel>
@@ -1281,8 +1281,8 @@
                                     <Button Grid.Column="3" Content="Preview data" Command="{Binding LegacyImport.PreviewDefinedImportCommand}" Margin="8,20,0,8" />
                                 </Grid>
                                 <ProgressBar IsIndeterminate="True" Height="4" Margin="0,2,0,0"><ProgressBar.Style><Style TargetType="ProgressBar"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding LegacyImport.IsBusy}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></ProgressBar.Style></ProgressBar>
-                                <TextBlock Text="{Binding LegacyImport.ErrorMessage}" Foreground="#B42318" TextWrapping="Wrap" Margin="0,5,0,0" />
-                                <TextBlock Text="{Binding LegacyImport.PreviewSummary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                                <TextBlock Text="{Binding LegacyImport.ErrorMessage}" Foreground="{DynamicResource ErrorTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                                <TextBlock Text="{Binding LegacyImport.PreviewSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
                             </StackPanel>
                         </Border>
                         <DataGrid Grid.Row="2" ItemsSource="{Binding LegacyImport.SimpleCaseOrderRows}" SelectedItem="{Binding LegacyImport.SelectedWizardRow, Mode=TwoWay}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column" EnableRowVirtualization="True">
@@ -1296,7 +1296,7 @@
                         </DataGrid>
                         <Border Grid.Row="4" Style="{StaticResource SetupSection}">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <StackPanel><TextBlock Text="{Binding LegacyImport.SimpleCaseOrderPreviewSummary}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding LegacyImport.CaseOrderImportAvailabilityText}" Foreground="#8A4B08" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,4,0,0" /><TextBlock Text="{Binding LegacyImport.ResultSummary}" Foreground="#20744A" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="Import writes only Cases and Orders in one Server transaction. It never creates Work Orders, Operations, Machine assignments, backlog entries, or Timeline data." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" /></StackPanel>
+                                <StackPanel><TextBlock Text="{Binding LegacyImport.SimpleCaseOrderPreviewSummary}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding LegacyImport.CaseOrderImportAvailabilityText}" Foreground="{DynamicResource WarningTextBrush}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,4,0,0" /><TextBlock Text="{Binding LegacyImport.ResultSummary}" Foreground="{DynamicResource SuccessTextBrush}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="Import writes only Cases and Orders in one Server transaction. It never creates Work Orders, Operations, Machine assignments, backlog entries, or Timeline data." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" /></StackPanel>
                                 <Button Grid.Column="2" Content="Import Cases and Orders" Command="{Binding LegacyImport.ImportCasesAndOrdersCommand}" IsEnabled="{Binding LegacyImport.CanImportCasesAndOrders}" Margin="8,0,0,0" />
                             </Grid>
                         </Border>
@@ -1307,17 +1307,17 @@
                             <ScrollViewer VerticalScrollBarVisibility="Auto"><Border Style="{StaticResource SetupSection}" Margin="0,8,0,0" MaxWidth="950" HorizontalAlignment="Left">
                                 <StackPanel>
                                     <TextBlock Text="Choose the workbook" FontSize="16" FontWeight="Bold" />
-                                    <TextBlock Text="Preview identifies the planning sheet, open orders, columns, Machine sections, and matching candidates. It does not create Cases, Orders, Work Orders, or assignments." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,12" />
+                                    <TextBlock Text="Preview identifies the planning sheet, open orders, columns, Machine sections, and matching candidates. It does not create Cases, Orders, Work Orders, or assignments." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,12" />
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                         <StackPanel Grid.Column="0" Style="{StaticResource SetupField}"><TextBlock Text="Workbook path" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding LegacyImport.SelectedFilePath, UpdateSourceTrigger=PropertyChanged}" ToolTip="Choose a copy of the workbook. The original file is never modified." /></StackPanel>
                                         <StackPanel Grid.Column="1" Style="{StaticResource SetupField}" Margin="8,0,0,8"><TextBlock Text="Planning sheet" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding LegacyImport.SheetChoices}" Text="{Binding LegacyImport.SourceSheetName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEditable="True" ToolTip="Choose a detected worksheet, then validate / refresh the preview." /><TextBlock Text="Open-orders sheet (optional)" Style="{StaticResource SetupFieldLabel}" Margin="0,5,0,0" /><ComboBox ItemsSource="{Binding LegacyImport.OptionalSheetChoices}" Text="{Binding LegacyImport.OpenOrdersSheetName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEditable="True" ToolTip="Leave blank when open Orders are not part of this import." /></StackPanel>
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Bottom"><Button Content="Browse…" Click="BrowseLegacyWorkbook_Click" Margin="8,0,0,0" /><Button Command="{Binding LegacyImport.PreviewCommand}" Style="{StaticResource TemplateIconButton}" ToolTip="Preview and validate the selected workbook" AutomationProperties.Name="Preview workbook" Margin="8,0,0,0"><Image Source="{StaticResource ImportButtonIcon}" Width="24" Height="24" /></Button></StackPanel>
                                     </Grid>
-                                    <TextBlock Text="{Binding LegacyImport.ErrorMessage}" Foreground="#B42318" TextWrapping="Wrap" Margin="0,5,0,0" />
+                                    <TextBlock Text="{Binding LegacyImport.ErrorMessage}" Foreground="{DynamicResource ErrorTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
                                     <TextBlock Text="{Binding LegacyImport.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,10,0,0" />
-                                    <TextBlock Text="{Binding LegacyImport.PreviewCorrectionStatus}" Foreground="#996C00" TextWrapping="Wrap" Margin="0,5,0,0" />
-                                    <TextBlock Text="{Binding LegacyImport.PreviewSummary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,8" />
+                                    <TextBlock Text="{Binding LegacyImport.PreviewCorrectionStatus}" Foreground="{DynamicResource WarningTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                                    <TextBlock Text="{Binding LegacyImport.PreviewSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,8" />
                                     <DataGrid ItemsSource="{Binding LegacyImport.DetectedSheets}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column" MaxHeight="160">
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="Detected sheet" Binding="{Binding Name}" Width="2*" />
@@ -1333,35 +1333,35 @@
                         <TabItem Header="2  Import targets">
                             <ScrollViewer VerticalScrollBarVisibility="Auto"><Border Style="{StaticResource SetupSection}" Margin="0,8,0,0"><StackPanel IsEnabled="{Binding IsEditor}">
                                 <TextBlock Text="Choose what to import" FontSize="16" FontWeight="Bold" />
-                                <TextBlock Text="Keep these targets explicit. You can import operations to the Pool, import Orders under Cases, and create Work Orders with Machine assignments. Unchecked targets are not mutated on commit." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,12" />
+                                <TextBlock Text="Keep these targets explicit. You can import operations to the Pool, import Orders under Cases, and create Work Orders with Machine assignments. Unchecked targets are not mutated on commit." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,12" />
                                 <UniformGrid Columns="3">
-                                    <Border Style="{StaticResource SetupSection}" Margin="0,0,8,0"><StackPanel><CheckBox Content="Create Work Orders in Pool" IsChecked="{Binding LegacyImport.ImportPoolBatches}" FontWeight="SemiBold" /><TextBlock Text="Clone the existing Case route into unassigned Work Order Operations; no raw Excel operation or route is invented." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" /></StackPanel></Border>
-                                    <Border Style="{StaticResource SetupSection}" Margin="0,0,8,0"><StackPanel><CheckBox Content="Import Orders" IsChecked="{Binding LegacyImport.ImportOrders}" FontWeight="SemiBold" /><TextBlock Text="Create or match Orders and preserve quantity and Work Finish Date." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" /></StackPanel></Border>
-                                    <Border Style="{StaticResource SetupSection}"><StackPanel><CheckBox Content="Create Work Orders and assign Machines" IsChecked="{Binding LegacyImport.ImportMachineAssignments}" FontWeight="SemiBold" /><TextBlock Text="Select the route operation, allocate quantity, and choose an existing Machine per row." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" /></StackPanel></Border>
+                                    <Border Style="{StaticResource SetupSection}" Margin="0,0,8,0"><StackPanel><CheckBox Content="Create Work Orders in Pool" IsChecked="{Binding LegacyImport.ImportPoolBatches}" FontWeight="SemiBold" /><TextBlock Text="Clone the existing Case route into unassigned Work Order Operations; no raw Excel operation or route is invented." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" /></StackPanel></Border>
+                                    <Border Style="{StaticResource SetupSection}" Margin="0,0,8,0"><StackPanel><CheckBox Content="Import Orders" IsChecked="{Binding LegacyImport.ImportOrders}" FontWeight="SemiBold" /><TextBlock Text="Create or match Orders and preserve quantity and Work Finish Date." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" /></StackPanel></Border>
+                                    <Border Style="{StaticResource SetupSection}"><StackPanel><CheckBox Content="Create Work Orders and assign Machines" IsChecked="{Binding LegacyImport.ImportMachineAssignments}" FontWeight="SemiBold" /><TextBlock Text="Select the route operation, allocate quantity, and choose an existing Machine per row." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" /></StackPanel></Border>
                                 </UniformGrid>
-                                <TextBlock Text="{Binding LegacyImport.OutcomeSummary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,12,0,0" />
-                                <TextBlock Text="{Binding LegacyImport.ValidationSummary}" Foreground="#996C00" TextWrapping="Wrap" Margin="0,4,0,0" />
-                                <TextBlock Text="{Binding LegacyImport.PreviewSummary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                <TextBlock Text="{Binding LegacyImport.OutcomeSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,12,0,0" />
+                                <TextBlock Text="{Binding LegacyImport.ValidationSummary}" Foreground="{DynamicResource WarningTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                <TextBlock Text="{Binding LegacyImport.PreviewSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
                             </StackPanel></Border></ScrollViewer>
                         </TabItem>
 
                         <TabItem Header="3  Columns &amp; Machines">
                             <Grid Margin="0,8"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                                <StackPanel Margin="0,0,0,8"><TextBlock Text="Confirm source columns and Machine sections" FontSize="16" FontWeight="Bold" /><TextBlock Text="Review suggestions and change only unclear mappings. Required fields must be resolved before commit; optional blank mappings are not sent." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" /><WrapPanel Margin="0,6,0,0"><Button Content="Validate / refresh preview" Command="{Binding LegacyImport.PreviewCommand}" Margin="0,0,8,0" /><TextBlock Text="{Binding LegacyImport.PreviewCorrectionStatus}" Foreground="#996C00" TextWrapping="Wrap" VerticalAlignment="Center" /></WrapPanel></StackPanel>
+                                <StackPanel Margin="0,0,0,8"><TextBlock Text="Confirm source columns and Machine sections" FontSize="16" FontWeight="Bold" /><TextBlock Text="Review suggestions and change only unclear mappings. Required fields must be resolved before commit; optional blank mappings are not sent." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" /><WrapPanel Margin="0,6,0,0"><Button Content="Validate / refresh preview" Command="{Binding LegacyImport.PreviewCommand}" Margin="0,0,8,0" /><TextBlock Text="{Binding LegacyImport.PreviewCorrectionStatus}" Foreground="{DynamicResource WarningTextBrush}" TextWrapping="Wrap" VerticalAlignment="Center" /></WrapPanel></StackPanel>
                                 <Grid Grid.Row="1" IsEnabled="{Binding IsEditor}"><Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                     <Border Grid.Column="0" Style="{StaticResource SetupSection}"><DataGrid ItemsSource="{Binding LegacyImport.IncludedMappings}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" HeadersVisibility="Column" EnableRowVirtualization="True"><DataGrid.Columns><DataGridTextColumn Header="Source" Binding="{Binding SourceHeader}" Width="1.2*" IsReadOnly="True" /><DataGridTextColumn Header="Sample" Binding="{Binding SampleValue}" Width="1.2*" IsReadOnly="True" /><DataGridTextColumn Header="Target" Binding="{Binding TargetField}" Width="1.3*" IsReadOnly="True" /><DataGridTemplateColumn Header="Source column" Width="2*"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding ColumnOptions}" SelectedValue="{Binding SourceColumn, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Column" DisplayMemberPath="DisplayName" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn><DataGridCheckBoxColumn Header="Required" Binding="{Binding IsRequired, Mode=OneWay}" Width="65" IsReadOnly="True" /><DataGridTextColumn Header="Decision" Binding="{Binding Decision}" Width="95" IsReadOnly="True" /></DataGrid.Columns></DataGrid></Border>
-                                    <Border Grid.Column="2" Style="{StaticResource ImportMachineMappingsSection}"><StackPanel><TextBlock Text="Machine sections" FontWeight="Bold" Margin="0,0,0,8" /><TextBlock Text="{Binding LegacyImport.MachineSuggestionSummary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,6" /><Button Content="Accept clear Machine suggestions" Command="{Binding LegacyImport.AcceptClearMachineSuggestionsCommand}" HorizontalAlignment="Left" Margin="0,0,0,8" /><DataGrid ItemsSource="{Binding LegacyImport.IncludedMachineMappings}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" HeadersVisibility="Column"><DataGrid.Columns><DataGridTextColumn Header="Workbook section" Binding="{Binding SourceHeader}" Width="1.3*" IsReadOnly="True" /><DataGridTemplateColumn Header="Machine" Width="1.5*"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding MachineChoices}" SelectedItem="{Binding SelectedMachineCandidate, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="DisplayName" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn><DataGridTextColumn Header="Reason" Binding="{Binding SelectionReason}" Width="1.2*" IsReadOnly="True" /></DataGrid.Columns></DataGrid></StackPanel></Border>
+                                    <Border Grid.Column="2" Style="{StaticResource ImportMachineMappingsSection}"><StackPanel><TextBlock Text="Machine sections" FontWeight="Bold" Margin="0,0,0,8" /><TextBlock Text="{Binding LegacyImport.MachineSuggestionSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,6" /><Button Content="Accept clear Machine suggestions" Command="{Binding LegacyImport.AcceptClearMachineSuggestionsCommand}" HorizontalAlignment="Left" Margin="0,0,0,8" /><DataGrid ItemsSource="{Binding LegacyImport.IncludedMachineMappings}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" HeadersVisibility="Column"><DataGrid.Columns><DataGridTextColumn Header="Workbook section" Binding="{Binding SourceHeader}" Width="1.3*" IsReadOnly="True" /><DataGridTemplateColumn Header="Machine" Width="1.5*"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding MachineChoices}" SelectedItem="{Binding SelectedMachineCandidate, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="DisplayName" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn><DataGridTextColumn Header="Reason" Binding="{Binding SelectionReason}" Width="1.2*" IsReadOnly="True" /></DataGrid.Columns></DataGrid></StackPanel></Border>
                                 </Grid>
                             </Grid>
                         </TabItem>
 
                         <TabItem Header="4  Guided review">
                             <Grid Margin="0,8"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                                <StackPanel><TextBlock Text="{Binding LegacyImport.CurrentImportStageTitle}" FontSize="16" FontWeight="Bold" /><TextBlock Text="{Binding LegacyImport.CurrentImportStageDescription}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" /></StackPanel>
-                                <Border Grid.Row="1" Style="{StaticResource SetupSection}" Margin="0,8"><WrapPanel VerticalAlignment="Center"><TextBlock Text="Pattern scope" VerticalAlignment="Center" Margin="0,0,6,0" /><ComboBox ItemsSource="{Binding LegacyImport.PatternScopeChoices}" SelectedValue="{Binding LegacyImport.PatternScope, Mode=TwoWay}" SelectedValuePath="Value" DisplayMemberPath="DisplayName" MinWidth="165" Margin="0,0,8,0" ToolTip="Choose which similar rows receive the selected row's explicit choices." /><StackPanel Margin="0,0,8,0"><TextBlock Text="Work Order number template (optional)" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding LegacyImport.BatchNumberTemplate, UpdateSourceTrigger=PropertyChanged}" MinWidth="180" ToolTip="Use {part}, {reference}, and {row}. Blank leaves the work order number unresolved." /></StackPanel><TextBlock Text="{Binding LegacyImport.PatternPreviewText}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,12,0" /><Button Content="Apply pattern" Command="{Binding LegacyImport.ApplyPatternCommand}" Margin="0,0,8,0" /><Button Content="Apply to similar rows" Command="{Binding LegacyImport.ApplySelectedPatternToSimilarCommand}" Margin="0,0,8,0" /><Button Content="Apply to all matching rows" Command="{Binding LegacyImport.ApplySelectedPatternToAllCommand}" /></WrapPanel></Border>
+                                <StackPanel><TextBlock Text="{Binding LegacyImport.CurrentImportStageTitle}" FontSize="16" FontWeight="Bold" /><TextBlock Text="{Binding LegacyImport.CurrentImportStageDescription}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" /></StackPanel>
+                                <Border Grid.Row="1" Style="{StaticResource SetupSection}" Margin="0,8"><WrapPanel VerticalAlignment="Center"><TextBlock Text="Pattern scope" VerticalAlignment="Center" Margin="0,0,6,0" /><ComboBox ItemsSource="{Binding LegacyImport.PatternScopeChoices}" SelectedValue="{Binding LegacyImport.PatternScope, Mode=TwoWay}" SelectedValuePath="Value" DisplayMemberPath="DisplayName" MinWidth="165" Margin="0,0,8,0" ToolTip="Choose which similar rows receive the selected row's explicit choices." /><StackPanel Margin="0,0,8,0"><TextBlock Text="Work Order number template (optional)" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding LegacyImport.BatchNumberTemplate, UpdateSourceTrigger=PropertyChanged}" MinWidth="180" ToolTip="Use {part}, {reference}, and {row}. Blank leaves the work order number unresolved." /></StackPanel><TextBlock Text="{Binding LegacyImport.PatternPreviewText}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,12,0" /><Button Content="Apply pattern" Command="{Binding LegacyImport.ApplyPatternCommand}" Margin="0,0,8,0" /><Button Content="Apply to similar rows" Command="{Binding LegacyImport.ApplySelectedPatternToSimilarCommand}" Margin="0,0,8,0" /><Button Content="Apply to all matching rows" Command="{Binding LegacyImport.ApplySelectedPatternToAllCommand}" /></WrapPanel></Border>
                                 <Grid Grid.Row="2" IsEnabled="{Binding IsEditor}"><Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="3*" /></Grid.ColumnDefinitions>
                                     <DataGrid x:Name="WizardImportRowsGrid" Grid.Column="0" ItemsSource="{Binding LegacyImport.CurrentStageRows}" SelectedItem="{Binding LegacyImport.SelectedWizardRow, Mode=TwoWay}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column" EnableRowVirtualization="True"><DataGrid.Columns><DataGridTextColumn Header="Row" Binding="{Binding RowNumber}" Width="55" /><DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="90" IsReadOnly="True" /><DataGridTemplateColumn Header="Status" Width="80" IsReadOnly="True"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Status}" Style="{StaticResource ImportStatusText}" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn><DataGridTextColumn Header="Source" Binding="{Binding SourceSummary}" Width="2*" IsReadOnly="True" /><DataGridTextColumn Header="Decision" Binding="{Binding DecisionDisplayName}" Width="1.4*" IsReadOnly="True" /></DataGrid.Columns></DataGrid>
-                                    <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto"><Border Style="{StaticResource SetupSection}"><StackPanel DataContext="{Binding LegacyImport.SelectedWizardRow}"><TextBlock Text="Selected row" FontSize="16" FontWeight="Bold" /><TextBlock Text="{Binding SourceSummary}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,10" /><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Action" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding ActionChoices}" SelectedValue="{Binding Decision, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Value" DisplayMemberPath="DisplayName" /></StackPanel><StackPanel Style="{StaticResource ImportExistingOperationSection}"><TextBlock Text="Existing operation" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding AvailableExistingOperationCandidates}" SelectedItem="{Binding SelectedExistingOperationCandidate}" DisplayMemberPath="DisplayName" /></StackPanel><StackPanel Style="{StaticResource ImportCaseSection}"><TextBlock Text="Case candidate" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding CaseCandidates}" SelectedItem="{Binding SelectedCaseCandidate}" DisplayMemberPath="DisplayName" /></StackPanel><StackPanel Style="{StaticResource ImportRouteSection}"><TextBlock Text="Route operation" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding AvailableRouteOperationCandidates}" SelectedItem="{Binding SelectedRouteOperationCandidate}" DisplayMemberPath="DisplayName" /></StackPanel><UniformGrid Columns="2"><StackPanel Style="{StaticResource ImportBatchSection}"><TextBlock Text="Work Order number" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding BatchNumber, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource ImportOrderSection}"><TextBlock Text="Order number" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding OrderNumber, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><UniformGrid Columns="2" Style="{StaticResource ImportOrderGrid}"><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Quantity" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding OrderQuantity, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Work Finish Date" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding OrderWorkFinishDate, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><Expander Header="New Case details (used for open Orders)" Margin="0,4,0,8" Style="{StaticResource ImportNewCaseSection}"><StackPanel><CheckBox Content="Also create this prefilled Order" IsChecked="{Binding IncludeOrderWithNewCase}" ToolTip="Create the prefilled Order together with this new Case." Margin="0,0,0,8" /><UniformGrid Columns="2"><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Part number" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCasePartNumber, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Case name" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseName, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><UniformGrid Columns="2"><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Revision" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseRevision, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Working folder" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseWorkingFolderPath, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><UniformGrid Columns="2"><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Customer" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseCustomer, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Customer reference" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseCustomerReference, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Case notes" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseNotes, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" /></StackPanel></StackPanel></Expander><StackPanel Style="{StaticResource ImportOrderSection}"><TextBlock Text="Order notes" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding OrderNotes, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" /></StackPanel><StackPanel Style="{StaticResource ImportCompatibilitySection}"><TextBlock Text="{Binding CompatibilityReviewText}" TextWrapping="Wrap" Foreground="#996C00" Margin="0,2,0,5" /><StackPanel Orientation="Horizontal" IsEnabled="{Binding RequiresCompatibilityOverride}" Margin="0,0,0,8"><CheckBox Content="Confirm cross-type assignment" IsChecked="{Binding CompatibilityOverrideConfirmed}" /><TextBox Text="{Binding CompatibilityOverrideReason, UpdateSourceTrigger=PropertyChanged}" MinWidth="170" Margin="8,0,0,0" ToolTip="Mandatory reason" /></StackPanel></StackPanel><StackPanel Style="{StaticResource ImportAllocationsSection}"><DockPanel><TextBlock Text="Allocations" FontWeight="SemiBold" /><Button DockPanel.Dock="Right" Content="Add allocation" Command="{Binding AddAllocationCommand}" /></DockPanel><ItemsControl ItemsSource="{Binding Allocations}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal" Margin="0,2"><ComboBox ItemsSource="{Binding TypeChoices}" SelectedItem="{Binding Type}" Width="100" /><ComboBox ItemsSource="{Binding OrderCandidates}" SelectedItem="{Binding SelectedOrderCandidate}" DisplayMemberPath="DisplayName" Width="160" Margin="4,0,0,0" /><TextBox Text="{Binding OrderSourceRowKey}" Width="110" Margin="4,0,0,0" ToolTip="Optional source-row Order reference" /><TextBox Text="{Binding Quantity}" Width="65" Margin="4,0,0,0" /><Button Content="Remove" Command="{Binding DataContext.RemoveAllocationCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" Margin="4,0,0,0" /></StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></StackPanel></Border></ScrollViewer>
+                                    <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto"><Border Style="{StaticResource SetupSection}"><StackPanel DataContext="{Binding LegacyImport.SelectedWizardRow}"><TextBlock Text="Selected row" FontSize="16" FontWeight="Bold" /><TextBlock Text="{Binding SourceSummary}" TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" Margin="0,4,0,10" /><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Action" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding ActionChoices}" SelectedValue="{Binding Decision, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Value" DisplayMemberPath="DisplayName" /></StackPanel><StackPanel Style="{StaticResource ImportExistingOperationSection}"><TextBlock Text="Existing operation" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding AvailableExistingOperationCandidates}" SelectedItem="{Binding SelectedExistingOperationCandidate}" DisplayMemberPath="DisplayName" /></StackPanel><StackPanel Style="{StaticResource ImportCaseSection}"><TextBlock Text="Case candidate" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding CaseCandidates}" SelectedItem="{Binding SelectedCaseCandidate}" DisplayMemberPath="DisplayName" /></StackPanel><StackPanel Style="{StaticResource ImportRouteSection}"><TextBlock Text="Route operation" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding AvailableRouteOperationCandidates}" SelectedItem="{Binding SelectedRouteOperationCandidate}" DisplayMemberPath="DisplayName" /></StackPanel><UniformGrid Columns="2"><StackPanel Style="{StaticResource ImportBatchSection}"><TextBlock Text="Work Order number" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding BatchNumber, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource ImportOrderSection}"><TextBlock Text="Order number" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding OrderNumber, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><UniformGrid Columns="2" Style="{StaticResource ImportOrderGrid}"><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Quantity" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding OrderQuantity, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Work Finish Date" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding OrderWorkFinishDate, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><Expander Header="New Case details (used for open Orders)" Margin="0,4,0,8" Style="{StaticResource ImportNewCaseSection}"><StackPanel><CheckBox Content="Also create this prefilled Order" IsChecked="{Binding IncludeOrderWithNewCase}" ToolTip="Create the prefilled Order together with this new Case." Margin="0,0,0,8" /><UniformGrid Columns="2"><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Part number" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCasePartNumber, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Case name" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseName, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><UniformGrid Columns="2"><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Revision" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseRevision, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Working folder" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseWorkingFolderPath, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><UniformGrid Columns="2"><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Customer" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseCustomer, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Customer reference" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseCustomerReference, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Case notes" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseNotes, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" /></StackPanel></StackPanel></Expander><StackPanel Style="{StaticResource ImportOrderSection}"><TextBlock Text="Order notes" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding OrderNotes, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" /></StackPanel><StackPanel Style="{StaticResource ImportCompatibilitySection}"><TextBlock Text="{Binding CompatibilityReviewText}" TextWrapping="Wrap" Foreground="{DynamicResource WarningTextBrush}" Margin="0,2,0,5" /><StackPanel Orientation="Horizontal" IsEnabled="{Binding RequiresCompatibilityOverride}" Margin="0,0,0,8"><CheckBox Content="Confirm cross-type assignment" IsChecked="{Binding CompatibilityOverrideConfirmed}" /><TextBox Text="{Binding CompatibilityOverrideReason, UpdateSourceTrigger=PropertyChanged}" MinWidth="170" Margin="8,0,0,0" ToolTip="Mandatory reason" /></StackPanel></StackPanel><StackPanel Style="{StaticResource ImportAllocationsSection}"><DockPanel><TextBlock Text="Allocations" FontWeight="SemiBold" /><Button DockPanel.Dock="Right" Content="Add allocation" Command="{Binding AddAllocationCommand}" /></DockPanel><ItemsControl ItemsSource="{Binding Allocations}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal" Margin="0,2"><ComboBox ItemsSource="{Binding TypeChoices}" SelectedItem="{Binding Type}" Width="100" /><ComboBox ItemsSource="{Binding OrderCandidates}" SelectedItem="{Binding SelectedOrderCandidate}" DisplayMemberPath="DisplayName" Width="160" Margin="4,0,0,0" /><TextBox Text="{Binding OrderSourceRowKey}" Width="110" Margin="4,0,0,0" ToolTip="Optional source-row Order reference" /><TextBox Text="{Binding Quantity}" Width="65" Margin="4,0,0,0" /><Button Content="Remove" Command="{Binding DataContext.RemoveAllocationCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" Margin="4,0,0,0" /></StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></StackPanel></Border></ScrollViewer>
                                 </Grid>
                             </Grid>
                         </TabItem>
@@ -1371,11 +1371,11 @@
                                 <Border Style="{StaticResource SetupSection}" Margin="0,8,0,0">
                                     <StackPanel>
                                         <TextBlock Text="Review before writing" FontSize="16" FontWeight="Bold" />
-                                        <TextBlock Text="The Server validates the complete selection atomically. Resolve blockers and confirm Machine assignments before committing." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,10" />
+                                        <TextBlock Text="The Server validates the complete selection atomically. Resolve blockers and confirm Machine assignments before committing." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,10" />
                                         <TextBlock Text="{Binding LegacyImport.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                        <TextBlock Text="{Binding LegacyImport.PreviewSummary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
-                                        <TextBlock Text="{Binding LegacyImport.ResultSummary}" Foreground="#20744A" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,4,0,0" />
-                                        <TextBlock Text="{Binding LegacyImport.TokenExpiryText}" Foreground="#996C00" Margin="0,3,0,10" />
+                                        <TextBlock Text="{Binding LegacyImport.PreviewSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                        <TextBlock Text="{Binding LegacyImport.ResultSummary}" Foreground="{DynamicResource SuccessTextBrush}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                        <TextBlock Text="{Binding LegacyImport.TokenExpiryText}" Foreground="{DynamicResource WarningTextBrush}" Margin="0,3,0,10" />
                                         <DataGrid ItemsSource="{Binding LegacyImport.ReviewRows}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column" MaxHeight="220" Margin="0,0,0,10">
                                             <DataGrid.Columns>
                                                 <DataGridTextColumn Header="Row" Binding="{Binding RowNumber}" Width="55" />
@@ -1387,17 +1387,17 @@
                                         <TextBlock Text="Issues" FontWeight="SemiBold" />
                                         <ItemsControl ItemsSource="{Binding LegacyImport.Issues}" MaxHeight="220">
                                             <ItemsControl.ItemTemplate>
-                                                <DataTemplate><TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="#996C00" Margin="0,2" /></DataTemplate>
+                                                <DataTemplate><TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="{DynamicResource WarningTextBrush}" Margin="0,2" /></DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
-                                        <TextBlock Text="Import is atomic: the Server either accepts the validated selection or changes nothing." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,12,0,0" />
+                                        <TextBlock Text="Import is atomic: the Server either accepts the validated selection or changes nothing." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,12,0,0" />
                                     </StackPanel>
                                 </Border>
                             </ScrollViewer>
                         </TabItem>
                     </TabControl>
 
-                    <Border Grid.Row="6" Visibility="Collapsed" Style="{StaticResource SetupSection}"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="{Binding LegacyImport.ErrorMessage}" Foreground="#B42318" TextWrapping="Wrap" /><TextBlock Text="{Binding LegacyImport.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" /></StackPanel><Button Grid.Column="1" Content="Back" Command="{Binding LegacyImport.PreviousStepCommand}" IsEnabled="{Binding LegacyImport.CanGoPrevious}" Margin="8,0,0,0" /><Button Grid.Column="2" Content="Next" Command="{Binding LegacyImport.NextStepCommand}" IsEnabled="{Binding LegacyImport.CanGoNext}" Margin="8,0,0,0" /><StackPanel Grid.Column="3" Orientation="Horizontal"><Button Content="Skip unresolved" Command="{Binding LegacyImport.SkipAllUnresolvedCommand}" Margin="8,0,0,0" /><Button Content="Import ready items" Command="{Binding LegacyImport.CommitCommand}" IsEnabled="{Binding LegacyImport.CanCommitNow}" Margin="8,0,0,0" /></StackPanel></Grid></Border>
+                    <Border Grid.Row="6" Visibility="Collapsed" Style="{StaticResource SetupSection}"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="{Binding LegacyImport.ErrorMessage}" Foreground="{DynamicResource ErrorTextBrush}" TextWrapping="Wrap" /><TextBlock Text="{Binding LegacyImport.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" /></StackPanel><Button Grid.Column="1" Content="Back" Command="{Binding LegacyImport.PreviousStepCommand}" IsEnabled="{Binding LegacyImport.CanGoPrevious}" Margin="8,0,0,0" /><Button Grid.Column="2" Content="Next" Command="{Binding LegacyImport.NextStepCommand}" IsEnabled="{Binding LegacyImport.CanGoNext}" Margin="8,0,0,0" /><StackPanel Grid.Column="3" Orientation="Horizontal"><Button Content="Skip unresolved" Command="{Binding LegacyImport.SkipAllUnresolvedCommand}" Margin="8,0,0,0" /><Button Content="Import ready items" Command="{Binding LegacyImport.CommitCommand}" IsEnabled="{Binding LegacyImport.CanCommitNow}" Margin="8,0,0,0" /></StackPanel></Grid></Border>
                 </Grid>
             </TabItem>
 
@@ -1406,7 +1406,7 @@
                     <StackPanel DataContext="{Binding NetworkFolder}" MaxWidth="900" HorizontalAlignment="Left">
                         <TextBlock Text="Network folder" FontSize="16" FontWeight="Bold" />
                         <TextBlock Text="Case working folders, preview pictures, model files and the G-code saved under the working folder are stored relative to this folder. Every PC then opens them through the same network path, whatever drive letter it maps. Use a UNC path such as \\server\share\customers files."
-                                   TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,10" />
+                                   TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" Margin="0,4,0,10" />
                         <TextBlock Text="Network folder (UNC path)" FontWeight="SemiBold" />
                         <TextBox Text="{Binding RootPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,10" />
                         <TextBlock Text="Drive-letter aliases of the same folder (one per line)" FontWeight="SemiBold" />
@@ -1435,30 +1435,30 @@
                                     <Button DockPanel.Dock="Right" Content="Refresh database size" Command="{Binding RefreshCommand}" Margin="8,0,0,0" />
                                     <StackPanel>
                                         <TextBlock Text="Database storage" FontSize="17" FontWeight="Bold" />
-                                        <TextBlock Text="{Binding DatabaseSizeText}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,5,0,0" />
+                                        <TextBlock Text="{Binding DatabaseSizeText}" TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" Margin="0,5,0,0" />
                                     </StackPanel>
                                 </DockPanel>
-                                <TextBlock Text="Deleting rows normally creates reusable SQLite pages; the database file may not immediately become smaller." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,6,0,0" />
+                                <TextBlock Text="Deleting rows normally creates reusable SQLite pages; the database file may not immediately become smaller." TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" Margin="0,6,0,0" />
                             </StackPanel>
                         </Border>
 
                         <Border Style="{StaticResource SetupSection}" Margin="0,10,0,0">
                             <StackPanel>
                                 <TextBlock Text="Verified HTTP backup" FontSize="17" FontWeight="Bold" />
-                                <TextBlock Text="The Server creates a managed backup, verifies integrity and restore, audits the request, then sends the SQLite file over HTTP. This factory-LAN endpoint is not safe for Internet exposure." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,8" />
+                                <TextBlock Text="The Server creates a managed backup, verifies integrity and restore, audits the request, then sends the SQLite file over HTTP. This factory-LAN endpoint is not safe for Internet exposure." TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" Margin="0,4,0,8" />
                                 <UniformGrid Columns="2">
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="HTTP endpoint" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding BackupHttpEndpoint, Mode=OneWay}" IsReadOnly="True" /></StackPanel>
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Save folder on this PC" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding BackupFolder, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
                                 </UniformGrid>
                                 <Button Content="Download verified backup" Command="{Binding DownloadBackupCommand}" IsEnabled="{Binding IsEditor}" HorizontalAlignment="Left" />
-                                <TextBlock Text="Only an account with the Setup permission can download a backup." Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" />
+                                <TextBlock Text="Only an account with the Setup permission can download a backup." Foreground="{DynamicResource MutedTextBrush}" Margin="0,4,0,0" />
                             </StackPanel>
                         </Border>
 
                         <Border Style="{StaticResource SetupSection}" Margin="0,10,0,0">
                             <StackPanel>
                                 <TextBlock Text="Delete collected diagnostic data" FontSize="17" FontWeight="Bold" />
-                                <TextBlock Text="Protected scope: only raw CNC telemetry, Machine state history, and CNC connection events can be selected. Planning data, NC releases, production events, cycle/output records, anomalies, current Machine state, and structured audit history are never deleted here." TextWrapping="Wrap" Foreground="#8A4B08" FontWeight="SemiBold" Margin="0,4,0,10" />
+                                <TextBlock Text="Protected scope: only raw CNC telemetry, Machine state history, and CNC connection events can be selected. Planning data, NC releases, production events, cycle/output records, anomalies, current Machine state, and structured audit history are never deleted here." TextWrapping="Wrap" Foreground="{DynamicResource WarningTextBrush}" FontWeight="SemiBold" Margin="0,4,0,10" />
                                 <UniformGrid Columns="3">
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="From UTC (included)" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding FromUtc, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="To UTC (excluded)" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding ToUtc, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
@@ -1468,7 +1468,7 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <CheckBox IsChecked="{Binding IsSelected}" Margin="0,2">
-                                                <StackPanel Orientation="Horizontal"><TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" /><TextBlock Text=" — " /><TextBlock Text="{Binding Description}" Foreground="{StaticResource MutedTextBrush}" /></StackPanel>
+                                                <StackPanel Orientation="Horizontal"><TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" /><TextBlock Text=" — " /><TextBlock Text="{Binding Description}" Foreground="{DynamicResource MutedTextBrush}" /></StackPanel>
                                             </CheckBox>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -1480,8 +1480,8 @@
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Type the exact confirmation shown below" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding Confirmation, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
                                 </UniformGrid>
                                 <TextBlock Text="{Binding RequiredConfirmation, StringFormat=Required confirmation: {0}}" FontWeight="Bold" Margin="0,0,0,8" />
-                                <Button Content="Create verified backup and delete previewed rows" Command="{Binding DeleteCommand}" IsEnabled="{Binding IsEditor}" HorizontalAlignment="Left" Foreground="#9F1D20" />
-                                <TextBlock Text="The Server recounts the rows and refuses the deletion if anything changed after preview." Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" />
+                                <Button Content="Create verified backup and delete previewed rows" Command="{Binding DeleteCommand}" IsEnabled="{Binding IsEditor}" HorizontalAlignment="Left" Foreground="{DynamicResource ErrorTextBrush}" />
+                                <TextBlock Text="The Server recounts the rows and refuses the deletion if anything changed after preview." Foreground="{DynamicResource MutedTextBrush}" Margin="0,4,0,0" />
                             </StackPanel>
                         </Border>
 
@@ -1507,7 +1507,7 @@
                             <TextBlock Text="SMTP password" Style="{StaticResource SetupFieldLabel}"/>
                             <PasswordBox x:Name="ReportSmtpPasswordBox" PasswordChanged="ReportSmtpPassword_Changed" Padding="2"
                                          ToolTip="Stored encrypted on the Server and never shown again. For Gmail, use an App Password, not the account password."/>
-                            <TextBlock Text="{Binding ReportSmtpPasswordStatus}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                            <TextBlock Text="{Binding ReportSmtpPasswordStatus}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,2,0,0"/>
                             <CheckBox Content="Remove the saved password" IsChecked="{Binding ReportClearSmtpPassword}" Margin="0,3,0,0"/>
                         </StackPanel>
                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Weekly send day" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding Weekdays}" SelectedItem="{Binding WeeklyMaterialReportSendDay}"/></StackPanel>
@@ -1518,9 +1518,9 @@
                     </UniformGrid>
                     <StackPanel Orientation="Horizontal" Margin="0,2,0,12"><CheckBox Content="Use SSL" IsChecked="{Binding ReportUseSsl}" Margin="0,0,18,0"/><CheckBox Content="Enable weekly material order report" IsChecked="{Binding WeeklyMaterialReportEnabled}" Margin="0,0,18,0"/><CheckBox Content="Enable weekly employee efficiency report" IsChecked="{Binding WeeklyEmployeeEfficiencyEnabled}"/></StackPanel>
                     <WrapPanel><Button Content="Save report / email settings" Command="{Binding SaveReportEmailSettingsCommand}" Margin="0,0,8,6"/><Button Content="Send test email" Command="{Binding SendReportTestEmailCommand}" Margin="0,0,8,6" ToolTip="Send a short email with the saved settings to the recipients, or to the sender when there are none"/><Button Content="Send weekly material report now" Command="{Binding SendWeeklyMaterialReportNowCommand}" Margin="0,0,8,6"/><Button Content="Send employee efficiency report now" Command="{Binding SendWeeklyEmployeeEfficiencyReportNowCommand}" Margin="0,0,8,6"/></WrapPanel>
-                    <TextBlock Text="Gmail: SMTP host smtp.gmail.com, port 587, Use SSL on, your Gmail address as the sender and the user name, and an App Password as the password (Google Account, Security, 2-Step Verification, App passwords). Save, then press Send test email." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
-                    <TextBlock Text="The report contains only Case / Part Number and required material-piece quantity. Quantity uses Work Order planned quantity, which already includes scrap allowance." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
-                    <TextBlock Text="Employee efficiency compares recorded planned and actual labor with calendar capacity after breaks, holidays, and employee exceptions. It does not calculate payroll, rank employees, or include machine maintenance." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                    <TextBlock Text="Gmail: SMTP host smtp.gmail.com, port 587, Use SSL on, your Gmail address as the sender and the user name, and an App Password as the password (Google Account, Security, 2-Step Verification, App passwords). Save, then press Send test email." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                    <TextBlock Text="The report contains only Case / Part Number and required material-piece quantity. Quantity uses Work Order planned quantity, which already includes scrap allowance." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                    <TextBlock Text="Employee efficiency compares recorded planned and actual labor with calendar capacity after breaks, holidays, and employee exceptions. It does not calculate payroll, rank employees, or include machine maintenance." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                 </StackPanel></Border></ScrollViewer>
             </TabItem>
         </TabControl>
@@ -1529,7 +1529,7 @@
             <Button DockPanel.Dock="Right" Content="Refresh setup data" Command="{Binding RefreshMasterDataCommand}" Margin="8,0,0,0" />
             <StackPanel>
                 <TextBlock Text="{Binding AuthorityText}" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" />
             </StackPanel>
         </DockPanel>
     </Grid>

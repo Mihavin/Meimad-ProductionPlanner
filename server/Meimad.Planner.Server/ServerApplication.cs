@@ -199,6 +199,7 @@ public static class ServerApplication
         builder.Services.AddSingleton<IProductionRunRepository, SqliteProductionRunRepository>();
         builder.Services.AddSingleton<ProductionRunService>();
         builder.Services.AddSingleton<IProductionRunToolingRepository, SqliteProductionRunToolingRepository>();
+        builder.Services.AddSingleton<IProductionRunReadinessRepository, SqliteProductionRunReadinessRepository>();
         builder.Services.AddSingleton<ProductionRunReadinessService>();
         builder.Services.AddSingleton<IProductionRunExecutionRepository, SqliteProductionRunExecutionRepository>();
         builder.Services.AddSingleton<ProductionRunExecutionService>();

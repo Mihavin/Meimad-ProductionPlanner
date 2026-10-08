@@ -344,7 +344,8 @@ internal static class MachineAssignmentEndpoints
         try
         {
             var result = await service.ChangeExecutionStatusAsync(
-                batchOperationId, action, pauseReason, authority!, cancellationToken);
+                batchOperationId, action, pauseReason, authority!, cancellationToken,
+                context.Request.Headers.TryGetValue("If-Readiness-Match", out var stamp) ? stamp.ToString() : null);
             return Results.Ok(BatchOperationExecutionResponse.FromApplication(result));
         }
         catch (Exception exception) when (TryMapError(exception, context, out var error))

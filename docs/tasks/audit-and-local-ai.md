@@ -1,6 +1,6 @@
 # Meimad implementation tasks — audit repairs, industrial UI and local AI
 
-Repository status: see [the implementation record](../implementation-plan.md#audit-handoff-2026-10-08). C02/C06 have implementations and executable validation; remaining task descriptions below are retained requirements, not completion claims.
+Repository status: see [the implementation record](../implementation-plan.md#audit-handoff-2026-10-08). C01/C02/C03/C04/C06 have implementations and executable validation; remaining task descriptions below are retained requirements, not completion claims.
 
 
 Prepared 8 October 2026 from the GPT-6 Astra audit of `Mihavin/Meimad-ProductionPlanner`, `main` at `b13f841886e910c5debcc8f635a207912f833547`. This is an implementation handoff, not a statement that the work is complete. Source paths below are relative to that repository. Recheck the current branch before coding; do not reimplement a finding already fixed after the audited revision.
@@ -75,7 +75,7 @@ These are the remaining consequential choices. This backlog defines the proposed
 | Decision | Conflict or missing information | Suggested resolution | Blocks |
 |---|---|---|---|
 | D1 ERP ownership | Code implements outbound SQL push; historical intent was read-only import | Keep installed enablement unchanged. Document allowed outbound fields, owner and overwrite policy. Import-only installations remain import-only | Enabling/expanding push; field-ownership policy in C07/D03 |
-| D2 Stage gates | Run readiness and operation readiness differ; material timing and manual modes need one contract | Publish a stage-specific matrix. Production requires approved material/NC/tool conditions; setup-only exceptions are explicit and visible | C05 final behavior |
+| D2 Stage gates | Resolved by explicit owner approval, 2026-10-08 | Approved stage matrix; unknown capacity blocks managed work requiring tools, zero-tool work remains allowed; unmanaged legacy NC/tool-release exemptions retained with material readiness and valid execution context | C05 complete locally |
 | D3 Physical handoff | `TASKS_FOR_CODEX.md` §3 requires handoff; §7 makes package creation sufficient for Ready for Setup | Prefer separate “Package ready” and “Handed to setup” facts. Decide whether handoff blocks production/setup or is tracking only; no invented handoff for old work | U02 state transition policy |
 | D4 Non-loader setup | Machines without an executable loader need a real setup-start source | Retain an existing valid signal; otherwise specify the permitted actor/event instead of generating a fake loader | New setup-start behavior on affected machines |
 | D5 Recovery/retention | Production evidence retention and acceptable loss/downtime are not measured | Pilot target: 15–60 minute DB recovery point and same-shift restore; agree actual retention and backup destination | Operational acceptance of D01/D04 |
@@ -139,9 +139,11 @@ Acceptance: simultaneous P0→P1/P2 builds; retry after commit but before respon
 
 ### C05 — unify readiness and transition policy
 
+**2026-10-08 status: complete locally; D2 approved.** Shared preparation decisions, exact transactional Run readiness, Start evidence comparison, Resume/cycle/manual-production revalidation and Windows rendering are implemented locally. The owner explicitly approved applying the operation capacity rule consistently to Runs: unknown capacity blocks managed work requiring tools; zero-tool work remains allowed. Unmanaged legacy NC/tool-release exemptions remain, with material readiness and valid execution context required. Setup/operation actions, client Start stamps and CNC start checks are also integrated. Both D2 mode policies were explicitly approved on 2026-10-08. See the implementation plan for verification and scope; deployment, U02 UI work and controller commissioning remain separate.
+
 **Audit:** F6 and UI semantics. **Start at:** `Application/ProductionRuns/ProductionRunReadinessService.cs`, `ProductionRunExecutionService.cs`, operation readiness evaluator, `Persistence/SqliteMachineAssignmentRepository.cs`, preparation projector.
 
-After D2, define a single server-owned policy evaluated for specific actions. Return structured reason codes, required evidence, current evidence, blocking/attention classification and context stamp. The Windows client renders these results; it must not recreate gates locally.
+The D2-approved implementation uses a single server-owned policy evaluated for specific actions. Return structured reason codes, required evidence, current evidence, blocking/attention classification and context stamp. The Windows client renders these results; it must not recreate gates locally.
 
 | Action | Contract to implement |
 |---|---|
@@ -166,6 +168,8 @@ Keep intended deduplication key scope, but store/compare the immutable Run/progr
 Acceptance: same event retry counts once; cross-Run/program reuse conflicts; duplicate request naming nonexistent target does not succeed using another Run's receipt; counts and coupled-output allocations remain exact; parallel duplicates have one durable observation.
 
 ### C07 — protect ERP rows against concurrent changes
+
+**2026-10-08 status: implemented locally; isolated SQL Server acceptance pending.** Typed comparison values, locked transactional revalidation, whole-push rollback, trigger-independent direct row counts and Windows preview stamps are implemented. D1 fields and enablement are unchanged. See the implementation plan for test results and the opt-in disposable LocalDB tests; no factory ERP acceptance is claimed.
 
 **Audit:** F8. **Start at:** `Application/Kitaron/Push/SqlServerKitaronPushTarget.cs`, `KitaronPushPlanner.cs`, push service and tests.
 

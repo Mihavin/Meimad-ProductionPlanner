@@ -147,7 +147,7 @@ public sealed class ProductionPackageApiTests
             Assert.Equal("gcode-1", manifestDocument.RootElement.GetProperty("gCodeReleaseId").GetString());
             Assert.Equal("tools-1", manifestDocument.RootElement.GetProperty("toolTableReleaseId").GetString());
             Assert.Equal("tool-room-user", manifestDocument.RootElement.GetProperty("createdBy").GetString());
-            Assert.Equal(2, manifestDocument.RootElement.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal(3, manifestDocument.RootElement.GetProperty("schemaVersion").GetInt32());
             Assert.Equal(2, manifestDocument.RootElement.GetProperty("placeholderProtocolVersion").GetInt32());
             Assert.Equal("Package Part", manifestDocument.RootElement.GetProperty("partName").GetString());
             Assert.Equal("Finish", manifestDocument.RootElement.GetProperty("operationName").GetString());
@@ -577,7 +577,7 @@ public sealed class ProductionPackageApiTests
             .Select(value => value.GetProperty("batchOperationId").GetString()!).ToArray();
     }
 
-    private static async Task SeedAsync(IServiceProvider services, string releaseRoot, bool verificationEnabled)
+    internal static async Task SeedAsync(IServiceProvider services, string releaseRoot, bool verificationEnabled)
     {
         var gcodeRelative = "operations/case-operation-package/gcode/gcode-1/main.nc";
         var toolRelative = "operations/case-operation-package/tool-tables/tools-1/tools.csv";
@@ -675,7 +675,7 @@ public sealed class ProductionPackageApiTests
         }
     }
 
-    private static async Task SupersedeGCodeAsync(IServiceProvider services, string releaseRoot)
+    internal static async Task SupersedeGCodeAsync(IServiceProvider services, string releaseRoot)
     {
         var relative = "operations/case-operation-package/gcode/gcode-2/main-r2.nc";
         var path = Path.Combine(releaseRoot, relative.Replace('/', Path.DirectorySeparatorChar));

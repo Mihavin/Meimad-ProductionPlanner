@@ -124,6 +124,22 @@ internal sealed class SqliteProductionRunCncObservationRepository(
             return new(false, false, false, "cycle_start_requires_qc_pass_or_completed_cycle",
                 target.RunId, target.ProgramId);
         }
+        if (validStart)
+        {
+            try
+            {
+                await SqliteProductionRunReadinessRepository.EnsureAsync(connection, transaction,
+                    target.RunId, token, physicalProduction: true);
+            }
+            catch (ProductionRunStateException blocked)
+            {
+                // Raw DPRNT evidence remains in the connection log. Do not publish a production
+                // transition for missing prerequisites; an end of an already accepted cycle is
+                // still retained/accounted as physical evidence, even if readiness later changes.
+                await transaction.RollbackAsync(token);
+                return new(false, false, false, blocked.Code, target.RunId, target.ProgramId);
+            }
+        }
         if (validStart && target.RunStatus == "PLANNED")
             await StartConnectedProductionAsync(connection, transaction, target,
                 observation.MachineId, timeProvider.GetUtcNow().ToUniversalTime(), token);

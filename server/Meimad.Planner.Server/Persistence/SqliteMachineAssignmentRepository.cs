@@ -559,11 +559,19 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         OperationPauseReason? pauseReason,
         DateTimeOffset now,
         EditAuthority editAuthority,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, string? readinessStamp = null)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
         var pausedBy = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        if (action == BatchOperationExecutionAction.Start && readinessStamp is not null)
+        {
+            var observed = await SqliteProductionReadinessContextReader.ReadAsync(connection, transaction, batchOperationId, cancellationToken)
+                ?? throw new BatchOperationNotFoundException(batchOperationId);
+            var current = ProductionReadinessEvaluator.Evaluate(observed).Actions!.Single(x => x.Action == "RunStart");
+            if (current.ContextStamp != readinessStamp)
+                throw new ProductionReadinessException("production_readiness_changed", "Readiness changed. Refresh the operation and review its prerequisites before retrying.");
+        }
         var result = await ApplyExecutionAsync(
             connection, transaction, pausedBy, batchOperationId, action, pauseReason, now, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -625,8 +633,11 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         if (status != ManualWorkflowStatuses.ReadyForSetup && execution.Status is "not_started" or "suspended")
         {
             await ApplyExecutionAsync(connection, transaction, actor, batchOperationId,
-                BatchOperationExecutionAction.Start, null, now, cancellationToken);
+                BatchOperationExecutionAction.Start, null, now, cancellationToken,
+                status == ManualWorkflowStatuses.InProduction ? ProductionAction.RecordProduction : ProductionAction.RecordSetupStart);
         }
+        if (status == ManualWorkflowStatuses.InProduction)
+            await EnsurePhysicalProductionAsync(connection, transaction, batchOperationId, cancellationToken);
         var eventType = ManualWorkflowStatuses.EventType(status);
         var appended = await SqliteMachineWorkflowReporting.AppendAsync(connection, transaction, runId, execution.MachineId,
             eventType, actor, new { reportedStatus = status, previousStatus = previous }, now, cancellationToken);
@@ -711,6 +722,8 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             throw new ManualWorkflowStatusException("quantity_not_whole_cycles",
                 $"Each program cycle makes {perCycle} parts, so the machined parts must be a multiple of {perCycle}.");
 
+        await EnsurePhysicalProductionAsync(connection, transaction, batchOperationId, cancellationToken);
+
         await using (var update = connection.CreateCommand())
         {
             update.Transaction = transaction;
@@ -751,7 +764,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         BatchOperationExecutionAction action,
         OperationPauseReason? pauseReason,
         DateTimeOffset now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, ProductionAction readinessAction = ProductionAction.RunStart)
     {
         var execution = await ReadExecutionStateAsync(
             connection, transaction, batchOperationId, cancellationToken)
@@ -804,6 +817,16 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
 
             await EnsureMachineHasNoRunningOperationAsync(
                 connection, transaction, execution.MachineId, batchOperationId, cancellationToken);
+            var readinessContext = await SqliteProductionReadinessContextReader.ReadAsync(connection, transaction,
+                batchOperationId, cancellationToken) ?? throw new BatchOperationNotFoundException(batchOperationId);
+            var prerequisites = ProductionReadinessEvaluator.Evaluate(readinessContext);
+            if (!ProductionActionPolicy.Evaluate(readinessContext, prerequisites, readinessAction).IsAllowed)
+            {
+                var blocker = prerequisites.Components.FirstOrDefault(x => x.IsBlocking
+                    && (readinessAction != ProductionAction.RecordSetupStart || x.Key != ReadinessComponentKeys.Material))
+                    ?? new ReadinessComponent("executionEvidence", "Execution evidence", ReadinessStates.Blocked, "Actual setup/controller evidence is required for this action.", true);
+                throw new ProductionReadinessException(ReadinessErrorCode(readinessContext, blocker), blocker.Message);
+            }
         }
 
         var productionPin = action switch
@@ -814,7 +837,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                     transaction,
                     batchOperationId,
                     now,
-                    cancellationToken),
+                    cancellationToken, readinessAction),
             BatchOperationExecutionAction.Reset => null,
             _ => execution.ProductionPin
         };
@@ -1247,32 +1270,21 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         SqliteTransaction transaction,
         string batchOperationId,
         DateTimeOffset now,
-        CancellationToken token)
+        CancellationToken token, ProductionAction readinessAction = ProductionAction.RunStart)
     {
         var context = await SqliteProductionReadinessContextReader.ReadAsync(
             connection, transaction, batchOperationId, token)
             ?? throw new BatchOperationNotFoundException(batchOperationId);
-        if (context.ActiveProcessRevisionId is null)
-        {
-            // Legacy work does not acquire production release pins, but it still requires
-            // current Batch-level material reconciliation introduced in schema v39.
-            var legacyReadiness = ProductionReadinessEvaluator.Evaluate(context);
-            if (!legacyReadiness.IsReadyForProduction)
-            {
-                var material = legacyReadiness.Components.Single(component =>
-                    component.Key == ReadinessComponentKeys.Material);
-                throw new ProductionReadinessException(
-                    ReadinessErrorCode(context, material), material.Message);
-            }
-            return null;
-        }
-
         var readiness = ProductionReadinessEvaluator.Evaluate(context);
-        if (!readiness.IsReadyForProduction)
+        var decision = ProductionActionPolicy.Evaluate(context, readiness, readinessAction);
+        if (!decision.IsAllowed)
         {
-            var blocker = readiness.Components.First(component => component.IsBlocking);
-            throw new ProductionReadinessException(ReadinessErrorCode(context, blocker), blocker.Message);
+            var blocker = readiness.Components.FirstOrDefault(x => x.IsBlocking
+                && (readinessAction != ProductionAction.RecordSetupStart || x.Key != ReadinessComponentKeys.Material));
+            throw new ProductionReadinessException(blocker is null ? "execution_evidence_required" : ReadinessErrorCode(context, blocker),
+                string.Join(" ", decision.Reasons.Where(x => x.Classification == "BLOCKING").Select(x => x.Message)));
         }
+        if (context.ActiveProcessRevisionId is null) return null;
 
         if (context.MachineAssignmentId is not null
             && context.SelectedGCodeReleaseId is null
@@ -1318,6 +1330,18 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             context.ActiveToolTableReleaseId,
             gcodeHash,
             toolTableHash);
+    }
+
+    private static async Task EnsurePhysicalProductionAsync(SqliteConnection connection, SqliteTransaction transaction,
+        string operationId, CancellationToken token)
+    {
+        var context = await SqliteProductionReadinessContextReader.ReadAsync(connection, transaction, operationId, token)
+            ?? throw new BatchOperationNotFoundException(operationId);
+        var result = ProductionReadinessEvaluator.Evaluate(context);
+        var decision = ProductionActionPolicy.Evaluate(context, result, ProductionAction.RecordProduction);
+        if (!decision.IsAllowed)
+            throw new ProductionReadinessException("production_not_ready",
+                string.Join(" ", decision.Reasons.Where(x => x.Classification == "BLOCKING").Select(x => x.Message)));
     }
 
     private static string ReadinessErrorCode(

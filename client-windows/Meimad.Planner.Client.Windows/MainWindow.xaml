@@ -3,9 +3,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:views="clr-namespace:Meimad.Planner.Client.Windows.Views"
         Title="Meimad Production Planner" Icon="Assets/MeimadPlanner.ico"
-        Width="1380" Height="900" MinWidth="1100" MinHeight="720"
-        Background="{StaticResource CanvasBrush}"
-        Foreground="{StaticResource PrimaryTextBrush}"
+        Width="1540" Height="940" MinWidth="1100" MinHeight="720"
+        Style="{DynamicResource {x:Type Window}}"
+        Background="{DynamicResource CanvasBrush}"
+        Foreground="{DynamicResource PrimaryTextBrush}"
         FontFamily="Segoe UI">
     <Window.InputBindings>
         <KeyBinding Key="Z" Modifiers="Control" Command="{Binding UndoCommand}" />
@@ -19,9 +20,10 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="#18324A" Padding="16,9">
+        <Border Grid.Row="0" Background="{DynamicResource PanelBrush}" Padding="16,9">
             <DockPanel LastChildFill="True">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="ThemeToggle" Content="Light workshop" Click="ThemeToggle_Click" ToolTip="Switch color theme" AutomationProperties.Name="Switch color theme" />
                     <ComboBox x:Name="LanguageSelector" Width="118" Height="30" Margin="0,0,10,0"
                               SelectedValuePath="Tag" SelectionChanged="LanguageSelector_SelectionChanged"
                               ToolTip="Application language" AutomationProperties.Name="Application language">
@@ -56,7 +58,7 @@
 
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
                                 AutomationProperties.Name="Signed-in user">
-                        <TextBlock x:Name="SignedInUserText" Text="{Binding ModeHeadline}" Foreground="White"
+                        <TextBlock x:Name="SignedInUserText" Text="{Binding ModeHeadline}" Foreground="{DynamicResource PrimaryTextBrush}"
                                    VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold">
                             <TextBlock.ToolTip>
                                 <TextBlock Text="{Binding ModeDetail}" TextWrapping="Wrap" MaxWidth="320" />
@@ -75,14 +77,25 @@
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="MEIMAD" Foreground="White" FontSize="17" FontWeight="Bold" />
-                    <TextBlock Text="  PRODUCTION PLANNER" Foreground="White" Opacity="0.72"
+                    <TextBlock Text="MEIMAD" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="17" FontWeight="Bold" />
+                    <TextBlock Text="  PRODUCTION WORKBENCH" Foreground="{DynamicResource PrimaryTextBrush}" Opacity="0.72"
                                FontSize="13" VerticalAlignment="Center" />
                 </StackPanel>
             </DockPanel>
         </Border>
 
-        <TabControl x:Name="WorkspaceTabs" Grid.Row="2" Margin="12,8,12,6">
+        <Border Grid.Row="1" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,10">
+            <DockPanel>
+                <TextBlock Text="Factory workspace" Foreground="{DynamicResource MutedTextBrush}" Width="174" VerticalAlignment="Center" />
+                <WrapPanel>
+                    <Button Content="Shop" Tag="1" Click="Workspace_Click" ToolTip="Open the Machine Planning Board and unassigned operation Pool" />
+                    <Button Content="Preparation" Tag="6" Click="Workspace_Click" ToolTip="View assigned operations waiting for a valid current NC release" />
+                    <Button Content="Operation" Tag="0" Click="Workspace_Click" ToolTip="Open Case" />
+                    <Button Content="Integrations" Tag="4" Click="Workspace_Click" ToolTip="Open application and production setup" />
+                </WrapPanel>
+            </DockPanel>
+        </Border>
+        <TabControl x:Name="WorkspaceTabs" Grid.Row="2" Margin="0" Style="{StaticResource WorkbenchNavigation}">
             <TabItem Header="Cases">
                 <views:CaseWorkspaceView DataContext="{Binding CaseWorkspace}" Margin="5" />
             </TabItem>
@@ -105,7 +118,7 @@
                             <Image Source="{StaticResource TimelineButtonIcon}" Width="24" Height="24" />
                         </Button>
                         <TextBlock Text="The Timeline is read-only and refreshes from committed Server state."
-                                   Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                   Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" />
                     </DockPanel>
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <views:TimelineView x:Name="MainTimelineView" DataContext="{Binding Timeline}" />
@@ -116,8 +129,8 @@
                 <views:ShiftRosterView DataContext="{Binding ShiftRoster}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="Open application and production setup">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource SettingsButtonIcon}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Setup" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
-                <views:SetupView DataContext="{Binding Setup}" Margin="5" />
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource SettingsButtonIcon}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Administration" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <views:SetupView x:Name="AdministrationView" DataContext="{Binding Setup}" Margin="5" />
             </TabItem>
             <TabItem Header="User Terminals" ToolTip="Monitor and configure E-Ink tablets">
                 <views:UserTerminalsView DataContext="{Binding UserTerminals}" Margin="5" />
@@ -159,12 +172,12 @@
             </TabItem>
         </TabControl>
 
-        <Border Grid.Row="3" Background="#E7EBEF" Padding="14,5">
+        <Border Grid.Row="3" Background="{DynamicResource RaisedBrush}" Padding="14,5">
             <DockPanel>
-                <TextBlock DockPanel.Dock="Right" Text="No direct database access"
-                           FontWeight="SemiBold" Foreground="{StaticResource GreenBrush}" />
-                <TextBlock Text="Status and the separate Timeline refresh while the Server is available."
-                           Foreground="{StaticResource MutedTextBrush}" />
+                <TextBlock DockPanel.Dock="Right" Text="{Binding HealthHeadline}"
+                           FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
+                <TextBlock Text="{Binding HealthDetail}"
+                           Foreground="{DynamicResource MutedTextBrush}" />
             </DockPanel>
         </Border>
     </Grid>

@@ -19,6 +19,41 @@ public sealed class ManualWorkflowStatusApiTests
     private const string Status = "/api/v1/batch-operations/operation-package/workflow-status";
 
     [Fact]
+    public async Task Supported_manual_setup_can_precede_material_but_physical_production_cannot()
+    {
+        await using var server = await ToolPreparationApiTests.TestServer.StartAsync(verificationEnabled: false);
+        await ReportAsync(server.Client, "IN_SETUP_RUN");
+        using var production = await server.Client.PostAsJsonAsync(Status, new { status = "IN_PRODUCTION" });
+        Assert.Equal(HttpStatusCode.Conflict, production.StatusCode);
+        Assert.Contains("production_not_ready", await production.Content.ReadAsStringAsync());
+        Assert.Equal(0L, await server.ScalarAsync("SELECT COUNT(*) FROM production_run_workflow_events WHERE event_type='PRODUCTION_SESSION_OPENED';"));
+        await ReserveMaterialAsync(server);
+        await ReportAsync(server.Client, "IN_PRODUCTION");
+    }
+
+    [Theory]
+    [InlineData("UPDATE machines SET usable_tool_positions=19 WHERE id='machine-package';")]
+    [InlineData("UPDATE batch_operations SET version=version+1 WHERE id='operation-package';")]
+    [InlineData("UPDATE machine_assignments SET version=version+1 WHERE id='assignment-package';")]
+    public async Task Operation_start_rejects_a_stale_readiness_stamp_even_if_run_version_is_unchanged(string change)
+    {
+        await using var server = await ToolPreparationApiTests.TestServer.StartAsync(verificationEnabled: false);
+        await ReserveMaterialAsync(server);
+        using var response = await server.Client.GetAsync("/api/v1/batch-operations/operation-package/readiness");
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var stamp = document.RootElement.GetProperty("actions").EnumerateArray()
+            .Single(x => x.GetProperty("action").GetString() == "RunStart").GetProperty("contextStamp").GetString();
+        await server.ExecuteAsync(change);
+        using var start = new HttpRequestMessage(HttpMethod.Post, "/api/v1/batch-operations/operation-package/start");
+        start.Headers.Add("If-Readiness-Match", stamp);
+        using var result = await server.Client.SendAsync(start);
+        Assert.Equal(HttpStatusCode.Conflict, result.StatusCode);
+        Assert.Contains("production_readiness_changed", await result.Content.ReadAsStringAsync());
+        Assert.Equal("not_started", await server.ScalarAsync("SELECT status FROM batch_operations WHERE id='operation-package';"));
+    }
+
+    [Fact]
     public async Task Reported_statuses_become_workflow_events_that_the_tablet_qc_queue_board_and_statistics_use()
     {
         await using var server = await ToolPreparationApiTests.TestServer.StartAsync(verificationEnabled: false);
@@ -128,10 +163,10 @@ public sealed class ManualWorkflowStatusApiTests
             VALUES ('offset-verified', 'run:batch-operation:operation-package', 'machine-package', 'gcode-1', 'tools-1',
                 4242, '2026-09-01T08:00:00Z', 'test');
             INSERT INTO production_packages (
-                id, batch_operation_id, machine_assignment_id, machine_id, tool_table_release_id, offset_loader_release_id,
+                id, batch_operation_id, machine_assignment_id, machine_id, tool_table_release_id, offset_loader_release_id, production_run_id,
                 execution_mode, verification_enabled, verification_configuration_version, verification_macro_version,
                 manifest_relative_path, manifest_hash, created_at, created_by)
-            VALUES ('package-verified', 'operation-package', 'assignment-package', 'machine-package', 'tools-1', 'offset-verified',
+            VALUES ('package-verified', 'operation-package', 'assignment-package', 'machine-package', 'tools-1', 'offset-verified', 'run:batch-operation:operation-package',
                 'CNC_GCODE', 1, 1, 10, 'package-verified/manifest.json',
                 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-09-01T08:00:00Z', 'test');
             INSERT INTO production_package_current (batch_operation_id, machine_id, production_package_id, activated_at)

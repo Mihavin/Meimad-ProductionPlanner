@@ -54,7 +54,7 @@ internal static class SqliteSetupRestart
             JOIN production_runs run
               ON run.legacy_batch_operation_id = operation.id AND run.status IN ('IN_PROGRESS', 'SUSPENDED')
             JOIN machine_assignments assignment
-              ON assignment.batch_operation_id = operation.id AND assignment.released_at IS NULL
+              ON assignment.production_run_id = run.id AND assignment.released_at IS NULL
             JOIN machines machine ON machine.id = assignment.machine_id
             JOIN gcode_releases pinned ON pinned.id = operation.production_gcode_release_id
             JOIN postprocessors postprocessor ON postprocessor.id = pinned.postprocessor_id
@@ -86,6 +86,19 @@ internal static class SqliteSetupRestart
                 $"{postprocessor} r{revision.ToString(CultureInfo.InvariantCulture)}",
                 newest > revision ? $"{postprocessor} r{newest.ToString(CultureInfo.InvariantCulture)}" : null,
                 reader.GetInt64(9) == 1));
+        }
+        await reader.DisposeAsync();
+        foreach (var candidate in candidates)
+        {
+            var runContexts = (await SqliteProductionPackageContext.ListAsync(connection, transaction, null, cancellationToken))
+                .Where(row => row.ProductionRunId == candidate.ProductionRunId).ToArray();
+            if (runContexts.Length > 1)
+                throw new Application.ProductionPackages.ProductionPackageBuildException("production_package_context_ambiguous",
+                    "Work Order setup restart requires one live program/output. Review the multi-output Run before restarting setup.");
+            var exact = await SqliteProductionPackageContext.ResolveAsync(connection, transaction, candidate.BatchOperationId, null, cancellationToken);
+            if (exact is null || exact.ProductionRunId != candidate.ProductionRunId || exact.MachineId != candidate.MachineId)
+                throw new Application.ProductionPackages.ProductionPackageBuildException("production_package_context_changed",
+                    "The setup restart assignment changed; refresh the Work Order.");
         }
         return candidates;
     }
@@ -127,7 +140,9 @@ internal static class SqliteSetupRestart
         await using (var current = connection.CreateCommand())
         {
             current.Transaction = transaction;
-            current.CommandText = "SELECT production_package_id FROM production_package_current WHERE batch_operation_id = $operationId;";
+            current.CommandText = "SELECT current.production_package_id FROM production_package_current current JOIN production_packages package ON package.id=current.production_package_id WHERE current.batch_operation_id=$operationId AND package.production_run_id=$runId AND package.machine_id=$machineId;";
+            current.Parameters.AddWithValue("$runId", candidate.ProductionRunId);
+            current.Parameters.AddWithValue("$machineId", candidate.MachineId);
             current.Parameters.AddWithValue("$operationId", candidate.BatchOperationId);
             packageId = await current.ExecuteScalarAsync(cancellationToken) as string;
         }
@@ -155,12 +170,14 @@ internal static class SqliteSetupRestart
                 INSERT OR IGNORE INTO production_package_invalidations (
                     id, production_package_id, replacement_package_id, reason, invalidated_at)
                 SELECT $invalidationId, $packageId, NULL, 'NC_RELEASE_REPLACED', $at WHERE $packageId IS NOT NULL;
-                DELETE FROM production_package_current WHERE batch_operation_id = $operationId;
+                DELETE FROM production_package_current WHERE batch_operation_id = $operationId AND production_package_id=$packageId;
+                DELETE FROM production_package_context_current WHERE machine_assignment_id IN
+                    (SELECT id FROM machine_assignments WHERE production_run_id=$runId AND machine_id=$machineId);
 
                 -- The release is chosen again: the newest compatible one, or the planner's selection.
                 UPDATE machine_assignments
                 SET selected_gcode_release_id = NULL, version = version + 1, updated_at = $at
-                WHERE batch_operation_id = $operationId AND released_at IS NULL
+                WHERE production_run_id = $runId AND machine_id=$machineId AND released_at IS NULL
                   AND selected_gcode_release_id IS NOT NULL;
 
                 INSERT INTO batch_operation_setup_restarts (
@@ -230,9 +247,11 @@ internal static class SqliteSetupRestart
         command.Transaction = transaction;
         command.CommandText = """
             SELECT production_run_id FROM batch_operation_setup_restarts
-            WHERE batch_operation_id = $operationId AND resolved_at IS NULL;
+            WHERE batch_operation_id = $operationId AND resolved_at IS NULL
+              AND production_run_id=(SELECT production_run_id FROM machine_assignments WHERE id=$assignmentId AND released_at IS NULL);
             """;
         command.Parameters.AddWithValue("$operationId", batchOperationId);
+        command.Parameters.AddWithValue("$assignmentId", machineAssignmentId);
         if (await command.ExecuteScalarAsync(cancellationToken) is not string runId) return;
 
         command.CommandText = """
@@ -252,11 +271,11 @@ internal static class SqliteSetupRestart
             WHERE id = $assignmentId AND selected_gcode_release_id IS NOT $releaseId;
             UPDATE batch_operation_setup_restarts
             SET resolved_at = $at, resolution = 'NEW_PACKAGE', resolved_package_id = $packageId
-            WHERE batch_operation_id = $operationId AND resolved_at IS NULL;
+            WHERE batch_operation_id = $operationId AND resolved_at IS NULL
+              AND production_run_id=(SELECT production_run_id FROM machine_assignments WHERE id=$assignmentId AND released_at IS NULL);
             """;
         command.Parameters.AddWithValue("$runId", runId);
         command.Parameters.AddWithValue("$releaseId", gcodeReleaseId);
-        command.Parameters.AddWithValue("$assignmentId", machineAssignmentId);
         command.Parameters.AddWithValue("$packageId", productionPackageId);
         command.Parameters.AddWithValue("$at", Format(createdAt));
         await command.ExecuteNonQueryAsync(cancellationToken);

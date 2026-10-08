@@ -3,6 +3,18 @@ using Meimad.Planner.Server.Domain.ToolPreparations;
 
 namespace Meimad.Planner.Server.Application.ProductionPackages;
 
+internal sealed record ProductionPackageSelection(string MachineAssignmentId, string ProductionRunId,
+    string ProductionRunProgramId, string ProductionRunOutputId, string? ContextStamp = null);
+
+internal sealed record ProductionPackageContext(string MachineAssignmentId, string ProductionRunId,
+    string ProductionRunProgramId, string ProductionRunOutputId, string BatchOperationId, string MachineId,
+    string? ProcessRevisionId, string ContextStamp, int TargetQuantity, int ProgramNumber = 1,
+    string? OutputAllocationStamp = null)
+{
+    internal ProductionPackageSelection Selection => new(MachineAssignmentId, ProductionRunId,
+        ProductionRunProgramId, ProductionRunOutputId, ContextStamp);
+}
+
 internal static class ProductionPackageArtifactTypes
 {
     internal const string RunnableNc = "RUNNABLE_NC";
@@ -69,7 +81,10 @@ internal sealed record ProductionPackageBuildContext(
     IReadOnlyList<ToolPreparationReleasedTool>? ReleasedTools = null,
     ToolPreparation? ToolPreparation = null,
     ProductionPackagePartCounting? PartCounting = null,
-    IReadOnlyList<ProductionPackageSubprogramSource>? Subprograms = null);
+    IReadOnlyList<ProductionPackageSubprogramSource>? Subprograms = null,
+    ProductionPackageContext? Context = null,
+    long PublicationVersion = 0,
+    string? CurrentOffsetLoaderStamp = null);
 
 /// <summary>A subprogram file of the package's NC release (schema v88).</summary>
 internal sealed record ProductionPackageSubprogramSource(
@@ -110,7 +125,8 @@ internal sealed record ProductionPackageRecord(
     bool DirectTransferConfigured,
     bool DirectTransferOnline,
     IReadOnlyList<ProductionPackageArtifact> Artifacts,
-    string? ToolPreparationId = null);
+    string? ToolPreparationId = null,
+    ProductionPackageContext? Context = null);
 
 internal sealed record OffsetLoaderPublication(
     string ReleaseId,
@@ -119,18 +135,24 @@ internal sealed record OffsetLoaderPublication(
 
 internal interface IProductionPackageRepository
 {
+    Task<ProductionPackageRecord?> ReadRequestAsync(ProductionPackageRequest request, CancellationToken token);
+    Task<bool> IsReferencedAsync(string packageId, CancellationToken token);
+    Task<ProductionPackageRecord> PublishAsync(ProductionPackageRecord package, OffsetLoaderPublication? loader,
+        ProductionPackageBuildContext observed, ProductionPackageRequest? request, CancellationToken token);
+    Task<ProductionPackageRecord?> ReadHistoricalAsync(string packageId, CancellationToken token) => Task.FromResult<ProductionPackageRecord?>(null);
     Task<ProductionPackageBuildContext?> ReadBuildContextAsync(
         string batchOperationId,
         CancellationToken cancellationToken);
 
-    Task<int> AllocatePackageNumberAsync(CancellationToken cancellationToken);
+    Task<ProductionPackageBuildContext?> ReadBuildContextAsync(string batchOperationId,
+        ProductionPackageSelection? selection, CancellationToken cancellationToken) => selection is null ? ReadBuildContextAsync(batchOperationId, cancellationToken) : throw new NotSupportedException();
 
-    Task ActivateAsync(
-        ProductionPackageRecord package,
-        OffsetLoaderPublication? offsetLoader,
-        CancellationToken cancellationToken);
+    Task<int> AllocatePackageNumberAsync(CancellationToken cancellationToken);
 
     Task<ProductionPackageRecord?> ReadCurrentAsync(
         string batchOperationId,
         CancellationToken cancellationToken);
+
+    Task<ProductionPackageRecord?> ReadCurrentAsync(string batchOperationId,
+        ProductionPackageSelection? selection, CancellationToken cancellationToken) => selection is null ? ReadCurrentAsync(batchOperationId, cancellationToken) : throw new NotSupportedException();
 }

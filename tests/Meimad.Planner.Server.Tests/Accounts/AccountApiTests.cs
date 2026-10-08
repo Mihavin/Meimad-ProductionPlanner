@@ -25,6 +25,13 @@ public sealed class AccountApiTests
             using var cases = await client.GetAsync("/api/v1/cases");
             Assert.Equal(HttpStatusCode.Unauthorized, cases.StatusCode);
             Assert.Equal("sign_in_required", await CodeAsync(cases));
+            foreach (var path in new[] { "/api/v1/production-packages/history", "/api/v1/production-packages/history/artifacts/file" })
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, path);
+                request.Headers.Add("X-Meimad-Tablet-Id", "tablet-1");
+                using var denied = await client.SendAsync(request);
+                Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
+            }
             // The read-only TV dashboard keeps working without an account.
             using var dashboard = await client.GetAsync("/api/v1/tv-dashboard");
             Assert.NotEqual(HttpStatusCode.Unauthorized, dashboard.StatusCode);

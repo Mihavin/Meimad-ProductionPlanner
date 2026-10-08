@@ -179,7 +179,8 @@ internal static class ProductionRunEndpoints
     }
 
     private static Task<IResult> StartAsync(string runId, HttpContext context, ProductionRunExecutionService service, CancellationToken token) =>
-        ExecuteAsync(runId, context, (version, authority) => service.StartAsync(runId, version, authority, token));
+        ExecuteAsync(runId, context, (version, authority) => service.StartAsync(runId, version, authority, token,
+            context.Request.Headers.TryGetValue("If-Readiness-Match", out var stamp) ? stamp.ToString() : null));
     private static Task<IResult> ActivateProgramAsync(string runId, string programId, HttpContext context, ProductionRunExecutionService service, CancellationToken token) =>
         ExecuteAsync(runId, context, (version, authority) => service.ActivateProgramAsync(runId, programId, version, authority, token));
     private static async Task<IResult> RecordCycleAsync(string runId, string programId, RecordProductionRunCycleRequest request, HttpContext context, ProductionRunExecutionService service, CancellationToken token)

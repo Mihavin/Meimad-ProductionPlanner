@@ -6,6 +6,20 @@ internal static class ProductionReadinessEvaluator
 {
     internal static ProductionReadinessResult Evaluate(ProductionReadinessContext context)
     {
+        var result = EvaluateCore(context);
+        if (context.AmbiguousExecutionContext)
+            result = result with { IsReadyForProduction = false, OverallState = OverallReadinessStates.NotReady,
+                Components = [.. result.Components, new("executionContext", "Execution context", ReadinessStates.Blocked,
+                    "This Operation has multiple live assignments. Select an exact Run/program/output action instead.", true)] };
+        return result with { Actions = Enum.GetValues<ProductionAction>()
+            .Select(action => action == ProductionAction.CreatePackage
+                ? ProductionActionPolicy.Evaluate(context with { ToolOffsetMode = "MEASURED" },
+                    EvaluateCore(context with { ToolOffsetMode = "MEASURED" }), action)
+                : ProductionActionPolicy.Evaluate(context, result, action)).ToArray() };
+    }
+
+    private static ProductionReadinessResult EvaluateCore(ProductionReadinessContext context)
+    {
         if (context.ActiveProcessRevisionId is null)
             return EvaluateLegacy(context);
 
@@ -256,6 +270,12 @@ internal static class ProductionReadinessEvaluator
         ReadinessRelease? effectiveRelease,
         ICollection<ReadinessComponent> components)
     {
+        if (context.ToolOffsetMode == "MANUAL_DUMMY")
+        {
+            components.Add(Component(ReadinessComponentKeys.ToolOffsets, "Tool Offsets", ReadinessStates.NotRequired,
+                "The exact current package uses Manual / Dummy Tool Offsets. The setupist enters real offsets; required loader verification remains separate."));
+            return;
+        }
         if (context.RequiredToolCount == 0)
         {
             components.Add(Component(ReadinessComponentKeys.ToolOffsets, "Tool Offsets",

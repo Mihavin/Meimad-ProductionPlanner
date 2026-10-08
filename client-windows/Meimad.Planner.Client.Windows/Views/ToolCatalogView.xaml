@@ -12,8 +12,8 @@
       <Setter Property="Margin" Value="0,0,10,8" />
     </Style>
     <Style x:Key="CatalogSection" TargetType="Border">
-      <Setter Property="Background" Value="White" />
-      <Setter Property="BorderBrush" Value="#D8DDE3" />
+      <Setter Property="Background" Value="{DynamicResource PanelBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="4" />
       <Setter Property="Padding" Value="14" />
@@ -69,7 +69,7 @@
             <DataGridTextColumn Header="State" Binding="{Binding ActiveText}" Width="70" />
           </DataGrid.Columns>
         </DataGrid>
-        <TextBlock Grid.Row="3" Text="{Binding Status}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
+        <TextBlock Grid.Row="3" Text="{Binding Status}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
       </Grid>
     </Border>
 
@@ -81,7 +81,7 @@
           <TextBlock Text="{Binding Heading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10" />
           <StackPanel Style="{StaticResource CatalogField}">
             <TextBlock Text="Internal id" Style="{StaticResource CatalogFieldLabel}" />
-            <TextBlock Text="{Binding InternalCode}" Foreground="{StaticResource MutedTextBrush}" />
+            <TextBlock Text="{Binding InternalCode}" Foreground="{DynamicResource MutedTextBrush}" />
           </StackPanel>
           <StackPanel Style="{StaticResource CatalogField}">
             <TextBlock Text="Name" Style="{StaticResource CatalogFieldLabel}" />
@@ -162,7 +162,7 @@
                     IsEnabled="{Binding DataContext.DeleteCommand.CanExecute, RelativeSource={RelativeSource AncestorType=UserControl}, Mode=OneWay, FallbackValue=False}" />
           </StackPanel>
           <TextBlock Text="A tool that a Tool Room preparation refers to cannot be deleted; make it inactive instead. The catalog describes tools; it keeps no stock quantities."
-                     Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                     Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
         </StackPanel>
       </ScrollViewer>
     </Border>

@@ -13,8 +13,9 @@ internal sealed class ProductionPackageService(
     IProductionPackageRepository repository,
     ProductionPackageOptions options,
     GCodeArtifactStore releaseStore,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider, ProductionPackageFiles? fileSystem = null)
 {
+    private readonly ProductionPackageFiles files = fileSystem ?? new();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
@@ -24,15 +25,18 @@ internal sealed class ProductionPackageService(
         string batchOperationId,
         string createdBy,
         string toolOffsetMode = "MEASURED",
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, ProductionPackageSelection? selection = null, string? requestId = null)
     {
         var operationId = Required(batchOperationId, "batchOperationId");
         var actor = Required(createdBy, "createdBy");
-        var context = await repository.ReadBuildContextAsync(operationId, cancellationToken)
+        var offsetMode = NormalizeOffsetMode(toolOffsetMode);
+        var request = ProductionPackageRequest.Create(actor, requestId, operationId, offsetMode, selection);
+        if (request is not null && await repository.ReadRequestAsync(request, cancellationToken) is { } replay)
+            return replay;
+        var context = await repository.ReadBuildContextAsync(operationId, selection, cancellationToken)
             ?? throw new ProductionPackageBuildException(
                 "production_package_operation_not_found",
                 "The assigned Operation was not found.");
-        var offsetMode = NormalizeOffsetMode(toolOffsetMode);
         ValidatePrerequisites(context, offsetMode);
         // MEASURED: the Tool Room's saved measurements of every required tool become the package's
         // offset payload; the control writes them from the Offset Loader (or a separate offset
@@ -58,6 +62,7 @@ internal sealed class ProductionPackageService(
         var final = ResolveChild(root, packageId);
         Directory.CreateDirectory(staging);
         var moved = false;
+        var guardedFiles = new List<Stream>();
         try
         {
             var artifacts = new List<ProductionPackageArtifact>();
@@ -210,7 +215,8 @@ internal sealed class ProductionPackageService(
             var manifestRelative = $"{packageId}/manifest.json";
             var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(new
             {
-                schemaVersion = 2,
+                schemaVersion = 3,
+                context = context.Context,
                 placeholderProtocolVersion,
                 productionPackageId = packageId,
                 productionPackageNumber = packageNumber,
@@ -279,7 +285,7 @@ internal sealed class ProductionPackageService(
                 "manifest.json", manifestBytes, null, cancellationToken);
             artifacts.Add(manifest);
 
-            Directory.Move(staging, final);
+            files.Move(staging, final);
             moved = true;
             var record = new ProductionPackageRecord(
                 packageId, packageNumber, context.BatchOperationId, context.ProductionRunId,
@@ -290,31 +296,62 @@ internal sealed class ProductionPackageService(
                 context.Verification?.ExpectedMacroVersion, manifestRelative, manifest.FileHash,
                 createdAt, actor, context.CurrentPackageId,
                 context.DirectTransferConfigured, context.DirectTransferOnline, artifacts,
-                offsetMode == "MEASURED" ? context.ToolPreparation?.ToolPreparationId : null);
+                offsetMode == "MEASURED" ? context.ToolPreparation?.ToolPreparationId : null, context.Context);
             var loaderPublication = offsetLoaderId is null ? null : new OffsetLoaderPublication(
                 offsetLoaderId, releaseToken!.Value,
                 artifacts.Single(value => value.ArtifactType == ProductionPackageArtifactTypes.OffsetLoader).FileHash);
-            await repository.ActivateAsync(record, loaderPublication, cancellationToken);
-            return record;
+            // Re-read every generated file after staging and hold read-only handles until the
+            // transaction finishes. On Windows these handles deny writes/deletion during publication.
+            foreach (var artifact in artifacts)
+            {
+                var stream = files.OpenForPublication(ResolveChild(root, artifact.StoredRelativePath));
+                guardedFiles.Add(stream);
+                var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, cancellationToken));
+                if (stream.Length != artifact.FileSize || hash != artifact.FileHash)
+                    throw new ProductionPackageBuildException("production_package_staged_corrupt",
+                        "A generated artifact failed checksum verification; no package was activated.");
+            }
+            var published = await repository.PublishAsync(record, loaderPublication, context, request, cancellationToken);
+            foreach (var stream in guardedFiles) stream.Dispose();
+            guardedFiles.Clear();
+            if (published.ProductionPackageId != packageId) await DeleteIfUnreferencedAsync(packageId, final);
+            return published;
         }
         catch
         {
-            DeleteDirectory(moved ? final : staging);
+            foreach (var stream in guardedFiles) stream.Dispose();
+            guardedFiles.Clear();
+            if (moved) await DeleteIfUnreferencedAsync(packageId, final);
+            else DeleteDirectory(staging);
             throw;
         }
     }
 
+    private async Task DeleteIfUnreferencedAsync(string packageId, string directory)
+    {
+        try
+        {
+            // Cancellation or an I/O error around COMMIT is not proof of rollback. Preserve
+            // artifacts whenever the database cannot establish that they are unreferenced.
+            if (!await repository.IsReferencedAsync(packageId, CancellationToken.None)) DeleteDirectory(directory);
+        }
+        catch (Exception) { /* Retained for D04 reconciliation; never risk a committed package. */ }
+    }
+
     internal Task<ProductionPackageRecord?> ReadCurrentAsync(
         string batchOperationId,
-        CancellationToken cancellationToken = default) =>
-        repository.ReadCurrentAsync(Required(batchOperationId, "batchOperationId"), cancellationToken);
+        CancellationToken cancellationToken = default, ProductionPackageSelection? selection = null) =>
+        repository.ReadCurrentAsync(Required(batchOperationId, "batchOperationId"), selection, cancellationToken);
+
+    internal Task<ProductionPackageRecord?> ReadHistoricalAsync(string packageId, CancellationToken token) => repository.ReadHistoricalAsync(packageId,token);
 
     internal async Task<(string Path, string FileName, string Hash)?> OpenCurrentArtifactAsync(
         string batchOperationId,
         string artifactId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, ProductionPackageSelection? selection = null, string? historicalPackageId = null)
     {
-        var package = await ReadCurrentAsync(batchOperationId, cancellationToken);
+        var package = historicalPackageId is null ? await ReadCurrentAsync(batchOperationId, cancellationToken, selection)
+            : await repository.ReadHistoricalAsync(historicalPackageId,cancellationToken);
         var artifact = package?.Artifacts.SingleOrDefault(value => value.ArtifactId == artifactId);
         if (artifact is null) return null;
         var path = ResolveChild(Path.GetFullPath(options.ResolvedPackageRoot), artifact.StoredRelativePath);
@@ -333,25 +370,19 @@ internal sealed class ProductionPackageService(
 
     private static void ValidatePrerequisites(ProductionPackageBuildContext context, string offsetMode)
     {
-        var readiness = ProductionReadinessEvaluator.Evaluate(context.ReadinessContext);
-        var requiredKeys = offsetMode == "MANUAL_DUMMY"
-            ? (context.ExecutionMode == "MANUAL" ? Array.Empty<string>() :
-                new[] { ReadinessComponentKeys.GCode, ReadinessComponentKeys.MachinePostprocessorCompatibility,
-                    ReadinessComponentKeys.ToolCapacity })
-            : context.ExecutionMode == "MANUAL"
-            ? new[] { ReadinessComponentKeys.ToolTable, ReadinessComponentKeys.ToolCapacity, ReadinessComponentKeys.ToolOffsets }
-            : new[] { ReadinessComponentKeys.GCode, ReadinessComponentKeys.MachinePostprocessorCompatibility,
-                ReadinessComponentKeys.ToolTable, ReadinessComponentKeys.ToolCapacity, ReadinessComponentKeys.ToolOffsets };
-        // An operation back in setup for a newer G-code release is not ready until this package pins
-        // the new release, so its G-code only has to resolve to a release the package can take.
-        var setupRestartResolved = context.ReadinessContext.ReplacedGCodeReleaseId is not null
-            && readiness.EffectiveGCodeReleaseId is not null;
-        var missing = readiness.Components
-            .Where(value => requiredKeys.Contains(value.Key, StringComparer.Ordinal)
-                && !(setupRestartResolved && value.Key == ReadinessComponentKeys.GCode)
-                && (value.IsBlocking || value.State is not (ReadinessStates.Ready or ReadinessStates.NotRequired)))
-            .Select(value => $"{value.Label}: {value.Message}")
-            .ToArray();
+        var readiness = ProductionReadinessEvaluator.Evaluate(context.ReadinessContext with { ToolOffsetMode = offsetMode });
+        var decision = ProductionActionPolicy.Evaluate(context.ReadinessContext with { ToolOffsetMode = offsetMode }, readiness,
+            ProductionAction.CreatePackage, offsetMode);
+        if (decision.Reasons.Any(x => x.Code == "tool_measurements_missing")
+            && !decision.Reasons.Any(x => x.Classification == "BLOCKING" && x.Code != "tool_measurements_missing"))
+        {
+            // Preserve the precise missing-tool identifiers and the established error contract.
+            _ = RequireMeasuredOffsets(context);
+            throw new ProductionPackageBuildException("production_package_tool_measurements_missing",
+                "Tool Room measurements are missing or incomplete for this Machine and Tool Table release.");
+        }
+        var missing = decision.Reasons.Where(x => x.Classification == "BLOCKING")
+            .Select(x => x.RequiredEvidence + ": " + x.Message).ToArray();
         if (missing.Length > 0)
             throw new ProductionPackageBuildException(
                 "production_package_prerequisites_not_ready",
@@ -513,7 +544,7 @@ internal sealed class ProductionPackageService(
                 $"Artifact '{logicalPath}' is empty or exceeds the configured limit.");
         var path = ResolveChild(staging, logicalPath.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await File.WriteAllBytesAsync(path, bytes, token);
+        await files.WriteAsync(path, bytes, token);
         var hash = Convert.ToHexStringLower(SHA256.HashData(bytes));
         var actual = Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(path, token)));
         if (actual != hash)

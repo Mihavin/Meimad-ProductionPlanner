@@ -39,7 +39,9 @@ internal sealed record PreparationQueueItem(
     string WorkflowStatus,
     IReadOnlyList<PreparationReadinessFact> ReadinessFacts,
     string? CaseId = null,
-    string? CaseOperationId = null);
+    string? CaseOperationId = null,
+    ProductionPackages.ProductionPackageContext? Context = null,
+    string? RecipeCaseId = null, string? RecipeCaseOperationId = null);
 
 internal sealed record PreparationQueueSource(
     string BatchOperationId,
@@ -57,7 +59,9 @@ internal sealed record PreparationQueueSource(
     ProductionReadinessContext ReadinessContext,
     bool HasCurrentValidProductionPackage = false,
     string? CaseId = null,
-    string? CaseOperationId = null);
+    string? CaseOperationId = null,
+    ProductionPackages.ProductionPackageContext? Context = null,
+    string? RecipeCaseId = null, string? RecipeCaseOperationId = null);
 
 internal interface IPreparationQueueRepository
 {
@@ -197,7 +201,7 @@ internal static class PreparationQueueProjector
             workflowStatus,
             facts.ToArray(),
             source.CaseId,
-            source.CaseOperationId);
+            source.CaseOperationId, source.Context, source.RecipeCaseId, source.RecipeCaseOperationId);
     }
 
     private static bool GateSatisfied(ProductionReadinessResult readiness, IEnumerable<string> keys) =>

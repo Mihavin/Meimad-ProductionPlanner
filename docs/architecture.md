@@ -1,5 +1,31 @@
 # Architecture
 
+## C07 ERP comparison boundary
+
+The existing four-field Kitaron push carries typed expected ERP values from read to write. Read-committed preview queries omit NOLOCK. The writer acquires update/range locks on each target Work Order and its operation rows in a Serializable transaction, validates identity, unique matching, current open status and exact mapped values, then updates all changed fields of the row. Locks remain until the whole push commits; a failed comparison rolls back all independent items too. Direct update counts use OUTPUT INTO and an output parameter, independent of AFTER-trigger counts. Enabled INSTEAD OF triggers are unsupported and refused. No SQL Server database option is enabled by this change.
+
+The optional preview stamp binds a displayed preview to the next manual request; Windows carries it without calculating ERP rules. An unstamped run still constructs its own fresh plan and validates its expected values at commit. The existing owner-approved SQL connector/login is unchanged. Import-only installations should retain a read-only SQL role: ApplicationIntent.ReadOnly alone is not authorization. No vendor-approved integration API has been established by this change; the existing direct SQL path and factory triggers require isolated acceptance. C08 owns durable intent and ambiguous commit reconciliation.
+
+
+## C05 shared readiness core
+
+`ProductionActionPolicy` classifies the common operation preparation facts by requested action. `SqliteProductionRunReadinessRepository` resolves each program/output against its assigned Machine and recipe in a single read transaction, evaluates the same facts, then aggregates allocation and combined-tool constraints. The Run mutation repository reuses that reader in its write transaction, comparing the observed evidence stamp before publishing Run Start. Windows renders server decisions rather than reconstructing gates. Exact CNC verification remains an independent boundary; starting a Run does not prove setup or physical production. Manual setup reports use the setup action and retain their supported reporting modes. Operation Start revalidates the optional observed stamp and all prerequisites within its mutation transaction, including Resume. CNC cycle starts use the same production decision; ends of previously accepted physical cycles remain factual evidence even after readiness changes. QC and controller verification authorities stay separate. D2 policies were explicitly approved on 2026-10-08: unknown capacity blocks managed work requiring tools (zero-tool work remains allowed), and unmanaged legacy NC/tool-release exemptions remain subject to material readiness and valid execution context.
+
+
+## C04 publication boundary (2026-10-08)
+
+`ProductionPackageService` owns staging and generated-file verification; `ProductionPackageFiles` isolates generated file I/O from read-only source releases. Generation and file hashing remain outside the database write reservation. Before publication the service holds read-only handles to the final files; Windows denies writes/deletion until publication ends. `SqliteProductionPackageRepository.PublishAsync` reconstructs generation inputs on the same connection/transaction used to compare the observed publication stamp and write package, artifacts, context/current pointers, predecessor invalidation, applicable loader and request receipt. A competing publisher replays an identical receipt or receives a conflict; it cannot silently replace an unseen predecessor.
+
+Successful replay comes entirely from the immutable Server receipt and works through a fresh service/repository instance. Windows holds uncertain commands in memory for explicit retry within the same signed-in session. A lost response never justifies deleting committed artifacts: cleanup removes a final directory only after a fresh durable read proves it unreferenced, and retains it if that check fails. Crash-time orphan reconciliation, durable client retry queues, and retention/recovery-set policy are not implemented here. Existing Run/Machine/NC/Offset Loader verification remains separate from package generation.
+
+## C03 package and preparation context (2026-10-08)
+
+`SqliteProductionPackageContext` resolves live assignment -> Run -> program -> output identity and checks recipe/quantity membership. Package construction and preparation reads use exact Machine/process/tool facts; queue metadata, readiness and current-package validation share a SQLite read transaction. The Windows client carries IDs and observed stamps and keys selection by assignment/program/output, without duplicating authority. Schema v99 stores immutable context alongside packages and a current pointer per tuple. Historical inspection is separate from live resolution. Package activation rechecks context in its write transaction; C04 adds publication compare-and-swap and durable request receipts as described above. C05 unifies the action-specific readiness contracts as described above.
+
+C01 timing repair (2026-10-08): schema v98 transactionally normalizes manual timing evidence through an event-insert trigger, with complete paged migration backfill and synchronous sample/session/aggregate diagnostic views. `SqliteOperationTimeMeasurements` reads that durable source; a normalized append checkpoint invalidates its cache even for late-arriving reports. `TimelineProjectionService` no longer performs a separate globally capped timing reconstruction and uses the repository's existing measured-median inputs. See the v98 data-model section for source identity, session boundaries, warnings and rebuild semantics. No background projector, client database access, or new reporting endpoint is introduced.
+
+Windows appearance (2026-10-08): `Themes/ApplicationResources.xaml` composes shared controls and operational resources; `Themes/Workbench.xaml` defines the visual tokens/templates. `WorkbenchTheme` replaces application brush resources on the UI dispatcher, adapts literal neutral brushes in programmatic dialogs once, and stores only `graphite`/`light` in `%LocalAppData%\Meimad Planner\workbench-theme.txt`. Failed preference writes leave the session usable. No Server API or database state is involved. Existing XAML bindings and view models remain authoritative for displayed data and command availability. The NC WebView receives only a fixed theme name through a local script; local CSS overrides avoid modifying the vendored viewer.
+
 Audit repair slice (2026-10-08): schema v97 introduces a Server-owned auxiliary-pin version ledger that survives clear/recreate. Pin eligibility and expected-version checks share the SQLite write transaction; Windows carries the observed stamp and retains selection on conflict. Cycle deduplication validates the persisted immutable target/payload before reading the same Run's current projection. Neither path changes Machine scheduling authority, CNC identity or TV/tablet scope. The approved action-specific readiness/handoff matrix and remaining source-audit findings are tracked in [the implementation plan](implementation-plan.md#audit-handoff-2026-10-08); unified readiness, complete backup sets and local AI remain future implementation work.
 
 The Kitaron connector treats `OrderClosed` as a coded value: `1` is open and `2` is closed. Other recognized Boolean row/header closure values close on nonzero, and `StopProduction` retains cancellation precedence.
@@ -22,7 +48,7 @@ immutable NC and Tool Table releases, Machine capability/verification policy,
 and current Production Run, then transforms a copy in staging. It resolves
 master-data values, conditionally injects the existing verification hook,
 generates the uniquely bound Offset Loader when applicable, verifies hashes,
-writes manifest schema v2, and only then atomically changes the current-package
+writes manifest schema v3 with the exact program/output context, and only then atomically changes the current-package
 pointer. The immutable source is never rewritten. Connectivity affects delivery
 options only and never downgrades verification policy.
 

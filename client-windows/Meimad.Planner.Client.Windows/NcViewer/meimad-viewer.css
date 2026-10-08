@@ -354,3 +354,84 @@ body.meimad-read-only .CodeMirror-cursor {
   background: linear-gradient(90deg, rgba(242, 204, 96, 0.24), rgba(242, 204, 96, 0.04));
   box-shadow: inset 3px 0 #f2cc60;
 }
+
+/* Shared industrial workbench chrome. Toolpath and machining/status colors stay semantic. */
+:root {
+  --app-bg: #0c1118;
+  --app-surface: #121a24;
+  --app-surface-raised: #192330;
+  --app-border: #2a3746;
+  --app-border-strong: #405064;
+  --app-text: #e8eff6;
+  --app-muted: #9eafc1;
+  --app-accent: #6adee1;
+  --app-accent-hover: #91eaec;
+  --vscode-editor-background: #0c1118;
+  --vscode-editor-foreground: #e8eff6;
+}
+:root[data-workbench-theme="light"] {
+  color-scheme: light;
+  --app-bg: #edf0f1;
+  --app-surface: #ffffff;
+  --app-surface-raised: #f3f5f5;
+  --app-border: #d8dfe2;
+  --app-border-strong: #9aafb7;
+  --app-text: #162631;
+  --app-muted: #566977;
+  --app-accent: #006c73;
+  --app-accent-hover: #00838b;
+  --vscode-editor-background: #ffffff;
+  --vscode-editor-foreground: #162631;
+}
+.desktop-commandbar, .statusbar, .editor-meta, .section-title-row {
+  background: var(--app-surface);
+  color: var(--app-text);
+  box-shadow: none;
+}
+
+/* Local overrides keep the vendored viewer unchanged. Technical 3D colors remain fixed. */
+.pane-header, .meimad-call-pane .pane-header, .preview-pane .preview-toolbar,
+.preview-sidebar, .settings-modal, .modal-header, .modal-footer,
+.settings-section, .tool-editor-table-wrap, .tool-editor-table th {
+  background: var(--app-surface);
+  color: var(--app-text);
+  border-color: var(--app-border);
+  box-shadow: none;
+}
+.pane-header h2, .preview-title h1, .modal-header h2, .settings-section h3,
+.tool-editor-table, .tool-editor-table td, .tool-editor-table th,
+.preview-controls, .preview-sidebar h2, .preview-sidebar h3 {
+  color: var(--app-text);
+  border-color: var(--app-border);
+}
+.editor-meta, .pane-kicker, .modal-header p, .settings-note, .tool-editor-meta p,
+.CodeMirror-linenumber { color: var(--app-muted); }
+.CodeMirror, #ncEditor, .CodeMirror-dialog, .CodeMirror-dialog input,
+.settings-section input, .settings-section select, .tool-editor-table input,
+.tool-editor-table select, .preview-controls input, .preview-controls select {
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  border-color: var(--app-border);
+  box-shadow: none;
+}
+.CodeMirror-gutters, .workspace-splitter, .meimad-call-splitter {
+  background: var(--app-surface-raised);
+  border-color: var(--app-border);
+}
+.CodeMirror-cursor { border-color: var(--app-accent); }
+.CodeMirror-activeline-gutter .CodeMirror-linenumber { color: var(--app-text); }
+:root[data-workbench-theme="light"] {
+  --app-success: #286d30;
+  --app-warning: #97600b;
+  --app-danger: #a73231;
+}
+:root[data-workbench-theme="light"] .cm-s-fanuc-dark .cm-comment { color: #566977; }
+:root[data-workbench-theme="light"] .cm-s-fanuc-dark .cm-number { color: #805300; }
+:root[data-workbench-theme="light"] .cm-s-fanuc-dark .cm-keyword,
+:root[data-workbench-theme="light"] .cm-s-fanuc-dark .cm-atom { color: #305f99; }
+:root[data-workbench-theme="light"] .cm-s-fanuc-dark .cm-operator { color: #a73231; }
+:root[data-workbench-theme="light"] .cm-s-fanuc-dark .cm-string { color: #286d30; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}

@@ -51,7 +51,7 @@ internal interface IMachineAssignmentRepository
         OperationPauseReason? pauseReason,
         DateTimeOffset now,
         EditAuthority editAuthority,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken, string? readinessStamp = null);
 
     Task<ManualWorkflowStatusResult> ReportWorkflowStatusAsync(
         string batchOperationId, string status, DateTimeOffset now, EditAuthority editAuthority,

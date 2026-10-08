@@ -8,6 +8,7 @@ public partial class App : Application
 {
     public App()
     {
+        Themes.WorkbenchTheme.Initialize();
         LocalizationBehavior.Initialize();
         _ = LocalizationService.Current;
         DispatcherUnhandledException += OnDispatcherUnhandledException;
@@ -16,6 +17,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        Themes.WorkbenchTheme.Load();
         try
         {
             var mainWindow = new MainWindow();

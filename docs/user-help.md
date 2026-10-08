@@ -4,6 +4,8 @@ This guide is for planners, supervisors, setup personnel, and machine operators.
 
 ## 1. Start here
 
+The Windows client now uses a workbench navigation rail. Choose **Light workshop** or **Graphite control room** at the top to switch appearance; the choice is saved on this computer and does not clear your current work. **Shop** opens the Planning Board, **Preparation** opens the NC Creator queue, **Operation** opens Cases, and **Integrations** opens Kitaron Stations. The rail also provides direct access to every existing screen. Configuration previously labeled Setup is now **Administration**; production setup work remains in **Setup Queue**. Technical drawings retain their own readable canvas and operational status colors.
+
 1. Start the **Meimad Planner Server** service (or start the Server application during development).
 2. Open the Windows client and verify that the Server connection indicator is healthy.
 3. Select a language from the client language control. English, Hebrew, and Russian are supported; language changes apply to the whole client.

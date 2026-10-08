@@ -10,6 +10,40 @@ namespace Meimad.Planner.Client.Windows.Tests.Api;
 public sealed class PlannerApiClientTests
 {
     [Fact]
+    public async Task Kitaron_push_carries_the_displayed_preview_stamp()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, "{}"));
+        using var api = CreateClient(handler);
+        await api.RunKitaronPushAsync(previewStamp: "observed-erp-values");
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/api/v1/kitaron/push/run", request.Path);
+        Assert.Equal("observed-erp-values", request.KitaronPreviewStamp);
+    }
+
+    [Fact]
+    public async Task Package_and_tool_requests_carry_the_selected_assignment_program_and_output()
+    {
+        var handler = new RecordingHandler(Enumerable.Range(0, 5).Select(_ => Json(HttpStatusCode.OK, "{}")).ToArray());
+        using var api = CreateClient(handler);
+        var context = new ProductionPackageContext("assignment/1", "run:2", "program-3", "output-4", "operation", "machine", "process", "1:2|3", 5);
+        await api.CreateProductionPackageAsync("operation", "client", "user", context: context, requestId: "retry-this-command");
+        await api.GetCurrentProductionPackageAsync("operation", context: context);
+        await api.ReadProductionPackageArtifactAsync("operation", "artifact", context: context);
+        await api.GetToolPreparationAsync("operation", context: context);
+        await api.SaveToolPreparationAsync("operation", new(0, "tools", null, []), "client", "user", context: context);
+        foreach (var request in handler.Requests)
+        {
+            Assert.Contains("machineAssignmentId=assignment%2F1", request.Path);
+            Assert.Contains("productionRunId=run%3A2", request.Path);
+            Assert.Contains("productionRunProgramId=program-3", request.Path);
+            Assert.Contains("productionRunOutputId=output-4", request.Path);
+        }
+        Assert.Contains("contextStamp=1%3A2%7C3", handler.Requests[0].Path);
+        Assert.Contains("contextStamp=1%3A2%7C3", handler.Requests[4].Path);
+        Assert.Equal("retry-this-command", handler.Requests[0].IdempotencyKey);
+    }
+
+    [Fact]
     public async Task Legacy_working_plan_import_client_uploads_workbook_and_commits_explicit_selections_with_authority()
     {
         const string previewJson = """
@@ -1897,6 +1931,10 @@ public sealed class PlannerApiClientTests
     public async Task Operation_execution_command_uses_server_api_and_edit_generation()
     {
         var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {"overallState":"READY_FOR_PRODUCTION","isReadyForProduction":true,"isManaged":true,
+             "summary":"Ready","components":[],"effectiveGCodeReleaseId":"nc","requiresExplicitGCodeSelection":false,
+             "compatibleGCodeReleases":[],"actions":[{"action":"RunStart","isAllowed":true,"contextStamp":"observed-stamp","reasons":[]}]}
+            """), Json(HttpStatusCode.OK, """
             {
               "batchOperationId":"operation-1",
               "machineId":"machine-1",
@@ -1917,15 +1955,17 @@ public sealed class PlannerApiClientTests
             "operation/1", "start", "windows-01", 21);
 
         Assert.Equal("in_progress", result.Status);
-        Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
-        Assert.Equal("/api/v1/batch-operations/operation%2F1/start", handler.Requests[0].Path);
-        Assert.Equal("windows-01", handler.Requests[0].ClientId);
-        Assert.Equal("21", handler.Requests[0].Generation);
+        Assert.Equal("/api/v1/batch-operations/operation%2F1/readiness", handler.Requests[0].Path);
+        Assert.Equal("observed-stamp", handler.Requests[1].ReadinessStamp);
+        Assert.Equal(HttpMethod.Post, handler.Requests[1].Method);
+        Assert.Equal("/api/v1/batch-operations/operation%2F1/start", handler.Requests[1].Path);
+        Assert.Equal("windows-01", handler.Requests[1].ClientId);
+        Assert.Equal("21", handler.Requests[1].Generation);
 
         var reset = await api.ChangeOperationExecutionAsync(
             "operation/1", "reset", "windows-01", 21);
         Assert.Equal("not_started", reset.Status);
-        Assert.Equal("/api/v1/batch-operations/operation%2F1/reset", handler.Requests[1].Path);
+        Assert.Equal("/api/v1/batch-operations/operation%2F1/reset", handler.Requests[2].Path);
     }
 
     [Fact]
@@ -2796,7 +2836,7 @@ public sealed class PlannerApiClientTests
                     ? string.Empty
                     : await request.Content.ReadAsStringAsync(cancellationToken),
                 ReadHeader(request, "If-Modified-Since"),
-                request.Headers.Authorization?.ToString()));
+                request.Headers.Authorization?.ToString(), ReadHeader(request, "Idempotency-Key"), ReadHeader(request, "If-Readiness-Match"), ReadHeader(request, "If-Kitaron-Preview-Match")));
             return responses.Dequeue();
         }
 
@@ -2813,5 +2853,6 @@ public sealed class PlannerApiClientTests
         string? IfMatch,
         string Body,
         string? IfModifiedSince = null,
-        string? Authorization = null);
+        string? Authorization = null,
+        string? IdempotencyKey = null, string? ReadinessStamp = null, string? KitaronPreviewStamp = null);
 }

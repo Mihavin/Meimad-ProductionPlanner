@@ -80,7 +80,7 @@ internal sealed record KitaronOperationRow(
     bool WorkOrderClosed,
     IReadOnlyDictionary<string, object?> Values);
 
-internal sealed record KitaronPushWrite(long RowId, int WorkOrderNumber, string Column, object Value);
+internal sealed record KitaronPushWrite(long RowId, int WorkOrderNumber, string Column, object Value, KitaronOperationRow Expected);
 
 internal sealed record KitaronPushChange(
     int WorkOrderNumber,
@@ -99,7 +99,8 @@ internal sealed record KitaronPushResult(
     int OperationsMatched,
     int OperationsSkipped,
     IReadOnlyList<KitaronPushChange> Changes,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    string? PreviewStamp = null);
 
 internal sealed record KitaronPushRunSummary(
     string RunId,
@@ -113,7 +114,9 @@ internal sealed record KitaronPushRunSummary(
     int OperationsSkipped,
     string? Message);
 
-internal sealed class KitaronPushBlockedException(string message) : Exception(message);
+internal class KitaronPushBlockedException(string message) : Exception(message);
+
+internal sealed class KitaronPushConflictException(string message) : KitaronPushBlockedException(message);
 
 internal sealed class KitaronPushValidationException(string field, string message) : Exception(message)
 {

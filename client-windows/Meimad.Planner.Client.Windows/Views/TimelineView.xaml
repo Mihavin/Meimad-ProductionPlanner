@@ -2,7 +2,7 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              MinHeight="500">
-    <Grid x:Name="TimelineLayout" Background="{StaticResource CanvasBrush}">
+    <Grid x:Name="TimelineLayout" Background="{DynamicResource CanvasBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -10,7 +10,7 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Border x:Name="TimelineHeaderPanel" Grid.Row="0" Background="{StaticResource PanelBrush}" BorderBrush="#D8DDE3"
+        <Border x:Name="TimelineHeaderPanel" Grid.Row="0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="1" CornerRadius="5" Padding="10">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom">
@@ -30,13 +30,13 @@
                 <StackPanel Margin="0,0,16,0">
                     <TextBlock Text="TIMELINE" FontSize="17" FontWeight="Bold" />
                     <TextBlock Text="One read-only Server Timeline. Each assignment's planning mode controls that operation's calculated position."
-                               Foreground="{StaticResource MutedTextBrush}" Margin="0,2,0,0" TextWrapping="Wrap" />
+                               Foreground="{DynamicResource MutedTextBrush}" Margin="0,2,0,0" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding StatusMessage}" Margin="0,4,0,0" FontWeight="SemiBold" TextWrapping="Wrap" />
                 </StackPanel>
             </DockPanel>
         </Border>
 
-        <Border x:Name="TimelineLegendPanel" Grid.Row="1" Background="White" BorderBrush="#D8DDE3" BorderThickness="1"
+        <Border x:Name="TimelineLegendPanel" Grid.Row="1" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                 CornerRadius="5" Padding="8" Margin="0,6,0,0">
             <WrapPanel>
                 <TextBlock Text="LEGEND" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,12,0" />
@@ -46,12 +46,12 @@
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#7B1FA2" /><TextBlock Text="PART RELOAD" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"
                             ToolTip="Blank timeline space means no operation block is rendered. It may be available/idle or ordinary calculated waiting; idle and ordinary waiting are not drawn as bars.">
-                    <Border Width="12" Height="12" Background="#FAFAFA" BorderBrush="#9E9E9E" BorderThickness="1" />
+                    <Border Width="12" Height="12" Background="{DynamicResource TechnicalPaperBrush}" BorderBrush="{DynamicResource GreyBrush}" BorderThickness="1" />
                     <TextBlock Text="BLANK = NO OPERATION" Margin="5,0,0,0" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"
                             ToolTip="Gray columns indicate non-working time from the machine's configured calendar. They are not operation blocks.">
-                    <Border Width="12" Height="12" Background="#E0E4E8" BorderBrush="#BDC6CD" BorderThickness="1" />
+                    <Border Width="12" Height="12" Background="{DynamicResource TechnicalCalendarBrush}" BorderBrush="{DynamicResource TechnicalCalendarEdgeBrush}" BorderThickness="1" />
                     <TextBlock Text="NON-WORKING CALENDAR" Margin="5,0,0,0" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0" ToolTip="Explicit blocked/conflict time is shown. Ordinary waiting is blank space."><Border Width="12" Height="12" Background="#7E57C2" /><TextBlock Text="BLOCKED" Margin="5,0,0,0" /></StackPanel>
@@ -61,7 +61,7 @@
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#00897B" /><TextBlock Text="ACTUAL HISTORY" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"
                             ToolTip="A red outline means the planned Operation remains on the Timeline but is not ready for production.">
-                    <Border Width="12" Height="12" Background="White" BorderBrush="#C62828" BorderThickness="2" />
+                    <Border Width="12" Height="12" Background="{DynamicResource PanelBrush}" BorderBrush="#C62828" BorderThickness="2" />
                     <TextBlock Text="PLANNED — NOT READY" Margin="5,0,0,0" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"
@@ -77,10 +77,10 @@
             </WrapPanel>
         </Border>
 
-        <Border x:Name="TimelineGraphPanel" Grid.Row="2" Background="White" BorderBrush="#D8DDE3" BorderThickness="1"
+        <Border x:Name="TimelineGraphPanel" Grid.Row="2" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                 CornerRadius="5" Padding="7" Margin="0,6,0,0">
             <ScrollViewer x:Name="TimelineGraphScrollViewer" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" MaxHeight="330">
-                <Canvas x:Name="TimelineCanvas" MinHeight="120" />
+                <Canvas x:Name="TimelineCanvas" MinHeight="120" Background="White" />
             </ScrollViewer>
         </Border>
 
@@ -91,17 +91,17 @@
                 <ColumnDefinition Width="2*" />
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Background="White" BorderBrush="#D8DDE3" BorderThickness="1"
+            <Border Grid.Column="0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                     CornerRadius="5" Padding="10">
                 <StackPanel>
                     <TextBlock Text="CONFLICTS" FontWeight="Bold" FontSize="16" />
                     <TextBlock Text="Each status includes a severity label; color is supplemental."
-                               Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,10" />
+                               Foreground="{DynamicResource MutedTextBrush}" Margin="0,3,0,10" />
                     <ItemsControl ItemsSource="{Binding Conflicts}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border BorderThickness="4,0,0,0"
-                                        Background="#FAFAFA" Padding="10" Margin="0,0,0,8">
+                                        Background="{DynamicResource PanelBrush}" Padding="10" Margin="0,0,0,8">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="BorderBrush" Value="{StaticResource YellowBrush}" />
@@ -114,7 +114,7 @@
                                     <StackPanel>
                                         <TextBlock Text="{Binding SeverityLabel}" FontWeight="Bold" />
                                         <TextBlock Text="{Binding DisplayMessage}" TextWrapping="Wrap" Margin="0,3,0,0" />
-                                        <TextBlock Text="{Binding Code}" Foreground="{StaticResource MutedTextBrush}" FontFamily="Consolas" FontSize="11" />
+                                        <TextBlock Text="{Binding Code}" Foreground="{DynamicResource MutedTextBrush}" FontFamily="Consolas" FontSize="11" />
                                     </StackPanel>
                                 </Border>
                             </DataTemplate>
@@ -123,18 +123,18 @@
                 </StackPanel>
             </Border>
 
-            <Border Grid.Column="2" Background="White" BorderBrush="#D8DDE3" BorderThickness="1"
+            <Border Grid.Column="2" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                     CornerRadius="5" Padding="10">
                 <StackPanel>
                     <TextBlock Text="SELECTED BATCH DEPENDENCIES" FontWeight="Bold" FontSize="16" />
                     <ComboBox ItemsSource="{Binding Batches}" SelectedItem="{Binding SelectedBatch}"
                               DisplayMemberPath="DisplayName" Margin="0,9,0,10" MinHeight="34" />
                     <TextBlock Text="Only dependency edges for the selected work order are shown."
-                               Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
+                               Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,10" />
                     <ItemsControl ItemsSource="{Binding SelectedDependencies}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border Background="#F3F5F7" BorderBrush="#D8DDE3" BorderThickness="1"
+                                <Border Background="{DynamicResource CanvasBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                                         CornerRadius="4" Padding="10" Margin="0,0,0,8">
                                     <StackPanel>
                                         <TextBlock Text="{Binding Summary}" FontWeight="SemiBold" TextWrapping="Wrap" />

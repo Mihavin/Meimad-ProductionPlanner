@@ -8,6 +8,66 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 
 public sealed class PreparationQueueViewModelTests
 {
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(503, true)]
+    [InlineData(409, false)]
+    public async Task Package_retry_keeps_the_original_command_after_an_uncertain_outcome(int status, bool reuse)
+    {
+        var item = Item() with { Context = new("assignment-1", "run-1", "program-1", "output-1", "operation-1", "machine-1", "process-1", "stamp-1", 5) };
+        var api = new FakeApiClient([item])
+        {
+            CreateError = status == 0 ? new System.Net.Http.HttpRequestException("Disconnected")
+                : new PlannerApiException((HttpStatusCode)status, "error", "Request failed"),
+            CurrentPackage = new("package-1", 1, "operation-1", "run-1", "assignment-1", "machine-1",
+                "gcode-1", "tools-1", null, "CNC_GCODE", false, null, null, new string('a',64),
+                DateTimeOffset.UtcNow, "user", null, true, false, false, [])
+        };
+        var model = new PreparationQueueViewModel("TOOL_PREPARATION_PENDING", "Tool Room", "Tools");
+        model.AttachSession(api, "client", "user");
+        model.Selected = item;
+        model.CreateProductionPackageCommand.Execute(null);
+        Assert.Single(api.PackageRequests);
+        api.CreateError = null;
+        if (reuse)
+        {
+            // The Server has already moved the committed row to Setup, but its response was lost.
+            api.QueueItems = [];
+            await model.RefreshAsync();
+            Assert.Single(model.Items);
+            Assert.Contains("unconfirmed", model.Status);
+            Assert.True(model.CreateProductionPackageCommand.CanExecute(null));
+        }
+        model.Selected = item with { Context = item.Context with { ContextStamp = "stamp-2" } };
+        model.CreateProductionPackageCommand.Execute(null);
+        Assert.Equal(2, api.PackageRequests.Count);
+        Assert.Equal(reuse, api.PackageRequests[0].RequestId == api.PackageRequests[1].RequestId);
+        Assert.Equal(reuse ? "stamp-1" : "stamp-2", api.PackageRequests[1].Context?.ContextStamp);
+        if (reuse) Assert.Empty(model.Items);
+        api.QueueItems = [item];
+        await model.RefreshAsync();
+        model.Selected = item;
+        model.CreateProductionPackageCommand.Execute(null);
+        Assert.Equal(3, api.PackageRequests.Count);
+        Assert.NotEqual(api.PackageRequests[1].RequestId, api.PackageRequests[2].RequestId);
+    }
+
+    [Fact]
+    public async Task Refresh_preserves_the_exact_row_when_one_operation_has_several_programs()
+    {
+        var first = Item() with { Context = new("assignment-1", "run-1", "program-1", "output-1", "operation-1", "machine-1", "process-1", "stamp", 5) };
+        var second = first with { Context = first.Context with { ProductionRunProgramId = "program-2", ProductionRunOutputId = "output-2", ProgramNumber = 2 } };
+        var api = new FakeApiClient([first, second]);
+        var viewModel = new PreparationQueueViewModel("TOOL_PREPARATION_PENDING", "Tool Room", "Tool preparation");
+        viewModel.AttachSession(api);
+        await viewModel.RefreshAsync();
+        viewModel.Selected = second;
+        await viewModel.RefreshAsync();
+        Assert.Equal(2, viewModel.Items.Count);
+        Assert.Equal(second.RowKey, viewModel.Selected?.RowKey);
+        Assert.Equal("2", viewModel.Selected?.ProgramText);
+    }
+
     [Fact]
     public async Task Shared_queue_model_loads_only_its_configured_role_projection()
     {
@@ -158,8 +218,19 @@ public sealed class PreparationQueueViewModelTests
         : IPlannerApiClient
     {
         internal string? RequestedStage { get; private set; }
+        internal IReadOnlyList<PreparationQueueItem> QueueItems { get; set; } = items;
         internal string? RequestedArtifactId { get; private set; }
         internal ProductionPackageInfo? CurrentPackage { get; set; }
+        internal Exception? CreateError { get; set; }
+        internal List<(string? RequestId, ProductionPackageContext? Context)> PackageRequests { get; } = [];
+        public Task<ProductionPackageInfo> CreateProductionPackageAsync(string batchOperationId, string clientId, string userId,
+            string toolOffsetMode = "MEASURED", CancellationToken cancellationToken = default,
+            ProductionPackageContext? context = null, string? requestId = null)
+        {
+            PackageRequests.Add((requestId, context));
+            if (CreateError is not null) throw CreateError;
+            return Task.FromResult(CurrentPackage ?? throw new NotSupportedException());
+        }
         internal PlannerToolPreparation? ToolPreparation { get; set; }
         internal string? RequestedToolPreparationOperationId { get; private set; }
         internal List<ToolPreparationUpdate> SavedUpdates { get; } = [];
@@ -169,7 +240,7 @@ public sealed class PreparationQueueViewModelTests
 
         public Task<PlannerToolPreparation> GetToolPreparationAsync(
             string batchOperationId,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default, ProductionPackageContext? context = null)
         {
             RequestedToolPreparationOperationId = batchOperationId;
             return Task.FromResult(ToolPreparation ?? throw new NotSupportedException());
@@ -178,7 +249,7 @@ public sealed class PreparationQueueViewModelTests
         /// <summary>Appends the version the way the Server does: the released rows keep their identity and take the saved values.</summary>
         public Task<PlannerToolPreparation> SaveToolPreparationAsync(
             string batchOperationId, ToolPreparationUpdate update, string clientId, string userId,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default, ProductionPackageContext? context = null)
         {
             SavedUpdates.Add(update);
             SavedClientId = clientId;
@@ -291,19 +362,19 @@ public sealed class PreparationQueueViewModelTests
 
         public Task<ProductionPackageInfo?> GetCurrentProductionPackageAsync(
             string batchOperationId,
-            CancellationToken cancellationToken = default) => Task.FromResult(CurrentPackage);
+            CancellationToken cancellationToken = default, ProductionPackageContext? context = null) => Task.FromResult(CurrentPackage);
 
         public Task<IReadOnlyList<PreparationQueueItem>> ListPreparationQueueAsync(
             string stage,
             CancellationToken cancellationToken = default)
         {
             RequestedStage = stage;
-            return Task.FromResult(items);
+            return Task.FromResult(QueueItems);
         }
 
         public Task<byte[]> ReadProductionPackageArtifactAsync(
             string batchOperationId, string artifactId,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default, ProductionPackageContext? context = null)
         {
             RequestedArtifactId = artifactId;
             return Task.FromResult(artifactBytes ?? []);

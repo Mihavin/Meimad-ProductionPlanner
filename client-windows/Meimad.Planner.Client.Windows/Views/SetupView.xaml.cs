@@ -20,6 +20,8 @@ public partial class SetupView : UserControl
 
     // A PasswordBox cannot be bound: the typed email password goes to the view model, and the box is
     // emptied when the view model forgets it after saving.
+    internal void OpenIntegrations() => AdministrationTabs.SelectedItem = IntegrationStationsTab;
+
     private void ReportSmtpPassword_Changed(object sender, RoutedEventArgs e)
     {
         if (DataContext is SetupViewModel viewModel) viewModel.ReportSmtpPassword = ReportSmtpPasswordBox.Password;

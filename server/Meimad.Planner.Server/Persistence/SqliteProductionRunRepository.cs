@@ -616,7 +616,7 @@ internal sealed class SqliteProductionRunRepository : IProductionRunRepository
         await compact.ExecuteNonQueryAsync(token);
     }
 
-    private static async Task<ProductionRun?> ReadAsync(
+    internal static async Task<ProductionRun?> ReadAsync(
         SqliteConnection connection, SqliteTransaction? transaction, string runId, CancellationToken token)
     {
         string status, snapshot;

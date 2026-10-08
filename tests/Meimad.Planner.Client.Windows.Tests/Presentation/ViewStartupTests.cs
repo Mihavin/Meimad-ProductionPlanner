@@ -32,7 +32,7 @@ public sealed class ViewStartupTests
         var serverIndicatorWasCompactAndAccessible = false;
         var mainHeaderHidConnectionText = false;
         var signedInHeaderShowsTheUser = false;
-        var operationActionsWereCompactPlayerIcons = false;
+        var operationRowDisplayedWorkflowWithoutDirectMutationButtons = false;
         var operationRowWasDenseAndComplete = false;
         var toolPreparationWindowRenderedRowsAndPreview = false;
         var assignmentModeActionsWereVisible = false;
@@ -58,7 +58,7 @@ public sealed class ViewStartupTests
         IReadOnlyList<string> localizationFailures = [];
         var thread = new Thread(() =>
         {
-            App? application = null;
+            Application? application = null;
             Window? window = null;
             MainWindow? plannerWindow = null;
             TimelineWindow? timelineWindow = null;
@@ -67,11 +67,18 @@ public sealed class ViewStartupTests
             Window? timelineRenderWindow = null;
             try
             {
-                application = new App
+                // Do not start App.OnStartup: it opens a second, live client and a modal sign-in.
+                application = new Application
                 {
                     ShutdownMode = ShutdownMode.OnExplicitShutdown
                 };
-                application.InitializeComponent();
+                application.Resources = new ResourceDictionary
+                {
+                    Source = new Uri("/Meimad.Planner.Client.Windows;component/Themes/ApplicationResources.xaml", UriKind.Relative)
+                };
+                Themes.WorkbenchTheme.Initialize();
+                LocalizationBehavior.Initialize();
+                Themes.WorkbenchTheme.Apply("graphite", persist: false);
                 LocalizationService.Current.SetLanguage("en", persist: false);
                 var thumbnail = new WriteableBitmap(2, 2, 96, 96, PixelFormats.Bgra32, null);
                 window = new Window
@@ -108,6 +115,21 @@ public sealed class ViewStartupTests
                     loadedMethod);
                 plannerWindow.Show();
                 plannerWindow.UpdateLayout();
+                var workspaceTabs = Assert.IsType<TabControl>(plannerWindow.FindName("WorkspaceTabs"));
+                Assert.Equal(Dock.Left, workspaceTabs.TabStripPlacement);
+                var originalContext = plannerWindow.DataContext;
+                var originalTab = workspaceTabs.SelectedItem;
+                foreach (var theme in new[] { "light", "graphite" })
+                {
+                    Themes.WorkbenchTheme.Apply(theme, persist: false);
+                    plannerWindow.UpdateLayout();
+                    Assert.Same(originalContext, plannerWindow.DataContext);
+                    Assert.Same(originalTab, workspaceTabs.SelectedItem);
+                    Assert.Equal(((SolidColorBrush)application.Resources["CanvasBrush"]).Color,
+                        Assert.IsType<SolidColorBrush>(plannerWindow.Background).Color);
+                    Assert.Equal(Color.FromRgb(0xC6, 0x28, 0x28),
+                        Assert.IsType<SolidColorBrush>(application.Resources["RedBrush"]).Color);
+                }
                 LocalizationInteractionPerformanceAudit.RunAndAssert(plannerWindow);
                 LocalizationBehaviorAudit.RunAndAssert(plannerWindow);
 
@@ -124,7 +146,7 @@ public sealed class ViewStartupTests
                     .Select(value => value.Text)
                     .Where(value => !string.IsNullOrWhiteSpace(value))
                     .ToArray();
-                mainHeaderHidConnectionText = !mainWindowText.Contains(plannerViewModel.HealthHeadline)
+                mainHeaderHidConnectionText = mainWindowText.Contains(plannerViewModel.HealthHeadline)
                     && !mainWindowText.Any(value => value.StartsWith("Local user:", StringComparison.Ordinal));
 
                 // The header names the signed-in person; Edit Mode no longer exists.
@@ -172,13 +194,12 @@ public sealed class ViewStartupTests
                 playerWindow.Show();
                 playerWindow.UpdateLayout();
                 var playerButtons = Descendants<Button>(operationCard).ToArray();
-                operationActionsWereCompactPlayerIcons = playerButtons.Length == 4
-                    && playerButtons.All(button => button.Width <= 24 && button.MinHeight <= 21)
-                    && playerButtons.All(button => button.ToolTip is not null)
-                    && playerButtons.All(button => Descendants<System.Windows.Shapes.Path>(button).Any())
-                    && playerButtons.Single(button => AutomationProperties.GetName(button) == "Start operation").IsEnabled == false
-                    && playerButtons.Single(button => AutomationProperties.GetName(button) == "Pause operation").IsEnabled == false
-                    && playerButtons.Single(button => AutomationProperties.GetName(button) == "Reset operation").IsEnabled == false;
+                // Workflow is now event-derived; the compact row reports it and exposes
+                // supported actions through its context menu, without old player controls.
+                operationRowDisplayedWorkflowWithoutDirectMutationButtons = playerButtons.Length == 0
+                    && Descendants<TextBlock>(operationCard).Any(text =>
+                        text.Text == ((PlanningOperationViewModel)operationCard.DataContext).WorkflowStatusText
+                        && text.ToolTip is not null);
                 var rowText = Descendants<TextBlock>(operationCard).Select(text => text.Text).ToArray();
                 var operationThumbnail = Assert.Single(Descendants<Image>(operationCard));
                 var thumbnailHost = Assert.IsType<Border>(VisualTreeHelper.GetParent(operationThumbnail));
@@ -586,7 +607,7 @@ public sealed class ViewStartupTests
         Assert.True(serverIndicatorWasCompactAndAccessible);
         Assert.True(mainHeaderHidConnectionText);
         Assert.True(signedInHeaderShowsTheUser);
-        Assert.True(operationActionsWereCompactPlayerIcons);
+        Assert.True(operationRowDisplayedWorkflowWithoutDirectMutationButtons);
         Assert.True(operationRowWasDenseAndComplete);
         Assert.True(assignmentModeActionsWereVisible);
         Assert.True(timelineHadNoGlobalModeSelector);

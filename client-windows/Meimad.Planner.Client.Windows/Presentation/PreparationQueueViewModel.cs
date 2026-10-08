@@ -15,6 +15,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
     private bool isBusy;
     private PreparationQueueItem? selected;
     private string status;
+    private readonly Dictionary<string, (string RequestId, PreparationQueueItem Item)> pendingPackages = [];
 
     internal PreparationQueueViewModel(string stage, string title, string description)
     {
@@ -77,6 +78,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
 
     internal void AttachSession(IPlannerApiClient? client, string? activeClientId = null, string? activeUserId = null)
     {
+        if (!ReferenceEquals(api, client) || userId != (activeUserId ?? string.Empty)) pendingPackages.Clear();
         api = client;
         clientId = activeClientId ?? string.Empty;
         userId = activeUserId ?? string.Empty;
@@ -89,8 +91,15 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
 
     private Task RequestActionAsync(string kind)
     {
-        if (Selected is not null)
-            ActionRequested?.Invoke(this, new(kind, Selected, null));
+        if (Selected is { } item)
+        {
+            if (kind == "UPLOAD_GCODE") item = item with
+            {
+                CaseId = item.RecipeCaseId ?? item.CaseId,
+                CaseOperationId = item.RecipeCaseOperationId ?? item.CaseOperationId
+            };
+            ActionRequested?.Invoke(this, new(kind, item, null));
+        }
         return Task.CompletedTask;
     }
 
@@ -104,8 +113,8 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         if (api is not { } client || Selected is not { } item) return;
         await RunActionAsync(async () =>
         {
-            var preparation = await client.GetToolPreparationAsync(item.BatchOperationId);
-            var editor = new ToolPreparation.ToolPreparationViewModel(client, clientId, userId, preparation);
+            var preparation = await client.GetToolPreparationAsync(item.BatchOperationId, context: item.Context);
+            var editor = new ToolPreparation.ToolPreparationViewModel(client, clientId, userId, preparation, item.Context);
             ActionRequested?.Invoke(this, new("OPEN_TOOL_PREPARATION", item, editor));
             Status = preparation.Version == 0
                 ? "Tool table opened; no measurements were saved yet."
@@ -121,7 +130,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         await RunActionAsync(async () =>
         {
             var bytes = await api.ReadToolTableFileAsync(
-                Selected.CaseId, Selected.CaseOperationId, Selected.ToolTableReleaseId);
+                Selected.RecipeCaseId ?? Selected.CaseId, Selected.RecipeCaseOperationId ?? Selected.CaseOperationId, Selected.ToolTableReleaseId);
             ActionRequested?.Invoke(this, new("OPEN_TOOL_TABLE", Selected, bytes));
             Status = "Current Tool Table opened from its immutable Server release.";
         });
@@ -137,9 +146,9 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         await RunActionAsync(async () =>
         {
             var request = await NcViewer.NcViewerRequests.ForReleaseAsync(
-                client, caseId, operationId, releaseId, item.MachineId,
+                client, item.RecipeCaseId ?? caseId, item.RecipeCaseOperationId ?? operationId, releaseId, item.MachineId,
                 $"{item.PartText} · {item.OperationText} · {item.MachineText}",
-                item.BatchOperationId);
+                item.BatchOperationId, context: item.Context);
             ActionRequested?.Invoke(this, new("VIEW_NC_READ_ONLY", item, request));
             Status = "NC release opened read-only in the NC viewer.";
         });
@@ -153,29 +162,46 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
 
     private async Task CreateProductionPackageAsync(string toolOffsetMode)
     {
-        if (api is null || Selected is null) return;
+        if (api is not { } client || Selected is not { } item) return;
         await RunActionAsync(async () =>
         {
-            var package = await api.CreateProductionPackageAsync(
-                Selected.BatchOperationId, clientId, userId, toolOffsetMode);
-            ActionRequested?.Invoke(this, new("PRODUCTION_PACKAGE_CREATED", Selected, package));
+            var key = $"{item.RowKey}/{toolOffsetMode}";
+            if (!pendingPackages.TryGetValue(key, out var pending))
+                pendingPackages[key] = pending = (Guid.NewGuid().ToString("N"), item);
+            ProductionPackageInfo package;
+            try
+            {
+                package = await client.CreateProductionPackageAsync(
+                    item.BatchOperationId, clientId, userId, toolOffsetMode,
+                    context: pending.Item.Context, requestId: pending.RequestId);
+                pendingPackages.Remove(key);
+            }
+            catch (PlannerApiException exception) when ((int)exception.StatusCode is >= 400 and < 500
+                && (int)exception.StatusCode is not (408 or 429))
+            {
+                // A definite refusal is not an uncertain publication. A later deliberate
+                // invocation may use the refreshed context and a new request key.
+                pendingPackages.Remove(key);
+                throw;
+            }
+            ActionRequested?.Invoke(this, new("PRODUCTION_PACKAGE_CREATED", item, package));
             Status = package.ToolOffsetMode == "MANUAL_DUMMY"
                 ? $"Production Package #{package.PackageNumber} created with a verification-only Offset Loader. Setupist must enter real tool offsets manually."
-                : $"Production Package #{package.PackageNumber} created and made current.";
+                : $"Production Package #{package.PackageNumber} is available. Refresh the queue to check the current package.";
         });
         var resultMessage = Status;
         await RefreshAsync();
-        Status = resultMessage;
+        if (pendingPackages.Count == 0) Status = resultMessage;
     }
 
     private async Task OpenProductionPackageAsync()
     {
-        if (api is null || Selected is null) return;
+        if (api is not { } client || Selected is not { } item) return;
         await RunActionAsync(async () =>
         {
-            var package = await api.GetCurrentProductionPackageAsync(Selected.BatchOperationId)
+            var package = await client.GetCurrentProductionPackageAsync(item.BatchOperationId, context: item.Context)
                 ?? throw new InvalidOperationException("No current valid Production Package exists.");
-            ActionRequested?.Invoke(this, new("OPEN_PRODUCTION_PACKAGE", Selected, package));
+            ActionRequested?.Invoke(this, new("OPEN_PRODUCTION_PACKAGE", item, package));
             Status = $"Opened current Production Package #{package.PackageNumber}. No workflow state changed.";
         });
     }
@@ -189,7 +215,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         // Re-fetch immediately before exporting: the snapshot passed in can be several seconds
         // stale (folder-picker dialog time), and if a newer Production Package has superseded it
         // since, every artifact ID below would 404 and no file would be written at all.
-        package = await api.GetCurrentProductionPackageAsync(package.BatchOperationId)
+        package = await api.GetCurrentProductionPackageAsync(package.BatchOperationId, cancellationToken, package.Context)
             ?? throw new InvalidOperationException("No current valid Production Package exists.");
         var root = Path.GetFullPath(selectedDirectory).TrimEnd(Path.DirectorySeparatorChar);
         Directory.CreateDirectory(root);
@@ -202,7 +228,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
                 throw new InvalidOperationException("A package artifact path escaped the selected export folder.");
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             var bytes = await api.ReadProductionPackageArtifactAsync(
-                package.BatchOperationId, artifact.ArtifactId, cancellationToken);
+                package.BatchOperationId, artifact.ArtifactId, cancellationToken, package.Context);
             var actualHash = Convert.ToHexStringLower(SHA256.HashData(bytes));
             if (!string.Equals(actualHash, artifact.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException(
@@ -239,15 +265,26 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         if (api is null || isBusy) return;
         isBusy = true;
         RefreshCommand.RaiseCanExecuteChanged();
-        var selectedId = Selected?.BatchOperationId;
+        var selectedId = Selected?.RowKey;
         try
         {
-            var values = await api.ListPreparationQueueAsync(Stage);
+            var values = (await api.ListPreparationQueueAsync(Stage)).ToList();
+            // A successful publication can move a row to Setup before its response reaches us.
+            // Keep an explicitly unconfirmed row actionable until its original request resolves.
+            foreach (var pending in pendingPackages.Values.DistinctBy(value => value.Item.RowKey))
+            {
+                values.RemoveAll(value => value.RowKey == pending.Item.RowKey);
+                values.Add(pending.Item with { ReadinessFacts = [.. pending.Item.ReadinessFacts,
+                    new("packageRequest", "Package request", "PENDING",
+                        "Result not confirmed. Retry package creation to recover the result.", false)] });
+            }
             MergeItems(values);
             Selected = selectedId is null
                 ? null
-                : Items.FirstOrDefault(value => value.BatchOperationId == selectedId);
-            Status = Items.Count == 0
+                : Items.FirstOrDefault(value => value.RowKey == selectedId);
+            Status = pendingPackages.Count > 0
+                ? "A package result is unconfirmed. Retry its original creation action to recover the result."
+                : Items.Count == 0
                 ? "No operations are waiting at this preparation gate."
                 : $"{Items.Count} operation(s) waiting at this preparation gate.";
         }
@@ -270,13 +307,13 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
     {
         for (var i = Items.Count - 1; i >= 0; i--)
         {
-            if (!values.Any(value => value.BatchOperationId == Items[i].BatchOperationId))
+            if (!values.Any(value => value.RowKey == Items[i].RowKey))
                 Items.RemoveAt(i);
         }
         for (var i = 0; i < values.Count; i++)
         {
             var value = values[i];
-            var existingIndex = IndexOf(value.BatchOperationId);
+            var existingIndex = IndexOf(value.RowKey);
             if (existingIndex < 0)
             {
                 Items.Insert(Math.Min(i, Items.Count), value);
@@ -292,7 +329,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
     private int IndexOf(string batchOperationId)
     {
         for (var i = 0; i < Items.Count; i++)
-            if (Items[i].BatchOperationId == batchOperationId) return i;
+            if (Items[i].RowKey == batchOperationId) return i;
         return -1;
     }
 

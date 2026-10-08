@@ -23,7 +23,7 @@ internal static class NcViewerRequests
         string? machineId,
         string contextTitle,
         string? batchOperationId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, ProductionPackageContext? context = null)
     {
         var bytes = await api.ReadGCodeFileBytesAsync(caseId, caseOperationId, releaseId, cancellationToken);
         // The Operation's tool table drives the preview's tools instead of the program's comments:
@@ -34,7 +34,7 @@ internal static class NcViewerRequests
         {
             try
             {
-                operationToolTable = NcViewerOperationToolTable.From(await api.GetToolPreparationAsync(batchOperationId, cancellationToken));
+                operationToolTable = NcViewerOperationToolTable.From(await api.GetToolPreparationAsync(batchOperationId, cancellationToken, context));
             }
             catch (Exception exception) when (IsTransient(exception))
             {

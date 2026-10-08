@@ -1,7 +1,7 @@
 <UserControl x:Class="Meimad.Planner.Client.Windows.Views.MaterialOrdersView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Background="{StaticResource CanvasBrush}">
+             Background="{DynamicResource CanvasBrush}">
   <Grid Margin="8">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
@@ -14,7 +14,7 @@
       <StackPanel>
         <TextBlock Text="Material Orders" FontSize="20" FontWeight="SemiBold" />
         <TextBlock Text="Kitaron material purchase-order lines with their reported delivery status. Kitaron owns this data; the list is read-only."
-                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                   Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" />
       </StackPanel>
     </DockPanel>
     <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
@@ -24,7 +24,7 @@
       <TextBlock Text="Status" VerticalAlignment="Center" Margin="18,0,6,0" />
       <ComboBox ItemsSource="{Binding StatusFilters}" SelectedItem="{Binding StatusFilter}" Width="200" />
     </StackPanel>
-    <TextBlock Grid.Row="2" Text="{Binding Status}" Foreground="{StaticResource MutedTextBrush}"
+    <TextBlock Grid.Row="2" Text="{Binding Status}" Foreground="{DynamicResource MutedTextBrush}"
                TextWrapping="Wrap" Margin="0,0,0,8" />
     <DataGrid Grid.Row="3" ItemsSource="{Binding Items}" AutoGenerateColumns="False" IsReadOnly="True"
               CanUserAddRows="False" HorizontalScrollBarVisibility="Auto" FrozenColumnCount="1"

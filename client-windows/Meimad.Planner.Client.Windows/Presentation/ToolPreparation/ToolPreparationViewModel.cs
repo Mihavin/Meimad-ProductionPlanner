@@ -403,9 +403,12 @@ internal sealed class ToolPreparationViewModel : ToolPreparationObservable
     private bool isBusy;
     private bool isDirty;
 
-    internal ToolPreparationViewModel(IPlannerApiClient api, string clientId, string userId, PlannerToolPreparation data)
+    private readonly ProductionPackageContext? context;
+
+    internal ToolPreparationViewModel(IPlannerApiClient api, string clientId, string userId, PlannerToolPreparation data, ProductionPackageContext? context = null)
     {
         this.api = api;
+        this.context = context ?? data.Context;
         this.clientId = clientId;
         this.userId = userId;
         this.data = data;
@@ -492,7 +495,7 @@ internal sealed class ToolPreparationViewModel : ToolPreparationObservable
         IsBusy = true;
         try
         {
-            var saved = await api.SaveToolPreparationAsync(data.BatchOperationId, update, clientId, userId);
+            var saved = await api.SaveToolPreparationAsync(data.BatchOperationId, update, clientId, userId, context: context);
             Apply(saved);
             Comment = string.Empty;
             IsDirty = false;
@@ -518,7 +521,7 @@ internal sealed class ToolPreparationViewModel : ToolPreparationObservable
         IsBusy = true;
         try
         {
-            Apply(await api.GetToolPreparationAsync(data.BatchOperationId));
+            Apply(await api.GetToolPreparationAsync(data.BatchOperationId, context: context));
             IsDirty = false;
             Status = SavedText;
         }

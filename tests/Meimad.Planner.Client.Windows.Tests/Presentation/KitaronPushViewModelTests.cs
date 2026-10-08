@@ -7,6 +7,24 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 public sealed class KitaronPushViewModelTests
 {
     [Fact]
+    public async Task Refused_push_retains_preview_precondition_until_the_user_refreshes_it()
+    {
+        var api = new FakeApiClient { RefusePush = true };
+        var viewModel = new KitaronPushViewModel();
+        viewModel.AttachSession(api, editor: true);
+        await viewModel.PreviewAsync();
+        await viewModel.PushNowAsync();
+        Assert.Equal("preview-1", api.LastPreviewStamp);
+        viewModel.AttachSession(api, editor: true);
+        await viewModel.PushNowAsync();
+        Assert.Equal("preview-1", api.LastPreviewStamp);
+        viewModel.AttachSession(null, editor: false);
+        viewModel.AttachSession(api, editor: true);
+        await viewModel.PushNowAsync();
+        Assert.Null(api.LastPreviewStamp);
+    }
+
+    [Fact]
     public async Task Each_pushable_column_offers_only_values_of_its_kind_and_saving_sends_every_choice()
     {
         var api = new FakeApiClient();
@@ -52,6 +70,7 @@ public sealed class KitaronPushViewModelTests
 
         await viewModel.PushNowAsync();
         Assert.Equal(1, api.Pushes);
+        Assert.Equal("preview-1", api.LastPreviewStamp);
         Assert.Equal("1 values written to Kitaron.", viewModel.StatusMessage);
         Assert.Single(viewModel.Runs);
     }
@@ -82,6 +101,7 @@ public sealed class KitaronPushViewModelTests
         internal int SavedVersion { get; private set; }
         internal IReadOnlyList<KitaronPushMappingModel> SavedMappings { get; private set; } = [];
         internal int Pushes { get; private set; }
+        internal string? LastPreviewStamp { get; private set; }
 
         public Task<KitaronPushSettingsResource> GetKitaronPushAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(Settings());
@@ -97,8 +117,9 @@ public sealed class KitaronPushViewModelTests
         public Task<KitaronPushResultInfo> PreviewKitaronPushAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(Result(null));
 
-        public Task<KitaronPushResultInfo> RunKitaronPushAsync(CancellationToken cancellationToken = default)
+        public Task<KitaronPushResultInfo> RunKitaronPushAsync(CancellationToken cancellationToken = default, string? previewStamp = null)
         {
+            LastPreviewStamp = previewStamp;
             if (RefusePush)
             {
                 throw new PlannerApiException(HttpStatusCode.Conflict, "kitaron_push_blocked",
@@ -127,6 +148,6 @@ public sealed class KitaronPushViewModelTests
         private static KitaronPushResultInfo Result(string? runId) => new(
             runId, runId is not null, DateTimeOffset.UtcNow, 1, 1,
             [new KitaronPushChangeInfo(41043, "10", 5001, "PN-1", "Mill", "OperationQty", null, "6")],
-            ["1 operations have no Kitaron operation."]);
+            ["1 operations have no Kitaron operation."], "preview-1");
     }
 }

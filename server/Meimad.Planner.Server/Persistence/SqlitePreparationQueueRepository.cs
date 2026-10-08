@@ -13,16 +13,15 @@ internal sealed class SqlitePreparationQueueRepository(SqliteDatabase database)
         await using var transaction = connection.BeginTransaction(deferred: true);
         var metadata = await ReadMetadataAsync(connection, transaction, cancellationToken);
         var result = new List<PreparationQueueSource>(metadata.Count);
-        var contexts = await SqliteProductionReadinessContextReader.ReadManyAsync(
-            connection, transaction,
-            metadata.Select(row => row.BatchOperationId).ToArray(),
-            cancellationToken);
+        var contexts = (await SqliteProductionPackageContext.ListAsync(connection,transaction,null,cancellationToken))
+            .ToDictionary(value=>value.ProductionRunOutputId,StringComparer.Ordinal);
 
         foreach (var row in metadata)
         {
-            if (!contexts.TryGetValue(row.BatchOperationId, out var context)) continue;
-            var hasPackage = await HasCurrentValidPackageAsync(
-                connection, transaction, row.BatchOperationId, cancellationToken);
+            if (!contexts.TryGetValue(row.OutputId,out var exact)) continue;
+            var context=await SqliteProductionReadinessContextReader.ReadForPackageAsync(connection,transaction,exact,cancellationToken);
+            exact=exact with { ProcessRevisionId=context.ActiveProcessRevisionId };
+            var hasPackage=await SqliteProductionPackageRepository.ReadCurrentAsync(connection,transaction,exact,cancellationToken) is not null;
             result.Add(new(
                 row.BatchOperationId,
                 row.ProductionRunId,
@@ -39,7 +38,7 @@ internal sealed class SqlitePreparationQueueRepository(SqliteDatabase database)
                 context,
                 hasPackage,
                 row.CaseId,
-                row.CaseOperationId));
+                row.CaseOperationId, exact, row.RecipeCaseId, row.RecipeCaseOperationId));
         }
 
         await transaction.CommitAsync(cancellationToken);
@@ -61,23 +60,19 @@ internal sealed class SqlitePreparationQueueRepository(SqliteDatabase database)
                    run.id,cases.id,operation.source_case_operation_id,
                    (SELECT event.event_type
                     FROM production_run_workflow_events event
-                    WHERE event.production_run_id=run.id
+                    WHERE event.production_run_id=run.id AND event.machine_id=machine.id
                     ORDER BY event.server_received_at DESC,event.id DESC
-                    LIMIT 1)
+                    LIMIT 1), output.id, recipe.case_id, recipe.id
             FROM batch_operations operation
             JOIN production_batches batch ON batch.id=operation.production_batch_id
             JOIN cases ON cases.id=batch.case_id
-            JOIN machine_assignments assignment ON assignment.batch_operation_id=operation.id
-             AND assignment.released_at IS NULL
+            JOIN production_run_outputs output ON output.batch_operation_id=operation.id
+            JOIN production_run_programs program ON program.id=output.production_run_program_id
+            LEFT JOIN process_revisions process ON process.id=COALESCE(program.production_process_revision_id,program.process_revision_id)
+            LEFT JOIN case_operations recipe ON recipe.id=process.case_operation_id
+            JOIN production_runs run ON run.id=program.production_run_id
+            JOIN machine_assignments assignment ON assignment.production_run_id=run.id AND assignment.released_at IS NULL
             JOIN machines machine ON machine.id=assignment.machine_id
-            LEFT JOIN production_runs run ON run.id=(
-                SELECT program.production_run_id
-                FROM production_run_programs program
-                JOIN production_run_outputs output
-                  ON output.production_run_program_id=program.id
-                WHERE output.batch_operation_id=operation.id
-                ORDER BY program.sequence_position,program.id
-                LIMIT 1)
             WHERE operation.status <> 'completed';
             """;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -88,68 +83,13 @@ internal sealed class SqlitePreparationQueueRepository(SqliteDatabase database)
                 reader.GetString(3), reader.GetString(4), reader.GetString(5),
                 reader.GetString(6), reader.GetString(7), reader.GetInt32(8),
                 reader.GetString(9), Nullable(reader, 10), Nullable(reader, 13),
-                reader.GetString(11), reader.GetString(12)));
+                reader.GetString(11), reader.GetString(12), reader.GetString(14), Nullable(reader, 15), Nullable(reader, 16)));
         }
         return rows;
     }
 
     private static string? Nullable(SqliteDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
-
-    private static async Task<bool> HasCurrentValidPackageAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        string operationId,
-        CancellationToken cancellationToken)
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT EXISTS(
-                SELECT 1
-                FROM production_package_current current
-                JOIN production_packages package ON package.id=current.production_package_id
-                JOIN machine_assignments assignment
-                  ON assignment.id=package.machine_assignment_id
-                 AND assignment.batch_operation_id=package.batch_operation_id
-                 AND assignment.machine_id=package.machine_id
-                 AND assignment.released_at IS NULL
-                JOIN batch_operations operation ON operation.id=package.batch_operation_id
-                JOIN process_revisions process
-                  ON process.case_operation_id=operation.source_case_operation_id
-                 AND process.is_active=1
-                 AND process.tool_table_release_id=package.tool_table_release_id
-                LEFT JOIN cnc_verification_settings settings ON settings.machine_id=package.machine_id
-                WHERE current.batch_operation_id=$operationId
-                  AND ((package.execution_mode='MANUAL' AND package.gcode_release_id IS NULL)
-                       OR (package.execution_mode='CNC_GCODE'
-                           AND package.gcode_release_id=COALESCE(
-                               assignment.selected_gcode_release_id,
-                               (SELECT release.id FROM gcode_releases release
-                                JOIN machine_supported_postprocessors supported
-                                  ON supported.machine_id=package.machine_id
-                                 AND supported.postprocessor_id=release.postprocessor_id
-                                WHERE release.process_revision_id=process.id
-                                  AND release.post_specific_revision=(
-                                      SELECT MAX(latest.post_specific_revision)
-                                      FROM gcode_releases latest
-                                      WHERE latest.process_revision_id=release.process_revision_id
-                                        AND latest.postprocessor_id=release.postprocessor_id)
-                                ORDER BY release.id LIMIT 1))))
-                  AND ((package.verification_enabled=0 AND COALESCE(settings.enabled,0)=0)
-                       OR (package.verification_enabled=1 AND settings.enabled=1
-                           AND settings.version=package.verification_configuration_version
-                           AND settings.expected_macro_version=package.verification_macro_version))
-                  AND (package.tool_offset_mode<>'MEASURED'
-                       OR package.tool_preparation_id IS (
-                           SELECT preparation.id FROM tool_preparations preparation
-                           WHERE preparation.batch_operation_id=package.batch_operation_id
-                             AND preparation.machine_id=package.machine_id
-                           ORDER BY preparation.version_number DESC LIMIT 1)));
-            """;
-        command.Parameters.AddWithValue("$operationId", operationId);
-        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == 1;
-    }
 
     private sealed record MetadataRow(
         string BatchOperationId,
@@ -165,5 +105,5 @@ internal sealed class SqlitePreparationQueueRepository(SqliteDatabase database)
         string? ProductionRunId,
         string? LatestWorkflowEventType,
         string CaseId,
-        string CaseOperationId);
+        string CaseOperationId, string OutputId, string? RecipeCaseId, string? RecipeCaseOperationId);
 }

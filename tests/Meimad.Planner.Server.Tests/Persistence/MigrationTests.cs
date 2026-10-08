@@ -82,7 +82,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(97L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(100L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -368,7 +368,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(97L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(100L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -1658,7 +1658,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 98;";
+            command.CommandText = "PRAGMA user_version = 101;";
             await command.ExecuteNonQueryAsync();
         }
 
@@ -1676,6 +1676,23 @@ public sealed class MigrationTests
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
+            DROP TRIGGER IF EXISTS project_manual_timing_after_insert;
+            DROP VIEW IF EXISTS manual_timing_aggregate;
+            DROP VIEW IF EXISTS manual_timing_warnings;
+            DROP VIEW IF EXISTS manual_timing_samples;
+            DROP VIEW IF EXISTS manual_setup_boundaries;
+            DROP VIEW IF EXISTS manual_timing_source;
+            DROP TABLE IF EXISTS manual_timing_reports;
+            DROP TRIGGER IF EXISTS package_publication_insert;
+            DROP TRIGGER IF EXISTS package_publication_update;
+            DROP TRIGGER IF EXISTS package_publication_delete;
+            DROP TABLE IF EXISTS production_package_requests;
+            DROP TABLE IF EXISTS production_package_publication_versions;
+            DELETE FROM schema_migrations WHERE version = 100;
+            DROP TABLE IF EXISTS production_package_context_current;
+            DROP TABLE IF EXISTS production_package_contexts;
+            DELETE FROM schema_migrations WHERE version = 99;
+            DELETE FROM schema_migrations WHERE version = 98;
             DROP TRIGGER operational_anomaly_from_workflow_anomaly;
             DROP TRIGGER operational_anomaly_from_workflow_event;
             DROP TRIGGER operational_anomaly_from_expired_verification;

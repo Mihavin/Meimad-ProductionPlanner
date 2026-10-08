@@ -14,10 +14,20 @@ public partial class ProductionReadinessDialog : Window
         InitializeComponent();
         this.readiness = readiness;
         OperationTitle.Text = operationDisplayName;
-        Summary.Text = readiness.IsReadyForProduction
-            ? "Ready for Production"
-            : readiness.Summary;
+        Summary.Text = readiness.Summary;
         Components.ItemsSource = readiness.Components;
+        ActionDecisions.ItemsSource = readiness.Actions?.Select(action => new
+        {
+            Action = action.Action switch
+            {
+                "Plan" => "Planning", "CreatePackage" => "Create package",
+                "RecordSetupStart" => "Report setup start", "RunStart" => "Start run",
+                "RecordProduction" => "Record production", _ => action.Action
+            },
+            State = action.IsAllowed ? "Ready" : "Blocked",
+            Reasons = action.Reasons.Where(reason => reason.Classification != "SATISFIED")
+                .Select(reason => new { Classification = reason.Classification == "BLOCKING" ? "Blocked" : "Needs attention", reason.Message }).ToArray()
+        }).ToArray();
         Release.ItemsSource = readiness.CompatibleGCodeReleases;
         Release.DisplayMemberPath = nameof(PlannerReadinessRelease.DisplayName);
         Release.SelectedValuePath = nameof(PlannerReadinessRelease.GCodeReleaseId);

@@ -1,8 +1,8 @@
-<Window x:Class="Meimad.Planner.Client.Windows.Views.OperationTimeStatisticsWindow"
+<Window Style="{DynamicResource {x:Type Window}}" x:Class="Meimad.Planner.Client.Windows.Views.OperationTimeStatisticsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Operation statistics" Width="1080" Height="720" MinWidth="760" MinHeight="480"
-        WindowStartupLocation="CenterOwner" Background="{StaticResource CanvasBrush}">
+        WindowStartupLocation="CenterOwner" Background="{DynamicResource CanvasBrush}">
   <Grid Margin="12">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
@@ -17,7 +17,7 @@
     <StackPanel Margin="0,0,0,8">
       <TextBlock x:Name="HeaderText" FontSize="16" FontWeight="SemiBold" />
       <TextBlock x:Name="OperationTimesText" Margin="0,4,0,0" TextWrapping="Wrap" />
-      <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="#5A6470"
+      <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}"
                  Text="Planning uses the real median of this Operation on the assigned Machine (the last 10 measurements); without one, the NC time; without NC, the Operation's own time. Apply writes a time to the Case Operation: pending Work Orders take it now, released ones on Refresh from Case." />
     </StackPanel>
     <TextBlock Grid.Row="1" Text="Times by Machine" FontWeight="SemiBold" Margin="0,4,0,4" />

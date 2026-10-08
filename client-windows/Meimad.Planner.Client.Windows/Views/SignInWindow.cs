@@ -1,7 +1,6 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
-using System.Windows.Media;
 using Meimad.Planner.Client.Windows.Presentation;
 
 namespace Meimad.Planner.Client.Windows.Views;
@@ -21,7 +20,7 @@ internal sealed class SignInWindow : Window
     private readonly PasswordBox password = new() { Padding = new Thickness(4) };
     private readonly PasswordBox newPassword = new() { Padding = new Thickness(4) };
     private readonly PasswordBox confirmPassword = new() { Padding = new Thickness(4) };
-    private readonly TextBlock error = new() { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DarkRed, Margin = new Thickness(0, 8, 0, 0) };
+    private readonly TextBlock error = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) };
     private readonly Button submit = new() { IsDefault = true, MinWidth = 110, Margin = new Thickness(0, 0, 8, 0) };
     private readonly StackPanel userNameRow;
     private readonly StackPanel displayNameRow;
@@ -41,6 +40,8 @@ internal sealed class SignInWindow : Window
     private SignInWindow(MainWindowViewModel viewModel, bool changePassword)
     {
         this.viewModel = viewModel;
+        error.SetResourceReference(TextBlock.ForegroundProperty, "ErrorTextBrush");
+        submit.SetResourceReference(StyleProperty, "PrimaryButton");
         Title = "Sign in — Meimad Production Planner";
         Width = 440;
         SizeToContent = SizeToContent.Height;

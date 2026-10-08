@@ -1,0 +1,42 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:presentation="clr-namespace:Meimad.Planner.Client.Windows.Presentation">
+        <ResourceDictionary.MergedDictionaries>
+          <ResourceDictionary Source="Workbench.xaml" />
+        </ResourceDictionary.MergedDictionaries>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <presentation:InverseBooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter" />
+        <SolidColorBrush x:Key="BlueBrush" Color="#1E88E5" />
+        <SolidColorBrush x:Key="GreenBrush" Color="#2E7D32" />
+        <SolidColorBrush x:Key="YellowBrush" Color="#FBC02D" />
+        <SolidColorBrush x:Key="OrangeBrush" Color="#F57C00" />
+        <SolidColorBrush x:Key="RedBrush" Color="#C62828" />
+        <SolidColorBrush x:Key="GreyBrush" Color="#9E9E9E" />
+        <SolidColorBrush x:Key="TechnicalPaperBrush" Color="#FAFAFA" />
+        <SolidColorBrush x:Key="TechnicalCalendarBrush" Color="#E0E4E8" />
+        <SolidColorBrush x:Key="TechnicalCalendarEdgeBrush" Color="#BDC6CD" />
+
+        <!-- Cropped from the supplied UI button-icon template. Only controls with a
+             direct template match use these assets; all other actions remain text. -->
+        <BitmapImage x:Key="UiButtonIconSheet" UriSource="pack://application:,,,/Meimad.Planner.Client.Windows;component/Assets/ui-button-icons-template.png" />
+        <CroppedBitmap x:Key="PlanningBoardButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="40,294,160,180" />
+        <CroppedBitmap x:Key="TimelineButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="215,294,160,180" />
+        <CroppedBitmap x:Key="SettingsButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="390,294,160,180" />
+        <CroppedBitmap x:Key="SearchButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="565,294,160,180" />
+        <CroppedBitmap x:Key="FilterButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="740,294,160,180" />
+        <CroppedBitmap x:Key="OrdersButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="915,294,160,180" />
+        <CroppedBitmap x:Key="OperationsButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="1090,294,160,180" />
+        <CroppedBitmap x:Key="MachinesButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="1265,294,160,180" />
+        <CroppedBitmap x:Key="CalendarButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="40,556,160,180" />
+        <CroppedBitmap x:Key="ResourcesButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="215,556,160,180" />
+        <CroppedBitmap x:Key="ImportButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="390,556,160,180" />
+        <CroppedBitmap x:Key="ReportsButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="565,556,160,180" />
+        <CroppedBitmap x:Key="AssignmentsButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="740,556,160,180" />
+        <CroppedBitmap x:Key="NotificationsButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="915,556,160,180" />
+        <CroppedBitmap x:Key="UsersButtonIcon" Source="{StaticResource UiButtonIconSheet}" SourceRect="1265,556,160,180" />
+
+        <Style x:Key="TemplateIconButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="4" />
+            <Setter Property="MinWidth" Value="34" />
+            <Setter Property="MinHeight" Value="34" />
+        </Style>
+
+      </ResourceDictionary>

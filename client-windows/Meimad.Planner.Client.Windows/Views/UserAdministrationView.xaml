@@ -1,7 +1,7 @@
 <UserControl x:Class="Meimad.Planner.Client.Windows.Views.UserAdministrationView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Background="{StaticResource CanvasBrush}">
+             Background="{DynamicResource CanvasBrush}">
   <Grid Margin="8">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
@@ -13,7 +13,7 @@
       <StackPanel>
         <TextBlock Text="Users and permissions" FontSize="20" FontWeight="SemiBold" />
         <TextBlock Text="Accounts sign in to the Planner; their user types decide what they may change. Everyone may view Cases, the Planning Board, the Timeline, NC files, tool tables and the tool library, and create Production Packages."
-                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                   Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" />
       </StackPanel>
     </DockPanel>
     <TextBlock Grid.Row="1" Text="{Binding Status}" TextWrapping="Wrap" Margin="0,0,0,8" FontWeight="SemiBold" />
@@ -112,7 +112,7 @@
         <Border Grid.Row="2" BorderBrush="{StaticResource GreyBrush}" BorderThickness="1" Padding="10" Margin="0,8,0,0">
           <StackPanel>
             <TextBlock Text="{Binding TypeEditorTitle}" FontWeight="SemiBold" Margin="0,0,0,6" />
-            <TextBlock Text="{Binding TypeNote}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,6" />
+            <TextBlock Text="{Binding TypeNote}" TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,6" />
             <TextBlock Text="Name" />
             <TextBox Text="{Binding TypeName, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsTypeEditable}" />
             <TextBlock Text="Description" Margin="0,6,0,0" />
@@ -124,7 +124,7 @@
                   <CheckBox IsChecked="{Binding IsSelected}" IsEnabled="{Binding IsEnabled}" Margin="0,2">
                     <StackPanel>
                       <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                      <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" />
+                      <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" />
                     </StackPanel>
                   </CheckBox>
                 </DataTemplate>

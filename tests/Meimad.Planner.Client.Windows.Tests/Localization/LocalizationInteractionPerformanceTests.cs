@@ -18,6 +18,12 @@ internal static class LocalizationInteractionPerformanceAudit
     {
         Window? probeWindow = null;
         var originalLanguage = LocalizationService.Current.CurrentLanguage;
+        // Keep the benchmark's original viewport stable when the application's default
+        // window size changes; retain the same per-interaction and total time budgets.
+        var originalWidth = window.Width;
+        var originalHeight = window.Height;
+        window.Width = 1380;
+        window.Height = 900;
         try
         {
             var workspaceTabs = Assert.IsType<TabControl>(window.FindName("WorkspaceTabs"));
@@ -125,6 +131,8 @@ internal static class LocalizationInteractionPerformanceAudit
         finally
         {
             probeWindow?.Close();
+            window.Width = originalWidth;
+            window.Height = originalHeight;
             LocalizationService.Current.SetLanguage(originalLanguage, persist: false);
             Flush(window.Dispatcher);
         }

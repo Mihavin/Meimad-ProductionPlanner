@@ -90,6 +90,12 @@ public sealed class ProductionRunCancelApiTests
             INSERT INTO cases(id,part_number,name,working_folder_path)VALUES('case-a','A','A','C:\\A'),('case-b','B','B','C:\\B');
             INSERT INTO case_operations(id,case_id,operation_number,route_position,name)VALUES('case-op-a','case-a',10,0,'A'),('case-op-b','case-b',10,0,'B');
             INSERT INTO production_batches(id,case_id,batch_number,status,planned_quantity)VALUES('batch-a','case-a','A-1','in_production',4),('batch-b','case-b','B-1','in_production',2);
+            INSERT INTO verified_material_receipts(id,case_id,quantity,received_at,verified_at,verified_by,source,created_at,updated_at)
+            VALUES('receipt-a','case-a',4,'2026-08-23','2026-08-23','test','LOCAL_VERIFIED','2026-08-23','2026-08-23'),
+                  ('receipt-b','case-b',2,'2026-08-23','2026-08-23','test','LOCAL_VERIFIED','2026-08-23','2026-08-23');
+            INSERT INTO batch_material_reservations(id,receipt_id,production_batch_id,quantity,reserved_at,reserved_by,created_at,updated_at)
+            VALUES('reserve-a','receipt-a','batch-a',4,'2026-08-23','test','2026-08-23','2026-08-23'),
+                  ('reserve-b','receipt-b','batch-b',2,'2026-08-23','test','2026-08-23','2026-08-23');
             INSERT INTO batch_operations(id,production_batch_id,source_case_operation_id,operation_number,route_position,name,status,actual_start,actual_machine_id)VALUES('op-a','batch-a','case-op-a',10,0,'A','in_progress','2026-08-23T10:00:00Z','machine'),('op-b','batch-b','case-op-b',10,0,'B','in_progress','2026-08-23T10:00:00Z','machine');
             INSERT INTO production_runs(id,status,shared_setup_seconds,setup_snapshot_json,structure_locked_at,version,created_at,updated_at)VALUES('run-1','PLANNED',0,'{}',NULL,1,'2026-08-23T10:00:00Z','2026-08-23T10:00:00Z');
             INSERT INTO production_run_programs(id,production_run_id,manufacturing_program_id,sequence_position,target_cycle_count,completed_cycle_count,status,cycle_seconds_snapshot,legacy_unmanaged,version,created_at,updated_at)VALUES('program-1','run-1','case-operation:case-op-a',0,2,0,'ACTIVE',5,1,1,'2026-08-23T10:00:00Z','2026-08-23T10:00:00Z');

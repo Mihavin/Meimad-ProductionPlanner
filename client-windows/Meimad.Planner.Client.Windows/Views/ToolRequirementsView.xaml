@@ -1,7 +1,7 @@
 <UserControl x:Class="Meimad.Planner.Client.Windows.Views.ToolRequirementsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Background="{StaticResource CanvasBrush}">
+             Background="{DynamicResource CanvasBrush}">
   <UserControl.Resources>
     <CollectionViewSource x:Key="GroupedTools" Source="{Binding Items}">
       <CollectionViewSource.GroupDescriptions>
@@ -28,7 +28,7 @@
       <StackPanel>
         <TextBlock Text="Tool Requirements" FontSize="20" FontWeight="SemiBold" />
         <TextBlock Text="The tools the operations planned on the Timeline need in the period, from their released tool tables, by material, type, size and name. One copy moves to another machine when its uses do not overlap in time."
-                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                   Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" />
       </StackPanel>
     </DockPanel>
     <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
@@ -40,7 +40,7 @@
       <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Width="240"
                ToolTip="Tool name, type, material, machine, diameter, work order or part" />
     </StackPanel>
-    <TextBlock Grid.Row="2" Text="{Binding Status}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8" />
+    <TextBlock Grid.Row="2" Text="{Binding Status}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8" />
     <DataGrid Grid.Row="3" ItemsSource="{Binding Source={StaticResource GroupedTools}}" SelectedItem="{Binding SelectedItem}"
               AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HorizontalScrollBarVisibility="Auto"
               AutomationProperties.Name="Tool requirements">

@@ -67,7 +67,8 @@ internal static class KitaronPushPlanner
                 if (value is null) continue;
                 row.Values.TryGetValue(mapping.KitaronColumn, out var current);
                 if (Same(current, value)) continue;
-                writes.Add(new KitaronPushWrite(row.RowId, row.WorkOrderNumber, mapping.KitaronColumn, value));
+                writes.Add(new KitaronPushWrite(row.RowId, row.WorkOrderNumber, mapping.KitaronColumn, value, row with
+                { Values = new Dictionary<string, object?>(row.Values, StringComparer.OrdinalIgnoreCase) }));
                 changes.Add(new KitaronPushChange(
                     row.WorkOrderNumber, row.ActionNumber.Trim(), row.RowId, operation.PartNumber, operation.OperationName,
                     mapping.KitaronColumn, Format(current), Format(value)!));
