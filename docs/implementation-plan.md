@@ -2,7 +2,7 @@
 
 ## Audit handoff 2026-10-08
 
-The supplied [implementation backlog](tasks/audit-and-local-ai.md) is retained as task input, not as evidence of completion. The supplied HTML renders the same backlog; it is not an instruction to replace WPF with a website. Work starts from `701c58261ccb0a3d2fb5c8c91df941419c605e38`, compared with audited `b13f841886e910c5debcc8f635a207912f833547`. The initial worktree was clean. This checkout has 201 changed files since the audit, schema v96 and application version 0.1.180; .NET SDK 10.0.303 is available on this Windows workstation. Changes described below are uncommitted working-tree changes, not a deployed release.
+The supplied [implementation backlog](tasks/audit-and-local-ai.md) is retained as task input, not as evidence of completion. The supplied HTML renders the same backlog; it is not an instruction to replace WPF with a website. Work starts from `701c58261ccb0a3d2fb5c8c91df941419c605e38`, compared with audited `b13f841886e910c5debcc8f635a207912f833547`. The initial worktree was clean. This checkout has 201 changed files since the audit, schema v96 and application version 0.1.180; .NET SDK 10.0.303 is available on this Windows workstation. C02/C06 changes were committed as `2281d7e` on 2026-10-08. A commit or local installer build is not a production deployment.
 
 ### P00: current finding inventory
 
@@ -54,6 +54,8 @@ Package creation continues to require any signed-in Windows account, as specifie
 - Before production deployment, quiesce writes and retain a verified DB backup **plus** existing immutable artifact trees, configuration and protected-key recovery material under the current operator procedure. D01 is not implemented, so a DB file alone must not be represented as a complete recovery set. Run v97 migration with the Server, refresh/upgrade Windows clients, inspect migrated pins and verify package access. To roll back use matching prior binaries and a consistent pre-upgrade recovery set; do not run old binaries against v97 or discard real facts generated after backup without reconciliation.
 
 ### Implemented slices and validation
+
+- **Build 2026-10-08:** `installer/build-installers.ps1` produced self-contained win-x64 Release client and Server MSI packages at version `0.1.181`, with zero warnings/errors in both MSI builds. `installer/verify-installers.ps1 -ExpectedVersion 0.1.181` passed: 720 client files, 452 Server files, service recovery authoring, native dependencies and bundled client manifest/hash verified. Both distributed SHA-256 values match `installer/artifacts/SHA256SUMS.txt`. Packages were extracted for verification only; no production installation, service upgrade or database migration was performed.
 
 - **C02:** atomic expected-version comparison for set/clear, persistent versions across deletion/recreation, requirement/route ownership and resource class/activity/type/capacity/capability/Skill checks. Calendar contention remains the allocator's responsibility. Windows sends the version observed in the Timeline and preserves its displayed selection on conflict. Changes span server repository/API/source projection, schema v97, Windows API/models/view model and tests.
 - **C06:** duplicate cycle events compare original Run/program/observation instant before returning a receipt. UTC-equivalent offsets compare equal; different or nonexistent targets conflict; parallel identical requests count once.
