@@ -27,7 +27,7 @@ public sealed class PackagePublicationTests
             PRAGMA user_version=99;
             """);
         await fixture.App.Services.GetRequiredService<DatabaseMigrator>().MigrateAsync();
-        Assert.Equal(100L, await fixture.ScalarAsync("PRAGMA user_version;"));
+        Assert.Equal(101L, await fixture.ScalarAsync("PRAGMA user_version;"));
         Assert.Equal(1L, await fixture.ScalarAsync("SELECT version FROM production_package_publication_versions;"));
         Assert.Equal(baseline.ManifestHash, (await Service(fixture).ReadCurrentAsync("operation-package"))!.ManifestHash);
         var replacement = await Service(fixture).CreateAsync("operation-package", "test", requestId: "after-upgrade");

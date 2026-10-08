@@ -111,10 +111,14 @@ public static class ServerApplication
             ContentRootPath = AppContext.BaseDirectory
         });
 
+        var recoveryConfiguration = builder.Configuration["RecoveryConfigurationFile"];
+        if (!string.IsNullOrWhiteSpace(recoveryConfiguration)) builder.Configuration.AddJsonFile(Path.GetFullPath(recoveryConfiguration), optional: false);
         builder.Configuration
             .AddEnvironmentVariables(prefix: "MEIMAD_")
             .AddCommandLine(args);
 
+        if (builder.Configuration.GetValue<bool>("Recovery:ActivationPending"))
+            throw new InvalidOperationException("Recovery is staged only. Follow the recovery activation checklist and explicitly clear Recovery:ActivationPending before starting the Server.");
         var serverOptions = ServerOptions.FromConfiguration(builder.Configuration);
         var databaseOptions = DatabaseOptions.FromConfiguration(
             builder.Configuration,
@@ -169,6 +173,11 @@ public static class ServerApplication
             .SetApplicationName("Meimad.Planner.Server");
         builder.Services.AddSingleton<DatabaseMigrator>();
         builder.Services.AddSingleton<SqliteBackupService>();
+        builder.Services.AddSingleton(RecoveryOptions.Read(builder.Configuration));
+        builder.Services.AddSingleton<RecoverySetService>();
+        if (builder.Configuration["DataProtection:RecoveryKeyFolder"] is { Length: > 0 } recoveredKeys)
+            builder.Services.Configure<Microsoft.AspNetCore.DataProtection.KeyManagement.KeyManagementOptions>(options =>
+                options.XmlRepository = new RecoveryKeys.DpapiRecoveryKeyRepository(Path.GetFullPath(recoveredKeys)));
         builder.Services.AddSingleton<IServerMaintenanceRepository, SqliteServerMaintenanceRepository>();
         builder.Services.AddSingleton<ServerMaintenanceService>();
         builder.Services.AddSingleton<IAdministrativeSetupRepository, SqliteAdministrativeSetupRepository>();

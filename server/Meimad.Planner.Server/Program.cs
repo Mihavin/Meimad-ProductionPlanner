@@ -4,6 +4,7 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (await Backup.RecoveryCommand.TryRunAsync(args) is { } recoveryExit) return recoveryExit;
         WebApplication? application = null;
 
         try

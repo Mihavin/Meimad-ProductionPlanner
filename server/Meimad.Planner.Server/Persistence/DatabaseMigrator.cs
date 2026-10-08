@@ -105,8 +105,11 @@ internal sealed class DatabaseMigrator
         new SchemaV97AuxiliaryPinVersionsMigration(),
         new SchemaV98ManualTimingMigration(),
         new SchemaV99ProductionPackageContextMigration(),
-        new SchemaV100PackagePublicationMigration()
+        new SchemaV100PackagePublicationMigration(),
+        new SchemaV101KitaronPushIntentMigration()
     ];
+
+    internal static int LatestVersion => Migrations.Max(m => m.Version);
 
     private readonly SqliteDatabase database;
     private readonly ILogger<DatabaseMigrator> logger;

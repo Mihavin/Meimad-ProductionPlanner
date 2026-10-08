@@ -181,6 +181,8 @@ Acceptance on an isolated representative SQL Server: modify a field, close/stop 
 
 ### C08 — record durable ERP intent and reconcile unknown outcomes
 
+**2026-10-08 status: implemented locally; isolated SQL Server acceptance remains pending.** Schema v101 retains immutable intent and lifecycle, claims once before writing, recovers interrupted work without replay, distinguishes proven rollback from uncertain commit/receipt outcomes, and provides versioned reconciliation plus explicit acknowledgment in Windows. Matching ERP values remain non-attributable evidence. See the implementation plan for verification and deployment limits.
+
 **Audit:** F9. **Start at:** `KitaronPushService.cs`, `Persistence/SqliteKitaronPushRepository.cs`, push result DTOs and `KitaronPushViewModel.cs`.
 
 Persist the intended field changes, source/target context, correlation ID and comparison values before external write. Use explicit lifecycle states such as `Prepared`, `Writing`, `Succeeded`, `FailedBeforeCommit`, `OutcomeUnknown`, `Reconciled`. Record cancellation and process restart consistently. A local receipt failure or connection loss around ERP commit must never display “nothing was written” without evidence.

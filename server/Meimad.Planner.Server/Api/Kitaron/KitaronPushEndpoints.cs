@@ -16,6 +16,9 @@ internal static class KitaronPushEndpoints
         endpoints.MapPost("/api/v1/kitaron/push/preview", PreviewAsync);
         endpoints.MapPost("/api/v1/kitaron/push/run", RunAsync);
         endpoints.MapGet("/api/v1/kitaron/push/runs/{runId}/changes", ChangesAsync);
+        endpoints.MapGet("/api/v1/kitaron/push/runs/{runId}/intent", IntentAsync);
+        endpoints.MapPost("/api/v1/kitaron/push/runs/{runId}/reconcile", ReconcileAsync);
+        endpoints.MapPost("/api/v1/kitaron/push/runs/{runId}/acknowledge", AcknowledgeAsync);
     }
 
     private static async Task<IResult> GetAsync(KitaronPushService service, CancellationToken cancellationToken)
@@ -79,8 +82,32 @@ internal static class KitaronPushEndpoints
         string runId, KitaronPushService service, CancellationToken cancellationToken) =>
         Results.Ok(new { items = await service.ListChangesAsync(runId, cancellationToken) });
 
+    private static async Task<IResult> IntentAsync(string runId, HttpContext context, KitaronPushService service, CancellationToken token)
+    {
+        try { return Results.Ok(await service.ReadIntentAsync(runId, token)); }
+        catch (KitaronPushBlockedException exception) { return Blocked(exception, context); }
+    }
+
+    private static async Task<IResult> ReconcileAsync(string runId, KitaronPushReviewRequest request,
+        HttpContext context, KitaronPushService service, CancellationToken token)
+    {
+        if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out var user, out var error)) return error!;
+        try { return Results.Ok(await service.ReconcileAsync(runId, request.ExpectedVersion, user!.UserName, token)); }
+        catch (KitaronPushBlockedException exception) { return Blocked(exception, context); }
+    }
+
+    private static async Task<IResult> AcknowledgeAsync(string runId, KitaronPushReviewRequest request,
+        HttpContext context, KitaronPushService service, CancellationToken token)
+    {
+        if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out var user, out var error)) return error!;
+        try { return Results.Ok(await service.AcknowledgeAsync(runId, request.ExpectedVersion, user!.UserName, token)); }
+        catch (KitaronPushBlockedException exception) { return Blocked(exception, context); }
+    }
+
     private static IResult Blocked(KitaronPushBlockedException exception, HttpContext context) =>
-        PlanningHttpSupport.Error(StatusCodes.Status409Conflict, exception is KitaronPushConflictException ? "kitaron_push_conflict" : "kitaron_push_blocked", exception.Message, context);
+        PlanningHttpSupport.Error(StatusCodes.Status409Conflict, exception is KitaronPushOutcomeUnknownException ? "kitaron_push_outcome_unknown"
+                : exception is KitaronPushConflictException ? "kitaron_push_conflict" : "kitaron_push_blocked",
+            exception.Message, context);
 }
 
 internal sealed record KitaronPushSettingsRequest(
@@ -106,3 +133,5 @@ internal sealed record KitaronPushResponse(
         settings.Enabled, settings.IntervalMinutes, settings.Mappings, settings.Version, settings.UpdatedAt,
         settings.UpdatedBy, KitaronPushCatalog.Targets, KitaronPushCatalog.Sources, runs);
 }
+
+internal sealed record KitaronPushReviewRequest(int ExpectedVersion);

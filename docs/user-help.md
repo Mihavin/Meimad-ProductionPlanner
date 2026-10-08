@@ -1,5 +1,12 @@
 # Meimad Production Planner — User Help
 
+## Reviewing an uncertain Kitaron push
+
+If a push shows **Outcome unknown**, do not push again. Select it in **Setup > Kitaron Push** to inspect the intended changes. **Inspect ERP values** reads current ERP values without writing them. Matching values do not prove this push committed; inspect the ERP history when needed.
+
+After reviewing the evidence, check **I reviewed the uncertain outcome** and choose **Acknowledge review**. This records your review and permits a future fresh push. It does not retry the old push or mark it successful. Setup permission is required. Uncertain counts show **Unconfirmed**, rather than zero confirmed as proof of no write. If the Server cannot save any receipt, the run may remain **Writing** until a Server restart recovers it for review.
+
+
 This guide is for planners, supervisors, setup personnel, and machine operators. The Planner is a factory-local, client/server application. The Server is the source of truth; the Windows client edits planning data, while the Timeline and TV Dashboard are read-only. E-Ink package/planning views are read-only and the approved tablet workflow adds only `SEND_TO_QC`.
 
 ## 1. Start here

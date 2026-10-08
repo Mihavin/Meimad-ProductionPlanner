@@ -18,6 +18,8 @@ internal sealed class KitaronPushViewModel : INotifyPropertyChanged
     private IPlannerApiClient? apiClient;
     private bool isEditor;
     private string? previewStamp;
+    private KitaronPushIntentInfo? reviewedIntent;
+    private bool reviewConfirmed;
     private bool isBusy;
     private bool enabled;
     private string intervalMinutes = "15";
@@ -33,6 +35,9 @@ internal sealed class KitaronPushViewModel : INotifyPropertyChanged
         SaveCommand = new AsyncCommand(SaveAsync, () => CanEdit && Columns.Count > 0);
         PreviewCommand = new AsyncCommand(PreviewAsync, () => CanEdit);
         PushNowCommand = new AsyncCommand(PushNowAsync, () => CanEdit);
+        ReconcileCommand = new AsyncCommand(() => ReviewAsync(false), () => CanEdit && reviewedIntent?.State == "OutcomeUnknown");
+        AcknowledgeCommand = new AsyncCommand(() => ReviewAsync(true), () => CanEdit && ReviewConfirmed
+            && reviewedIntent?.State == "OutcomeUnknown" && reviewedIntent.Reconciliations.Count > 0);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -51,6 +56,13 @@ internal sealed class KitaronPushViewModel : INotifyPropertyChanged
     public AsyncCommand SaveCommand { get; }
     public AsyncCommand PreviewCommand { get; }
     public AsyncCommand PushNowCommand { get; }
+    public AsyncCommand ReconcileCommand { get; }
+    public AsyncCommand AcknowledgeCommand { get; }
+    public bool ReviewConfirmed
+    {
+        get => reviewConfirmed;
+        set { if (SetField(ref reviewConfirmed, value)) RaiseCommands(); }
+    }
 
     public bool IsEditor => isEditor;
 
@@ -98,7 +110,10 @@ internal sealed class KitaronPushViewModel : INotifyPropertyChanged
         set
         {
             if (ReferenceEquals(selectedRun, value?.Run)) return;
+            reviewedIntent = null;
+            ReviewConfirmed = false;
             selectedRun = value?.Run;
+            RaiseCommands();
             OnPropertyChanged();
             if (value is not null) _ = LoadRunChangesAsync(value.Run);
         }
@@ -106,7 +121,10 @@ internal sealed class KitaronPushViewModel : INotifyPropertyChanged
 
     internal void AttachSession(IPlannerApiClient? client, bool editor)
     {
-        if (!ReferenceEquals(apiClient, client) || isEditor != editor) previewStamp = null;
+        if (!ReferenceEquals(apiClient, client) || isEditor != editor)
+        {
+            previewStamp = null; reviewedIntent = null; ReviewConfirmed = false;
+        }
         apiClient = client;
         isEditor = editor;
         OnPropertyChanged(nameof(IsEditor));
@@ -199,18 +217,56 @@ internal sealed class KitaronPushViewModel : INotifyPropertyChanged
         finally { IsBusy = false; }
     }
 
-    private async Task LoadRunChangesAsync(KitaronPushRunInfo run)
+    internal async Task LoadRunChangesAsync(KitaronPushRunInfo run)
     {
         if (apiClient is null) return;
+        var client = apiClient;
         try
         {
-            var changes = await apiClient.ListKitaronPushChangesAsync(run.RunId);
-            Replace(Changes, changes);
-            Notes.Clear();
-            if (!string.IsNullOrWhiteSpace(run.Message)) Notes.Add(run.Message);
-            ResultTitle = $"Push of {run.StartedAt.ToLocalTime():g}: {changes.Count} values written";
+            var intent = await client.GetKitaronPushIntentAsync(run.RunId);
+            var historical = intent.Intent is null ? await client.ListKitaronPushChangesAsync(run.RunId) : null;
+            if (!ReferenceEquals(client, apiClient) || selectedRun?.RunId != run.RunId) return;
+            ShowIntent(intent);
+            if (historical is not null) Replace(Changes, historical);
         }
         catch (Exception exception) when (IsExpected(exception)) { StatusMessage = Friendly(exception); }
+    }
+
+    internal async Task ReviewAsync(bool acknowledge)
+    {
+        if (apiClient is null || !CanEdit || reviewedIntent is not { State: "OutcomeUnknown" } intent) return;
+        if (acknowledge && (!ReviewConfirmed || intent.Reconciliations.Count == 0)) return;
+        var client = apiClient;
+        IsBusy = true;
+        try
+        {
+            var result = await client.ReviewKitaronPushAsync(intent.RunId, intent.Version, acknowledge);
+            if (!ReferenceEquals(client, apiClient)) return;
+            if (selectedRun?.RunId == result.RunId) ShowIntent(result);
+            Apply(await client.GetKitaronPushAsync(), keepEdits: true);
+            StatusMessage = acknowledge ? "Review acknowledged. No ERP write or retry was performed."
+                : "ERP values inspected. The historical commit outcome remains unknown; review the evidence before acknowledging.";
+        }
+        catch (Exception exception) when (IsExpected(exception)) { StatusMessage = Friendly(exception); }
+        finally { IsBusy = false; }
+    }
+
+    private void ShowIntent(KitaronPushIntentInfo intent)
+    {
+        reviewedIntent = intent;
+        ReviewConfirmed = false;
+        Replace(Changes, intent.Intent?.Changes ?? []);
+        Notes.Clear();
+        Notes.Add(intent.State == "Succeeded" ? "Committed changes recorded by the Server."
+            : "These are intended changes, not proof that the ERP write committed.");
+        foreach (var evidence in intent.Reconciliations)
+        {
+            Notes.Add($"{evidence.ObservedAt.ToLocalTime():g} / {evidence.Actor}: {evidence.Message}");
+            foreach (var value in evidence.Values)
+                Notes.Add($"{value.RowId} / {value.Column}: {value.Comparison}; {value.Current?.Text ?? "NULL / unavailable"}");
+        }
+        ResultTitle = $"Push {intent.RunId}: {intent.State}";
+        RaiseCommands();
     }
 
     private void Apply(KitaronPushSettingsResource settings, bool keepEdits = false)
@@ -253,6 +309,8 @@ internal sealed class KitaronPushViewModel : INotifyPropertyChanged
         SaveCommand.RaiseCanExecuteChanged();
         PreviewCommand.RaiseCanExecuteChanged();
         PushNowCommand.RaiseCanExecuteChanged();
+        ReconcileCommand.RaiseCanExecuteChanged();
+        AcknowledgeCommand.RaiseCanExecuteChanged();
     }
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> values)
@@ -266,7 +324,7 @@ internal sealed class KitaronPushViewModel : INotifyPropertyChanged
 
     private static string Friendly(Exception exception) => exception switch
     {
-        TaskCanceledException => "The Server did not respond before the client timeout.",
+        TaskCanceledException => "The request timed out. The ERP outcome may be unknown; refresh the run log before another push.",
         HttpRequestException => "The configured Server could not be reached.",
         PlannerApiException { Conflict: { } conflict } api => $"{api.Message} {conflict.Advice}",
         _ => exception.Message
@@ -331,13 +389,21 @@ internal sealed class KitaronPushRunRow(KitaronPushRunInfo run)
     public KitaronPushRunInfo Run { get; } = run;
     public string StartedText => Run.StartedAt.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
     public string TriggerText => Run.Trigger == "automatic" ? "Automatic" : $"By {Run.RequestedBy ?? "?"}";
-    public string StatusText => Run.Status switch
+    public string StatusText => (Run.LifecycleState ?? Run.Status) switch
     {
-        "succeeded" => "Done",
+        "Succeeded" or "succeeded" => "Done",
+        "FailedBeforeCommit" => "Not written",
+        "OutcomeUnknown" => "Outcome unknown",
+        "Reconciled" => "Review acknowledged",
+        "Preparing" => "Preparing",
+        "Prepared" => "Prepared",
+        "Writing" => "Writing",
         "failed" => "Failed",
         _ => "Running"
     };
     public int ValuesWritten => Run.ValuesWritten;
+    public string ValuesWrittenText => Run.LifecycleState is "Writing" or "OutcomeUnknown" or "Reconciled"
+        ? "Unconfirmed" : Run.ValuesWritten.ToString(CultureInfo.CurrentCulture);
     public int OperationsMatched => Run.OperationsMatched;
     public string Message => Run.Message ?? string.Empty;
 }

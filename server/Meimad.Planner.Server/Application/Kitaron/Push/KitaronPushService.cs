@@ -81,12 +81,12 @@ internal sealed class KitaronPushService
     internal async Task<KitaronPushResult> PreviewAsync(CancellationToken cancellationToken)
     {
         var (connection, password) = await ConnectionAsync(cancellationToken);
-        var (plan, stamp) = await PlanAsync(connection, password, cancellationToken);
+        var (plan, stamp, _) = await PlanAsync(connection, password, cancellationToken);
         return new KitaronPushResult(null, false, timeProvider.GetUtcNow(), plan.OperationsMatched,
             plan.OperationsSkipped, plan.Changes, plan.Notes, stamp);
     }
 
-    /// <summary>Writes the changes into Kitaron in one transaction and logs the run.</summary>
+    /// <summary>Persists intent and claims it before the external transaction; never blindly retries it.</summary>
     internal async Task<KitaronPushResult> RunAsync(string trigger, string? requestedBy, CancellationToken cancellationToken, string? expectedPreviewStamp = null)
     {
         if (!await gate.WaitAsync(0, cancellationToken))
@@ -96,6 +96,8 @@ internal sealed class KitaronPushService
         {
             await repository.StartRunAsync(runId, trigger, requestedBy, timeProvider.GetUtcNow(), cancellationToken);
             KitaronPushPlanner.Plan? plan = null;
+            var writeAttempted = false;
+            var committed = false;
             try
             {
                 var (connection, password) = await ConnectionAsync(cancellationToken);
@@ -103,39 +105,108 @@ internal sealed class KitaronPushService
                 plan = planned.Plan;
                 if (expectedPreviewStamp is not null && !string.Equals(expectedPreviewStamp, planned.Stamp, StringComparison.Ordinal))
                     throw new KitaronPushConflictException("The Kitaron push preview changed. Nothing was written. Refresh Preview and review the current values.");
+                await repository.PrepareIntentAsync(runId, planned.Intent, timeProvider.GetUtcNow(), cancellationToken);
                 if (plan.Writes.Count > 0)
+                {
+                    if (!await repository.ClaimIntentAsync(runId, cancellationToken))
+                        throw new KitaronPushBlockedException("The push intent was already claimed. Inspect its run record.");
+                    cancellationToken.ThrowIfCancellationRequested();
+                    writeAttempted = true;
                     await target.WriteAsync(connection, password, plan.Writes, cancellationToken);
+                    committed = true;
+                }
+                var summary = plan.Changes.Count == 0 ? "Kitaron already has the Planner's values." : $"{plan.Changes.Count} values written.";
+                await repository.FinishRunAsync(runId, true, plan.OperationsMatched, plan.OperationsSkipped,
+                    string.Join(" ", plan.Notes.Prepend(summary)), plan.Changes, timeProvider.GetUtcNow(), CancellationToken.None);
+                return new KitaronPushResult(runId, true, timeProvider.GetUtcNow(), plan.OperationsMatched,
+                    plan.OperationsSkipped, plan.Changes, plan.Notes);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception exception)
             {
-                var message = exception is KitaronPushBlockedException
-                    ? exception.Message
-                    : $"Kitaron did not accept the changes; nothing was written. {exception.Message}";
-                await repository.FinishRunAsync(runId, false, plan?.OperationsMatched ?? 0, plan?.OperationsSkipped ?? 0,
-                    message, [], timeProvider.GetUtcNow(), CancellationToken.None);
-                if (exception is KitaronPushBlockedException) throw;
-                logger.LogError(exception, "Pushing to Kitaron failed.");
+                var unknown = committed || (writeAttempted && exception is not (KitaronPushNotCommittedException or KitaronPushConflictException));
+                var message = unknown ? new KitaronPushOutcomeUnknownException(runId).Message
+                    : exception is KitaronPushBlockedException ? exception.Message
+                    : $"Push failed before ERP commit; nothing was written by this run. {exception.Message}";
+                try
+                {
+                    await repository.FinishRunAsync(runId, false, plan?.OperationsMatched ?? 0, plan?.OperationsSkipped ?? 0,
+                        message, [], timeProvider.GetUtcNow(), CancellationToken.None,
+                        unknown ? "OutcomeUnknown" : "FailedBeforeCommit");
+                }
+                catch (Exception receiptError)
+                {
+                    // A durable Writing claim survives even when all receipt writes fail.
+                    logger.LogError(receiptError, "Could not record completion of Kitaron push {RunId}; inspect durable intent after recovery.", runId);
+                }
+                if (unknown) throw new KitaronPushOutcomeUnknownException(runId);
+                if (exception is KitaronPushBlockedException or OperationCanceledException) throw;
                 throw new KitaronPushBlockedException(message);
             }
+        }
+        finally { gate.Release(); }
+    }
 
-            var summary = plan.Changes.Count == 0
-                ? "Kitaron already has the Planner's values."
-                : $"{plan.Changes.Count} values written.";
-            await repository.FinishRunAsync(runId, true, plan.OperationsMatched, plan.OperationsSkipped,
-                string.Join(" ", plan.Notes.Prepend(summary)), plan.Changes, timeProvider.GetUtcNow(), CancellationToken.None);
-            return new KitaronPushResult(runId, true, timeProvider.GetUtcNow(), plan.OperationsMatched,
-                plan.OperationsSkipped, plan.Changes, plan.Notes);
-        }
-        finally
+    internal Task RecoverInterruptedAsync(CancellationToken token) => repository.RecoverInterruptedAsync(token);
+    internal Task<KitaronPushIntentResource> ReadIntentAsync(string runId, CancellationToken token) => repository.ReadIntentAsync(runId, token);
+
+    internal async Task<KitaronPushIntentResource> ReconcileAsync(string runId, int expectedVersion, string actor, CancellationToken token)
+    {
+        var resource = await repository.ReadIntentAsync(runId, token);
+        if (resource.Version != expectedVersion || resource.State != "OutcomeUnknown")
+            throw new KitaronPushConflictException("The push state changed. Refresh its run record.");
+        var values = new List<KitaronReconciliationValue>();
+        var message = "No durable intent exists for this historical push; its commit outcome cannot be established.";
+        if (resource.Intent is { } intent)
         {
-            gate.Release();
+            var (connection, password) = await ConnectionAsync(token);
+            if (!string.Equals(connection.ServerHost, intent.ServerHost, StringComparison.OrdinalIgnoreCase)
+                || connection.ServerPort != intent.ServerPort || !string.Equals(connection.DatabaseName, intent.DatabaseName, StringComparison.Ordinal))
+                throw new KitaronPushBlockedException("The configured ERP target differs from this intent. Restore the intended target before reconciliation.");
+            var rows = await target.ReadAsync(connection, password,
+                intent.Writes.Select(x => x.WorkOrderNumber).Distinct().ToArray(),
+                intent.Writes.SelectMany(x => x.ExpectedValues.Keys).Distinct().ToArray(), token);
+            foreach (var write in intent.Writes)
+            {
+                var candidates = rows.Where(x => x.WorkOrderNumber == write.WorkOrderNumber
+                    && KitaronPushPlanner.ParseActionNumber(x.ActionNumber) == KitaronPushPlanner.ParseActionNumber(write.ActionNumber)).ToArray();
+                var row = candidates.Length == 1 && candidates[0].RowId == write.RowId ? candidates[0] : null;
+                if (row is null || !row.Values.TryGetValue(write.Column, out var current))
+                    values.Add(new(write.RowId, write.Column, "MissingOrAmbiguous", null));
+                else
+                {
+                    var comparison = row.WorkOrderClosed ? "ClosedOrStopped"
+                        : Equivalent(current, write.Value.Value()) ? "MatchesIntent"
+                        : Equivalent(current, write.ExpectedValues[write.Column].Value()) ? "MatchesBefore" : "Different";
+                    values.Add(new(write.RowId, write.Column, comparison, KitaronStoredValue.From(current)));
+                }
+            }
+            message = "ERP values inspected. Matching intended or previous values does not prove who wrote them or whether this run committed. "
+                + "Outcome remains unknown until an operator explicitly acknowledges the reviewed evidence; no write or retry was performed.";
         }
+        await repository.RecordReconciliationAsync(runId, expectedVersion, new(actor, timeProvider.GetUtcNow(), values, message), token);
+        return await repository.ReadIntentAsync(runId, token);
+    }
+
+    internal async Task<KitaronPushIntentResource> AcknowledgeAsync(string runId, int expectedVersion, string actor, CancellationToken token)
+    {
+        await repository.AcknowledgeAsync(runId, expectedVersion, actor, timeProvider.GetUtcNow(), token);
+        return await repository.ReadIntentAsync(runId, token);
+    }
+
+    private static bool Equivalent(object? left, object? right)
+    {
+        if (left is null or DBNull) return right is null or DBNull;
+        if (right is null or DBNull) return false;
+        if (left is DateTime || right is DateTime || left is string || right is string) return Equals(left, right);
+        // Reconciliation is descriptive only; SQL may store a double input in a decimal column.
+        return Convert.ToDecimal(left, System.Globalization.CultureInfo.InvariantCulture)
+            == Convert.ToDecimal(right, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     internal Task<DateTimeOffset?> LastAutomaticRunStartedAtAsync(CancellationToken cancellationToken) =>
         repository.LastAutomaticRunStartedAtAsync(cancellationToken);
 
-    private async Task<(KitaronPushPlanner.Plan Plan, string Stamp)> PlanAsync(
+    private async Task<(KitaronPushPlanner.Plan Plan, string Stamp, KitaronPushIntent Intent)> PlanAsync(
         StoredKitaronConnectionSettings connection, string password, CancellationToken cancellationToken)
     {
         var settings = await repository.GetSettingsAsync(cancellationToken);
@@ -144,7 +215,8 @@ internal sealed class KitaronPushService
         if (active.Length == 0 || operations.Count == 0)
         {
             var empty = KitaronPushPlanner.Build(settings.Mappings, operations, new Dictionary<string, KitaronPushForecast>(), [], factoryZone);
-            return (empty, KitaronPushComparison.Stamp(settings, empty, connection));
+            var emptyStamp = KitaronPushComparison.Stamp(settings, empty, connection);
+            return (empty, emptyStamp, Intent(empty, emptyStamp, new Dictionary<string, KitaronPushForecast>()));
         }
 
         var forecasts = active.Any(mapping => mapping.PlannerValue.StartsWith("forecast_", StringComparison.Ordinal))
@@ -156,7 +228,12 @@ internal sealed class KitaronPushService
             active.Select(mapping => mapping.KitaronColumn).ToArray(),
             cancellationToken);
         var plan = KitaronPushPlanner.Build(settings.Mappings, operations, forecasts, rows, factoryZone);
-        return (plan, KitaronPushComparison.Stamp(settings, plan, connection));
+        var stamp = KitaronPushComparison.Stamp(settings, plan, connection);
+        return (plan, stamp, Intent(plan, stamp, forecasts));
+
+        KitaronPushIntent Intent(KitaronPushPlanner.Plan value, string evidence, IReadOnlyDictionary<string, KitaronPushForecast> times) =>
+            new(connection.ServerHost, connection.ServerPort, connection.DatabaseName, connection.Version,
+                settings, operations, times, value.Writes.Select(KitaronIntentWrite.From).ToArray(), value.Changes, evidence);
     }
 
     private async Task<(StoredKitaronConnectionSettings Connection, string Password)> ConnectionAsync(
@@ -186,6 +263,12 @@ internal sealed class KitaronPushHostedService(
     TimeProvider timeProvider,
     ILogger<KitaronPushHostedService> logger) : BackgroundService
 {
+    public override async Task StartAsync(CancellationToken cancellationToken)
+    {
+        await pushService.RecoverInterruptedAsync(cancellationToken);
+        await base.StartAsync(cancellationToken);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)

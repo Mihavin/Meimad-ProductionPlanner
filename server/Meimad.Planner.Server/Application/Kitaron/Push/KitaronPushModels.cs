@@ -112,7 +112,8 @@ internal sealed record KitaronPushRunSummary(
     int OperationsMatched,
     int ValuesWritten,
     int OperationsSkipped,
-    string? Message);
+    string? Message,
+    string? LifecycleState = null, int IntentVersion = 1);
 
 internal class KitaronPushBlockedException(string message) : Exception(message);
 
@@ -137,7 +138,14 @@ internal interface IKitaronPushRepository
 
     Task FinishRunAsync(
         string runId, bool succeeded, int operationsMatched, int operationsSkipped, string? message,
-        IReadOnlyList<KitaronPushChange> writtenChanges, DateTimeOffset now, CancellationToken cancellationToken);
+        IReadOnlyList<KitaronPushChange> writtenChanges, DateTimeOffset now, CancellationToken cancellationToken, string? lifecycleState = null);
+
+    Task PrepareIntentAsync(string runId, KitaronPushIntent intent, DateTimeOffset now, CancellationToken token);
+    Task<bool> ClaimIntentAsync(string runId, CancellationToken token);
+    Task RecoverInterruptedAsync(CancellationToken token);
+    Task<KitaronPushIntentResource> ReadIntentAsync(string runId, CancellationToken token);
+    Task RecordReconciliationAsync(string runId, int expectedVersion, KitaronReconciliation evidence, CancellationToken token);
+    Task AcknowledgeAsync(string runId, int expectedVersion, string actor, DateTimeOffset now, CancellationToken token);
 
     Task<DateTimeOffset?> LastAutomaticRunStartedAtAsync(CancellationToken cancellationToken);
 

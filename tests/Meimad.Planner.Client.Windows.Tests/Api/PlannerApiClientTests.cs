@@ -10,6 +10,22 @@ namespace Meimad.Planner.Client.Windows.Tests.Api;
 public sealed class PlannerApiClientTests
 {
     [Fact]
+    public async Task Kitaron_review_uses_the_observed_version_and_distinct_read_only_and_acknowledgement_routes()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, "{}"), Json(HttpStatusCode.OK, "{}"), Json(HttpStatusCode.OK, "{}"));
+        using var api = CreateClient(handler);
+        await api.GetKitaronPushIntentAsync("run-1");
+        await api.ReviewKitaronPushAsync("run-1", 3, false);
+        await api.ReviewKitaronPushAsync("run-1", 4, true);
+        Assert.Equal(HttpMethod.Get, handler.Requests[0].Method);
+        Assert.EndsWith("/intent", handler.Requests[0].Path, StringComparison.Ordinal);
+        Assert.EndsWith("/reconcile", handler.Requests[1].Path, StringComparison.Ordinal);
+        Assert.Contains("\"expectedVersion\":3", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.EndsWith("/acknowledge", handler.Requests[2].Path, StringComparison.Ordinal);
+        Assert.Contains("\"expectedVersion\":4", handler.Requests[2].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Kitaron_push_carries_the_displayed_preview_stamp()
     {
         var handler = new RecordingHandler(Json(HttpStatusCode.OK, "{}"));

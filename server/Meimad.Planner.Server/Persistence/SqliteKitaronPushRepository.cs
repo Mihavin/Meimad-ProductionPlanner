@@ -6,7 +6,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
 
-internal sealed class SqliteKitaronPushRepository(SqliteDatabase database) : IKitaronPushRepository
+internal sealed partial class SqliteKitaronPushRepository(SqliteDatabase database) : IKitaronPushRepository
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -106,10 +106,17 @@ internal sealed class SqliteKitaronPushRepository(SqliteDatabase database) : IKi
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
+        await using (var guard = connection.CreateCommand())
+        {
+            guard.Transaction = transaction;
+            guard.CommandText = "SELECT id FROM kitaron_push_runs WHERE lifecycle_state IN ('Preparing','Prepared','Writing','OutcomeUnknown') LIMIT 1";
+            if (await guard.ExecuteScalarAsync(cancellationToken) is string unresolved)
+                throw new KitaronPushBlockedException($"Push {unresolved} is active or unresolved. Inspect/reconcile it before another push.");
+        }
         await using (var prune = connection.CreateCommand())
         {
             prune.Transaction = transaction;
-            prune.CommandText = "DELETE FROM kitaron_push_runs WHERE started_at < $before;";
+            prune.CommandText = "DELETE FROM kitaron_push_runs WHERE started_at < $before AND lifecycle_state IN ('Succeeded','FailedBeforeCommit','Reconciled') AND NOT EXISTS(SELECT 1 FROM kitaron_push_reconciliations r WHERE r.run_id=kitaron_push_runs.id AND r.observed_at >= $before);";
             prune.Parameters.AddWithValue("$before", Format(now.AddDays(-90)));
             await prune.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -131,7 +138,7 @@ internal sealed class SqliteKitaronPushRepository(SqliteDatabase database) : IKi
 
     public async Task FinishRunAsync(
         string runId, bool succeeded, int operationsMatched, int operationsSkipped, string? message,
-        IReadOnlyList<KitaronPushChange> writtenChanges, DateTimeOffset now, CancellationToken cancellationToken)
+        IReadOnlyList<KitaronPushChange> writtenChanges, DateTimeOffset now, CancellationToken cancellationToken, string? lifecycleState = null)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
@@ -141,17 +148,19 @@ internal sealed class SqliteKitaronPushRepository(SqliteDatabase database) : IKi
             update.CommandText = """
                 UPDATE kitaron_push_runs
                 SET finished_at = $at, status = $status, operations_matched = $matched, values_written = $written,
-                    operations_skipped = $skipped, message = $message
-                WHERE id = $id;
+                    operations_skipped = $skipped, message = $message, lifecycle_state = $phase, intent_version = intent_version + 1
+                WHERE id = $id AND lifecycle_state IN ('Preparing','Prepared','Writing');
                 """;
             update.Parameters.AddWithValue("$id", runId);
             update.Parameters.AddWithValue("$at", Format(now));
             update.Parameters.AddWithValue("$status", succeeded ? "succeeded" : "failed");
+            update.Parameters.AddWithValue("$phase", lifecycleState ?? (succeeded ? "Succeeded" : "FailedBeforeCommit"));
             update.Parameters.AddWithValue("$matched", operationsMatched);
             update.Parameters.AddWithValue("$written", writtenChanges.Count);
             update.Parameters.AddWithValue("$skipped", operationsSkipped);
             update.Parameters.AddWithValue("$message", (object?)message ?? DBNull.Value);
-            await update.ExecuteNonQueryAsync(cancellationToken);
+            if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+                throw new KitaronPushConflictException("The push lifecycle changed; refresh its run record.");
         }
         foreach (var change in writtenChanges)
         {
@@ -188,8 +197,8 @@ internal sealed class SqliteKitaronPushRepository(SqliteDatabase database) : IKi
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, trigger, requested_by, started_at, finished_at, status, operations_matched, values_written,
-                   operations_skipped, message
-            FROM kitaron_push_runs ORDER BY started_at DESC LIMIT $limit;
+                   operations_skipped, message, lifecycle_state, intent_version
+            FROM kitaron_push_runs ORDER BY lifecycle_state IN ('OutcomeUnknown','Writing','Prepared','Preparing') DESC, started_at DESC LIMIT $limit;
             """;
         command.Parameters.AddWithValue("$limit", limit);
         var runs = new List<KitaronPushRunSummary>();
@@ -199,7 +208,7 @@ internal sealed class SqliteKitaronPushRepository(SqliteDatabase database) : IKi
             runs.Add(new KitaronPushRunSummary(
                 reader.GetString(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
                 Parse(reader.GetString(3)), Instant(reader, 4), reader.GetString(5), reader.GetInt32(6),
-                reader.GetInt32(7), reader.GetInt32(8), reader.IsDBNull(9) ? null : reader.GetString(9)));
+                reader.GetInt32(7), reader.GetInt32(8), reader.IsDBNull(9) ? null : reader.GetString(9), reader.GetString(10), reader.GetInt32(11)));
         }
         return runs;
     }

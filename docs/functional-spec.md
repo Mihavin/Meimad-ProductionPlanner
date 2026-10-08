@@ -1,8 +1,15 @@
 # Functional Specification
 
+## C08 ERP push outcomes and review
+
+Every ERP push records its intent before writing. A failed request does not imply that ERP rejected the changes: if the Server cannot establish the commit outcome, the run is visibly Outcome unknown and further manual/automatic pushes are blocked. Restart preserves the intent and never retries it automatically. Proven pre-commit failures show Not written.
+
+In Setup > Kitaron Push, select the run to inspect intended changes. Inspect ERP values reads the original target and records current values; equality with intended or earlier values cannot establish who wrote them. After reviewing the evidence, a Setup-authorized user checks I reviewed the uncertain outcome and chooses Acknowledge review. This only acknowledges uncertainty and permits future freshly planned pushes; it does not write ERP, replay the old intent or relabel it successful. Historical failed/running records without durable intent also require this explicit review. C07's field ownership and concurrency rules remain in force.
+
+
 ## C07 Kitaron concurrent edits
 
-The four previously approved outbound ERP fields retain their configured Planner-overwrites-ERP policy. An edit after the push's read must not be overwritten: the Server compares exact observed ERP values, operation identity and current open/not-stopped status inside the update transaction. A conflict cancels the entire push, including unrelated items, and asks for a fresh Preview. Windows carries the last displayed preview stamp, so changes since that preview are also refused. Automatic or direct pushes without a displayed preview calculate a fresh plan with the same transactional protection. No fields, synchronization direction or installed enablement are expanded. Isolated SQL Server acceptance is still required.
+The four previously approved outbound ERP fields retain their configured Planner-overwrites-ERP policy. An edit after the push's read must not be overwritten: the Server compares exact observed ERP values, operation identity and current open/not-stopped status inside the update transaction. A conflict cancels the entire push, including unrelated items, and asks for a fresh Preview. Windows carries the last displayed preview stamp, so ERP changes since that preview are also refused. Automatic or direct pushes without a displayed preview calculate a fresh plan with the same transactional protection. No fields, synchronization direction or installed enablement are expanded. Isolated SQL Server acceptance is still required.
 
 
 ## C05 readiness policy (D2 approved 2026-10-08)

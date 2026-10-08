@@ -4843,5 +4843,15 @@
   "Create package": "יצירת חבילת ייצור",
   "Report setup start": "דיווח תחילת כיוון",
   "Start run": "התחלת ריצת ייצור",
-  "Record production": "דיווח ייצור"
+  "Record production": "דיווח ייצור",
+  "Inspect ERP values": "בדיקת ערכי ERP",
+  "I reviewed the uncertain outcome": "בדקתי את התוצאה הלא ודאית",
+  "Acknowledge review": "אישור הבדיקה",
+  "Outcome unknown": "תוצאה לא ידועה",
+  "Not written": "לא נכתב",
+  "Unconfirmed": "לא מאומת",
+  "Review acknowledged": "הבדיקה אושרה",
+  "Preparing": "בהכנה",
+  "Prepared": "מוכן",
+  "Writing": "בכתיבה"
 }

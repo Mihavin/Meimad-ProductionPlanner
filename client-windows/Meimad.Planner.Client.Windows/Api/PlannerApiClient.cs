@@ -784,6 +784,9 @@ internal interface IPlannerApiClient : IDisposable
     Task<KitaronPushResultInfo> RunKitaronPushAsync(CancellationToken cancellationToken = default, string? previewStamp = null) =>
         throw new NotSupportedException();
 
+    Task<KitaronPushIntentInfo> GetKitaronPushIntentAsync(string runId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<KitaronPushIntentInfo> ReviewKitaronPushAsync(string runId, int expectedVersion, bool acknowledge, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<IReadOnlyList<KitaronPushChangeInfo>> ListKitaronPushChangesAsync(
         string runId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
@@ -3222,6 +3225,19 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         if (previewStamp is not null) request.Headers.Add("If-Kitaron-Preview-Match", previewStamp);
         using var response = await importHttpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<KitaronPushResultInfo>(response, cancellationToken);
+    }
+
+    public async Task<KitaronPushIntentInfo> GetKitaronPushIntentAsync(string runId, CancellationToken cancellationToken = default)
+    {
+        using var response = await importHttpClient.GetAsync($"api/v1/kitaron/push/runs/{Uri.EscapeDataString(runId)}/intent", cancellationToken);
+        return await ReadSuccessAsync<KitaronPushIntentInfo>(response, cancellationToken);
+    }
+
+    public async Task<KitaronPushIntentInfo> ReviewKitaronPushAsync(string runId, int expectedVersion, bool acknowledge, CancellationToken cancellationToken = default)
+    {
+        var action = acknowledge ? "acknowledge" : "reconcile";
+        using var response = await importHttpClient.PostAsJsonAsync($"api/v1/kitaron/push/runs/{Uri.EscapeDataString(runId)}/{action}", new { expectedVersion }, cancellationToken);
+        return await ReadSuccessAsync<KitaronPushIntentInfo>(response, cancellationToken);
     }
 
     public Task<IReadOnlyList<KitaronPushChangeInfo>> ListKitaronPushChangesAsync(

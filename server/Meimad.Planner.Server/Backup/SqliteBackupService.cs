@@ -145,7 +145,7 @@ internal sealed class SqliteBackupService
         }
     }
 
-    private async Task CreateOnlineSnapshotAsync(
+    internal async Task CreateOnlineSnapshotAsync(
         string snapshotPath,
         CancellationToken cancellationToken)
     {
@@ -168,7 +168,7 @@ internal sealed class SqliteBackupService
         source.BackupDatabase(destination);
     }
 
-    private static async Task VerifyIntegrityAsync(
+    internal static async Task VerifyIntegrityAsync(
         string databasePath,
         CancellationToken cancellationToken)
     {

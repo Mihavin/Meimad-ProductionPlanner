@@ -25,7 +25,7 @@ internal static class KitaronPushComparison
             Writes = plan.Writes.OrderBy(x => x.WorkOrderNumber).ThenBy(x => x.RowId)
                 .ThenBy(x => x.Column, StringComparer.Ordinal).Select(x => new
                 {
-                    x.RowId, x.WorkOrderNumber, x.Column, x.Value, x.Expected.ActionNumber,
+                    x.RowId, x.WorkOrderNumber, x.Column, x.Expected.ActionNumber,
                     Values = x.Expected.Values.OrderBy(v => v.Key, StringComparer.Ordinal)
                         .Select(v => new { v.Key, Value = Normalize(v.Value) })
                 })

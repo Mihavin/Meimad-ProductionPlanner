@@ -66,7 +66,7 @@ public sealed class ProductionPackageContextTests
             PRAGMA user_version=98;
             """);
         await fixture.App.Services.GetRequiredService<DatabaseMigrator>().MigrateAsync();
-        Assert.Equal(100L, await fixture.ScalarAsync("PRAGMA user_version;"));
+        Assert.Equal(101L, await fixture.ScalarAsync("PRAGMA user_version;"));
         Assert.Equal(0L, await fixture.ScalarAsync("SELECT COUNT(*) FROM production_package_contexts;"));
         Assert.Null(await service.ReadCurrentAsync("operation-package"));
         var history = await service.ReadHistoricalAsync(package.ProductionPackageId, default);

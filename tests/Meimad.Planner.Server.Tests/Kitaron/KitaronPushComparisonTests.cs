@@ -32,7 +32,7 @@ public sealed class KitaronPushComparisonTests
     }
 
     [Fact]
-    public void Preview_stamp_includes_settings_old_values_and_intended_values()
+    public void Preview_stamp_guards_ERP_values_and_settings_without_freezing_dynamic_forecasts()
     {
         var settings = new KitaronPushSettings(false, 15, [], 1, DateTimeOffset.UtcNow, "planner");
         var write = new KitaronPushWrite(1, 42, "OperationQty", 20d, Row(12m));
@@ -40,7 +40,8 @@ public sealed class KitaronPushComparisonTests
         var stamp = KitaronPushComparison.Stamp(settings, plan);
         Assert.Equal(stamp, KitaronPushComparison.Stamp(settings, plan));
         Assert.NotEqual(stamp, KitaronPushComparison.Stamp(settings with { Version = 2 }, plan));
-        Assert.NotEqual(stamp, KitaronPushComparison.Stamp(settings, plan with { Writes = [write with { Value = 21d }] }));
+        // Push now recalculates current Planner values; a moving forecast is not an ERP edit.
+        Assert.Equal(stamp, KitaronPushComparison.Stamp(settings, plan with { Writes = [write with { Value = 21d }] }));
         Assert.NotEqual(stamp, KitaronPushComparison.Stamp(settings, plan with { Writes = [write with { Expected = Row(13m) }] }));
     }
 }
