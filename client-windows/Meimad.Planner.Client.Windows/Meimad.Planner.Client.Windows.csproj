@@ -16,7 +16,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\ui-button-icons-template.png" />
     <Resource Include="Assets\MeimadPlanner.ico" />
     <EmbeddedResource Include="Localization\strings.he.json" LogicalName="Meimad.Planner.Client.Windows.Localization.strings.he.json" Type="Non-Resx" WithCulture="false" />
     <EmbeddedResource Include="Localization\strings.ru.json" LogicalName="Meimad.Planner.Client.Windows.Localization.strings.ru.json" Type="Non-Resx" WithCulture="false" />

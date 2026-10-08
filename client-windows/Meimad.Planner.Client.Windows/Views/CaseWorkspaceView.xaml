@@ -47,7 +47,7 @@
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,14">
                         <Button Command="{Binding SearchCommand}" Style="{StaticResource TemplateIconButton}"
                                 ToolTip="Search Cases" AutomationProperties.Name="Search Cases">
-                            <Image Source="{StaticResource SearchButtonIcon}" Width="24" Height="24" />
+                            <Image Source="{DynamicResource Icon.Search}" Width="24" Height="24" />
                         </Button>
                         <Button Content="Clear" Command="{Binding ClearFiltersCommand}" />
                         <Button Content="Add Case" Command="{Binding BeginCreateCommand}" Margin="0" />
@@ -356,7 +356,7 @@
                         </ScrollViewer>
                     </TabItem>
                     <TabItem ToolTip="View and manage the Case route Operations">
-                        <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource OperationsButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Operations" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                        <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Operations}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Operations" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                         <ScrollViewer x:Name="OperationsTabScroll" VerticalScrollBarVisibility="Visible"
                                       HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
                         <Grid Margin="8">
@@ -373,7 +373,7 @@
                                     <Button Content="Edit Selected" Command="{Binding BeginEditOperationCommand}" />
                                     <Button Command="{Binding BeginCreateOperationCommand}" Style="{StaticResource TemplateIconButton}"
                                             ToolTip="Add Operation" AutomationProperties.Name="Add Operation" Margin="0">
-                                        <Image Source="{StaticResource OperationsButtonIcon}" Width="24" Height="24" />
+                                        <Image Source="{DynamicResource Icon.Add}" Width="24" Height="24" />
                                     </Button>
                                 </StackPanel>
                                 <TextBlock Text="{Binding OperationListAuthorityText}"
@@ -733,7 +733,7 @@
                         </ScrollViewer>
                     </TabItem>
                     <TabItem ToolTip="View and manage Orders for this Case">
-                        <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource OrdersButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Orders" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                        <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Orders}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Orders" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                         <ScrollViewer x:Name="OrdersTabScroll" VerticalScrollBarVisibility="Visible"
                                       HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
                         <Grid Margin="8">
@@ -749,7 +749,7 @@
                                     <Button Content="Edit Selected" Command="{Binding BeginEditOrderCommand}" />
                                     <Button Command="{Binding BeginCreateOrderCommand}" Style="{StaticResource TemplateIconButton}"
                                             ToolTip="Add Order" AutomationProperties.Name="Add Order" Margin="0">
-                                        <Image Source="{StaticResource OrdersButtonIcon}" Width="24" Height="24" />
+                                        <Image Source="{DynamicResource Icon.Add}" Width="24" Height="24" />
                                     </Button>
                                 </StackPanel>
                                 <TextBlock Text="{Binding OrderListAuthorityText}" TextWrapping="Wrap"

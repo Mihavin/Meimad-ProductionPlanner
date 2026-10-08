@@ -73,6 +73,8 @@ internal static class WorkbenchTheme
             (SystemColors.InactiveSelectionHighlightTextBrushKey,"PrimaryTextBrush"),
             (SystemColors.GrayTextBrushKey,"MutedTextBrush")
         }) app.Resources[key] = app.Resources[token];
+        // Keycap icons in Graphite, machine-plate icons in Light; both in the primary text ink.
+        WorkbenchIcons.Apply(app.Resources, Current, ((SolidColorBrush)app.Resources["PrimaryTextBrush"]).Color);
         if (persist)
         {
             try { Directory.CreateDirectory(Path.GetDirectoryName(PreferencePath)!); File.WriteAllText(PreferencePath, Current); }

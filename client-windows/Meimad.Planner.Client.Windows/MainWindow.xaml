@@ -96,15 +96,16 @@
             </DockPanel>
         </Border>
         <TabControl x:Name="WorkspaceTabs" Grid.Row="2" Margin="0" Style="{StaticResource WorkbenchNavigation}">
-            <TabItem Header="Cases">
+            <TabItem>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Cases}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Cases" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:CaseWorkspaceView DataContext="{Binding CaseWorkspace}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="Open the Machine Planning Board and unassigned operation Pool">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource PlanningBoardButtonIcon}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Planning Board" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.PlanningBoard}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Planning Board" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:MachinePlanningBoardView x:Name="PlanningBoardView" DataContext="{Binding MachinePlanningBoard}" Margin="5" />
             </TabItem>
             <TabItem x:Name="TimelineTab" ToolTip="Open the calculated Machine Timeline">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource TimelineButtonIcon}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Timeline" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Timeline}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Timeline" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="5">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -115,7 +116,7 @@
                                 ToolTip="Open this same live, read-only Timeline in a reusable window."
                                 AutomationProperties.Name="Open Timeline in separate window"
                                 Click="OpenTimelineWindow_Click" Margin="0">
-                            <Image Source="{StaticResource TimelineButtonIcon}" Width="24" Height="24" />
+                            <Image Source="{DynamicResource Icon.OpenWindow}" Width="24" Height="24" />
                         </Button>
                         <TextBlock Text="The Timeline is read-only and refreshes from committed Server state."
                                    Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" />
@@ -125,49 +126,62 @@
                     </ScrollViewer>
                 </Grid>
             </TabItem>
-            <TabItem Header="Shift Roster" ToolTip="Decide which 12h shift each employee on a shift rotation works, week by week">
+            <TabItem ToolTip="Decide which 12h shift each employee on a shift rotation works, week by week">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.ShiftRoster}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Shift Roster" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:ShiftRosterView DataContext="{Binding ShiftRoster}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="Open application and production setup">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource SettingsButtonIcon}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Administration" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Settings}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Administration" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:SetupView x:Name="AdministrationView" DataContext="{Binding Setup}" Margin="5" />
             </TabItem>
-            <TabItem Header="User Terminals" ToolTip="Monitor and configure E-Ink tablets">
+            <TabItem ToolTip="Monitor and configure E-Ink tablets">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.UserTerminals}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="User Terminals" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:UserTerminalsView DataContext="{Binding UserTerminals}" Margin="5" />
             </TabItem>
-            <TabItem Header="NC Creator" ToolTip="View assigned operations waiting for a valid current NC release">
+            <TabItem ToolTip="View assigned operations waiting for a valid current NC release">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.NcCreator}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="NC Creator" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:PreparationQueueView DataContext="{Binding NcCreatorQueue}" Margin="5" />
             </TabItem>
-            <TabItem Header="Tool Room" ToolTip="View NC-ready operations waiting for tool preparation">
+            <TabItem ToolTip="View NC-ready operations waiting for tool preparation">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.ToolRoom}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Tool Room" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:PreparationQueueView DataContext="{Binding ToolRoomQueue}" Margin="5" />
             </TabItem>
-            <TabItem Header="Tool Catalog" ToolTip="Search and describe the factory's tools: internal id, type, hand, dimensions and external ids">
+            <TabItem ToolTip="Search and describe the factory's tools: internal id, type, hand, dimensions and external ids">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.ToolCatalog}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Tool Catalog" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:ToolCatalogView DataContext="{Binding ToolCatalog}" Margin="5" />
             </TabItem>
-            <TabItem Header="Tool Requirements" ToolTip="The tools the planned operations of a period need, by material, type, size and name, with the copies and their moves between machines">
+            <TabItem ToolTip="The tools the planned operations of a period need, by material, type, size and name, with the copies and their moves between machines">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.ToolRequirements}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Tool Requirements" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:ToolRequirementsView DataContext="{Binding ToolRequirements}" Margin="5" />
             </TabItem>
-            <TabItem Header="Setup Queue" ToolTip="View operations whose NC and Tool Room gates are complete">
+            <TabItem ToolTip="View operations whose NC and Tool Room gates are complete">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.SetupQueue}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Setup Queue" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:PreparationQueueView DataContext="{Binding SetupQueue}" Margin="5" />
             </TabItem>
-            <TabItem Header="QC Queue" ToolTip="Inspect Production Runs sent to Quality Control">
+            <TabItem ToolTip="Inspect Production Runs sent to Quality Control">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.QcQueue}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="QC Queue" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:QcQueueView DataContext="{Binding QcQueue}" Margin="5" />
             </TabItem>
-            <TabItem Header="Material Orders" ToolTip="Kitaron material purchase-order lines with their reported delivery status">
+            <TabItem ToolTip="Kitaron material purchase-order lines with their reported delivery status">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.MaterialOrders}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Material Orders" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:MaterialOrdersView DataContext="{Binding MaterialOrders}" Margin="5" />
             </TabItem>
-            <TabItem Header="Reports" ToolTip="Machine usage per machine and overall, and each machine's DPRNT log">
+            <TabItem ToolTip="Machine usage per machine and overall, and each machine's DPRNT log">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Reports}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Reports" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <TabControl Margin="5">
-                    <TabItem Header="Machine Usage" ToolTip="Machine usage per machine and overall, in hours and percent, with the daily history">
+                    <TabItem ToolTip="Machine usage per machine and overall, in hours and percent, with the daily history">
+                        <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.MachineUsage}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Machine Usage" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                         <views:MachineUsageView DataContext="{Binding MachineUsage}" />
                     </TabItem>
-                    <TabItem Header="DPRNT Log" ToolTip="Every line a machine's DPRNT output sent">
+                    <TabItem ToolTip="Every line a machine's DPRNT output sent">
+                        <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.DprntLog}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="DPRNT Log" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                         <views:DprntLogView DataContext="{Binding DprntLog}" />
                     </TabItem>
                 </TabControl>
             </TabItem>
-            <TabItem Header="Users" ToolTip="Administrators: manage user accounts, user types and permissions"
+            <TabItem ToolTip="Administrators: manage user accounts, user types and permissions"
                      Visibility="{Binding CanManageUsers, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Users}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Users" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <views:UserAdministrationView DataContext="{Binding UserAdministration}" Margin="5" />
             </TabItem>
         </TabControl>
