@@ -1,5 +1,13 @@
 # Data Model
 
+## Schema v97: durable auxiliary-pin versions (2026-10-08)
+
+`auxiliary_pin_versions` has composite primary key `(batch_operation_id, requirement_id)`, positive integer `version`, nullable historical `updated_by`, and UTC-text `updated_at`. It references the actual Batch Operation and requirement. Migration backfills retained `PINNED` schedule work at its retained version; start-only pins without assignment provenance keep an unknown actor rather than manufacturing one. Clearing the pin removes its schedule rows but retains this version tombstone; recreation advances it. Mutations compare the observed stamp under an immediate Server-owned SQLite transaction, validate requirement ownership and resource eligibility, and update both work and stamp atomically. Version zero is the read representation of a pair with no stamp row, never a persisted version. Confirmed/actual schedule rows are not deleted by pin edits.
+
+Schema v47 cycle-event rows already retain all immutable fields needed for C06: source/event key, Run, program, observed UTC instant and original completed count. Duplicate validation now compares those fields, so no cycle-history migration is required. Current Run projection in a retry response is distinct from the immutable receipt count.
+
+The approved [stage-gate matrix](implementation-plan.md#audit-handoff-2026-10-08) does not create stored handoff facts in this slice; their exact-context append-only model remains U02 work. No historical handoff is inferred.
+
 - **Status:** Logical model plus implemented SQLite schema version 67, including immutable Production Run workflow events, Offset Loader and setup-verification state, raw cycle attempts/session closure, the operational-anomaly ledger, Kitaron Order authority/history projection, and upgrade-safe CNC finalizer/sequence mappings
 - **Authority:** Server-owned SQLite in MVP
 - **Physical view:** `docs/database-structure-report.md` lists every table, column, foreign key and trigger of the live schema (version 80) with its purpose, the data-flow charts between domains and the rules of use; regenerate it after a migration.

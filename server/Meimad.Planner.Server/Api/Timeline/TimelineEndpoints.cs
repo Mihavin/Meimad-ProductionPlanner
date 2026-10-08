@@ -31,15 +31,21 @@ internal static class TimelineEndpoints
                 "batchOperationId and requirementId are required.", context);
         }
         var userId = authority!.UserId ?? string.Empty;
+        if (request.ExpectedVersion is null or < 0)
+            return MissingVersion(context);
         try
         {
             var pin = await repository.SetAsync(new TimelineAuxiliaryPin(
                 request.BatchOperationId.Trim(), request.RequirementId.Trim(),
                 Blank(request.WorkstationId), Blank(request.EmployeeId),
-                request.PlannedStartsAt, request.PlannedEndsAt, request.PinStart, Blank(request.Reason)),
+                request.PlannedStartsAt, request.PlannedEndsAt, request.PinStart, Blank(request.Reason), request.ExpectedVersion.Value),
                 authority!, string.IsNullOrEmpty(userId) ? null : userId, cancellationToken);
             return Results.Ok(new TimelineAuxiliaryPinResponse(
-                pin.BatchOperationId, pin.RequirementId, pin.WorkstationId, pin.EmployeeId, pin.StartsAt));
+                pin.BatchOperationId, pin.RequirementId, pin.WorkstationId, pin.EmployeeId, pin.StartsAt, pin.Version));
+        }
+        catch (TimelineAuxiliaryPinConflictException exception)
+        {
+            return Conflict(exception, context);
         }
         catch (TimelineAuxiliaryPinException exception)
         {
@@ -59,12 +65,18 @@ internal static class TimelineEndpoints
         CancellationToken cancellationToken)
     {
         if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error)) return error!;
+        if (!long.TryParse(context.Request.Query["expectedVersion"], NumberStyles.None, CultureInfo.InvariantCulture, out var expectedVersion))
+            return MissingVersion(context);
         try
         {
-            return await repository.ClearAsync(batchOperationId, requirementId, authority!, cancellationToken)
+            return await repository.ClearAsync(batchOperationId, requirementId, expectedVersion, authority!, cancellationToken)
                 ? Results.NoContent()
                 : PlanningHttpSupport.Error(StatusCodes.Status404NotFound, "auxiliary_pin_not_found",
                     "No pin exists for that Batch Operation and requirement.", context);
+        }
+        catch (TimelineAuxiliaryPinConflictException exception)
+        {
+            return Conflict(exception, context);
         }
         catch (Application.EditMode.EditModeMutationException exception)
         {
@@ -73,6 +85,25 @@ internal static class TimelineEndpoints
     }
 
     private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static IResult MissingVersion(HttpContext context) => PlanningHttpSupport.Error(
+        StatusCodes.Status428PreconditionRequired, "auxiliary_pin_version_required",
+        "An observed expectedVersion is required. Upgrade the Windows client and refresh the Timeline before editing pins.", context);
+
+    private static IResult Conflict(TimelineAuxiliaryPinConflictException exception, HttpContext context) =>
+        Results.Json(new
+        {
+            error = new
+            {
+                code = "auxiliary_pin_version_conflict", message = exception.Message, correlationId = context.TraceIdentifier,
+                details = new[] { new { currentVersion = exception.CurrentVersion, isPinned = exception.IsPinned, changedBy = exception.ChangedBy, changedAt = exception.ChangedAt } },
+                conflict = new
+                {
+                    resource = "auxiliary pin", changedBy = exception.ChangedBy, changedAt = exception.ChangedAt,
+                    advice = "Your selection was not saved. Refresh the Timeline, review the current pin, and apply your selection again."
+                }
+            }
+        }, statusCode: StatusCodes.Status412PreconditionFailed);
 
     private static async Task<IResult> ReadAsync(
         HttpContext context,
@@ -141,11 +172,13 @@ internal sealed record TimelineAuxiliaryPinRequest(
     DateTimeOffset PlannedStartsAt,
     DateTimeOffset PlannedEndsAt,
     bool PinStart,
-    string? Reason);
+    string? Reason,
+    long? ExpectedVersion = null);
 
 internal sealed record TimelineAuxiliaryPinResponse(
     string BatchOperationId,
     string RequirementId,
     string? WorkstationId,
     string? EmployeeId,
-    DateTimeOffset? StartsAt);
+    DateTimeOffset? StartsAt,
+    long Version);

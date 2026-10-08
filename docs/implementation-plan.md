@@ -1,5 +1,69 @@
 # Implementation Plan
 
+## Audit handoff 2026-10-08
+
+The supplied [implementation backlog](tasks/audit-and-local-ai.md) is retained as task input, not as evidence of completion. The supplied HTML renders the same backlog; it is not an instruction to replace WPF with a website. Work starts from `701c58261ccb0a3d2fb5c8c91df941419c605e38`, compared with audited `b13f841886e910c5debcc8f635a207912f833547`. The initial worktree was clean. This checkout has 201 changed files since the audit, schema v96 and application version 0.1.180; .NET SDK 10.0.303 is available on this Windows workstation. Changes described below are uncommitted working-tree changes, not a deployed release.
+
+### P00: current finding inventory
+
+| Finding | Baseline status and current evidence | Repair status |
+|---|---|---|
+| F1 global timing window | Present, with changed surrounding behavior: [`TimelineProjectionService.ApplyRecordedRealTimingAsync`](../server/Meimad.Planner.Server/Application/Timeline/TimelineProjectionService.cs) reads the newest 5,000 global manual reports and pairs independent latest setup boundaries. Schema v93 / `SqliteOperationTimeMeasurements` now also provides measured medians. | C01 pending. Reconcile the older average override with the newer measured-median policy before changing timing authority. |
+| F2 stale pin overwrite | Present: [`SqliteTimelineAuxiliaryPinRepository`](../server/Meimad.Planner.Server/Persistence/SqliteTimelineAuxiliaryPinRepository.cs) deleted/reinserted at version 1 with no precondition. | C02 repaired below. |
+| F3 unrelated/ineligible pin | Present: that repository checked only ID existence. | C02 repaired below. |
+| F4 package publication race | Present by inspection: [`ActivateAsync`](../server/Meimad.Planner.Server/Persistence/SqliteProductionPackageRepository.cs) validates content context but does not compare the observed current-package pointer before upsert. | C04 pending; no concurrency reproducer run yet. |
+| F5 arbitrary Run binding | Present: [package build](../server/Meimad.Planner.Server/Persistence/SqliteProductionPackageRepository.cs) and [preparation queue](../server/Meimad.Planner.Server/Persistence/SqlitePreparationQueueRepository.cs) select a Run through first output ordered by program rather than exact active assignment context. Current pointers remain keyed by Batch Operation. | C03 pending; exact split-Run context must precede C04/C05/UI. |
+| F6 readiness disagreement | Present: [`ProductionRunReadinessService`](../server/Meimad.Planner.Server/Application/ProductionRuns/ProductionRunReadinessService.cs) carries only material gates from output readiness; unknown tool capacity passes; action-specific mutation checks are separate. | C05 pending under approved matrix below. |
+| F7 cycle-event target mismatch | Present: [duplicate lookup](../server/Meimad.Planner.Server/Persistence/SqliteProductionRunExecutionRepository.cs) returned only completed count, then read the caller's Run. | C06 repaired below. |
+| F8 ERP concurrent edits | Present: [`SqlServerKitaronPushTarget`](../server/Meimad.Planner.Server/Application/Kitaron/Push/SqlServerKitaronPushTarget.cs) uses `NOLOCK` preview reads and updates by row/Work Order IDs without observed-value predicates. | C07 pending; isolated SQL Server acceptance required. |
+| F9 uncertain ERP commit | Present: [`KitaronPushService`](../server/Meimad.Planner.Server/Application/Kitaron/Push/KitaronPushService.cs) writes externally before the local completion receipt and can report “nothing was written” on a write failure. | C08 pending. |
+| F10 incomplete recovery set | Present: [`SqliteBackupService`](../server/Meimad.Planner.Server/Backup/SqliteBackupService.cs) verifies a SQLite backup/restore; it does not publish an artifact/configuration/key recovery set. | D01 pending; no replacement-PC recovery measured. |
+| F11 mixed snapshots | Present: [`PlanningBoardService.ReadAsync`](../server/Meimad.Planner.Server/Application/PlanningBoard/PlanningBoardService.cs) reads board, Run projection and Timeline independently then labels conflict calculation current. | D02/D03 pending. |
+
+This is a source inventory plus executable regressions for F2/F3/F7, not a claim that every other finding has an executable reproducer. Existing production-run, timeline/resource, migration, package, account, backup and Kitaron tests were located before repairs. No production database, ERP, CNC or tablet was used for mutations.
+
+### Decision register
+
+| ID | Current decision | Remaining work |
+|---|---|---|
+| D1 | Already decided 2026-09-28: the Planner overwrites configured `OperationQty`, `StartDateReal`, `FinishDateCalc`, `SetupTimeReal`; see the existing Kitaron push section. Import remains read-only. Do not expand fields or enable push as part of this repair. | C07/C08 must preserve that policy and refuse stale previews, rather than silently overwrite intervening ERP edits. Actual installed enablement is uninspected. |
+| D2 | Owner approved the proposed action matrix in this session, 2026-10-08; see below. | Implement C05 after exact package context. Unknown-capacity and legacy engineering exceptions still need explicit mode-level treatment; approval of the broad matrix does not invent those details. |
+| D3 | Owner approved physical handoff as tracking only. A current valid package makes work Ready for Setup; export/copy does not prove handoff or setup start. This supersedes conflicting handoff gates in older task-buffer sections 3/6. | U02 must retain actor/time, qualification and exact package context, without a mandatory handoff gate or invented historical handoffs. |
+| D4 | Owner approved retaining existing supported manual setup reports. Current code includes manual workflow status and non-verifying DPRNT Machine support (`a24cb06`). Use actual loader execution where required. | Do not add fake loaders or unsupported new start paths. |
+| D5 | Recovery-point, restore-time, evidence retention and independent backup destination remain unapproved/unmeasured. | D01/D04 operational acceptance; preserve installed retention meanwhile. |
+| D6 | Production AI host/GPU, approved corpus, exact model/runtime/digest and human evaluation remain unknown. | A04/A07/A08 production enablement blocked on those inputs; no model installed or AI enabled. |
+
+Approved action matrix (target contract, **not yet unified in implementation**):
+
+| Action | Blocking requirements |
+|---|---|
+| Plan/assign | Valid allocation and Machine compatibility; incomplete preparation is visible and does not forbid forward planning. |
+| Create package | Exact Run/program/output context, current approved engineering releases, and tool data appropriate to the Machine's offset mode. |
+| Ready for Setup | Current valid package; physical handoff is a separate tracking fact. |
+| Start setup | Actual loader execution where required, or the existing supported manual setup report. Download/export is never setup start. |
+| Start production | Approved material, engineering and tool readiness; successful exact-binding verification where enabled. Manual/dummy mode omits measured offsets but preserves required loader/hooks. |
+
+Package creation continues to require any signed-in Windows account, as specified in `AccountModels.Permissions` and the functional specification. Older Tool Room-only wording does not change that permission or add approval.
+
+### Compatibility inventory and rollout
+
+- Server/Windows/TV use existing `/api/v1` contracts; E-Ink retains its separate TabletID-resolved API and package/checksum behavior. These repairs add no TV/tablet authority and change no package manifest. `ProductionPackageService` currently emits manifest schema v2 (historical schemas remain readable).
+- Checked-in service defaults use `Meimad Planner Server`, local `data/meimad-planner.db`, `backups`, `gcode-releases`, `eink-packages`, factory timezone `Asia/Jerusalem`. Installed service account, overrides, key directory, package root and independent recovery destination have **not** been inspected. Checked-in defaults are not evidence of deployed values.
+- C02 advances schema to v97, exclusively via `DatabaseMigrator`. `auxiliary_pin_versions` backfills retained pins and keeps a tombstone version after clearing. Missing preconditions return 428, stale preconditions 412 with durable actor/time and the existing `error.conflict` shape. Safe old reads work; old unversioned pin mutations fail with an upgrade/refresh message. Deploy matching Windows clients for pin editing. No synthesized latest version is allowed.
+- C06 has no schema/DTO change. A retry retains its original immutable completed-cycle receipt; the existing `run` member is a refreshed projection of the same original target. Source/event key, Run, program and UTC observation instant must match. Stale If-Match on an identical retry remains allowed; changed payload returns 409 `cycle_event_binding_conflict` without applying quantities.
+- Before production deployment, quiesce writes and retain a verified DB backup **plus** existing immutable artifact trees, configuration and protected-key recovery material under the current operator procedure. D01 is not implemented, so a DB file alone must not be represented as a complete recovery set. Run v97 migration with the Server, refresh/upgrade Windows clients, inspect migrated pins and verify package access. To roll back use matching prior binaries and a consistent pre-upgrade recovery set; do not run old binaries against v97 or discard real facts generated after backup without reconciliation.
+
+### Implemented slices and validation
+
+- **C02:** atomic expected-version comparison for set/clear, persistent versions across deletion/recreation, requirement/route ownership and resource class/activity/type/capacity/capability/Skill checks. Calendar contention remains the allocator's responsibility. Windows sends the version observed in the Timeline and preserves its displayed selection on conflict. Changes span server repository/API/source projection, schema v97, Windows API/models/view model and tests.
+- **C06:** duplicate cycle events compare original Run/program/observation instant before returning a receipt. UTC-equivalent offsets compare equal; different or nonexistent targets conflict; parallel identical requests count once.
+- Focused server run: 55 passed, 0 failed (migration suites, auxiliary projection and Run cycle tests). An initial migration run found the future-schema test still used 97; updated it to 98 and reran successfully. Full server suite: **1,108 passed, 0 failed**, 8m52s (`audit-server.trx`). Subsequent focused validation of the final Unicode-capability/conflict-state changes: **19 passed, 0 failed** (`audit-final-focused.trx`); the full suite predates that final narrow change.
+- Windows focused run: 3 passed, 0 failed, including preserving selection after conflict. Existing normal Debug/Release intermediates caused BG1002 missing-BAML errors; a fresh `--artifacts-path C:\Users\michael\AppData\Local\Temp\meimad-audit-build-20261008` compiled and tested successfully. No application-source workaround was introduced.
+- Full Windows run using repository-local `--artifacts-path artifacts/audit-build-20261008`: 430 passed, 3 failed (433 total). Both `Every_literal_xaml_label_has_a_translation` cases lack four roster/manual-report labels, and `Wpf_views_start_and_separate_timeline_reuses_shared_live_projection` times out. All three failures were reproduced unchanged in a detached baseline checkout of `701c582`; they are not regressions from this slice. The earlier full run outside the repository also failed source-discovery tests and is not a valid full-suite comparison. Reports remain in ignored `TestResults` directories.
+- R01 physical/LAN/Windows-Service recovery, whole-workbench accessibility, load benchmarks and AI evaluation are not accepted by these tests.
+
+Remaining backlog: C01, C03–C05, C07–C08, D01–D06, U01–U05 and A01–A08 are **not implemented by this change**. P00 inventory/decision work is recorded here; installed configuration inventory remains an operational follow-up. R02 documentation is updated for C02/C06 only. No full-backlog completion or production deployment is claimed.
+
 Implemented Kitaron status correction: `OrderClosed` is a coded value (`1 = open`, `2 = closed`) rather than a Boolean. Code `2` maps to inactive, recognized Boolean closure fields close on nonzero, and cancellation still takes precedence.
 
 The eleven-item task list extends existing authority boundaries: staged Case/Order import, a Batch route guard, Batch-Operation backlog/criticality projection, schema-v26 external delay and master-calendar layering, shared icons/application icon, STEP bounding/reference tools, and the row TV dashboard.

@@ -70,7 +70,9 @@ internal sealed record TimelineSourceAuxiliaryPin(
     string RequirementId,
     string? WorkstationId,
     string? EmployeeId,
-    DateTimeOffset? StartsAt);
+    DateTimeOffset? StartsAt,
+    long Version = 0,
+    bool IsActive = true);
 
 internal sealed record TimelineSourceHoliday(
     DateOnly Date, string Name, string Status, string? StartsAtLocal, string? EndsAtLocal);

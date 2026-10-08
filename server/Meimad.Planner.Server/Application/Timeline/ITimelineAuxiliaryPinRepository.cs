@@ -16,13 +16,23 @@ internal sealed record TimelineAuxiliaryPin(
     DateTimeOffset PlannedStartsAt,
     DateTimeOffset PlannedEndsAt,
     bool PinStart,
-    string? Reason);
+    string? Reason,
+    long ExpectedVersion);
 
 internal interface ITimelineAuxiliaryPinRepository
 {
     Task<TimelineSourceAuxiliaryPin> SetAsync(TimelineAuxiliaryPin pin, EditAuthority authority, string? userId, CancellationToken cancellationToken);
 
-    Task<bool> ClearAsync(string batchOperationId, string requirementId, EditAuthority authority, CancellationToken cancellationToken);
+    Task<bool> ClearAsync(string batchOperationId, string requirementId, long expectedVersion, EditAuthority authority, CancellationToken cancellationToken);
+}
+
+internal sealed class TimelineAuxiliaryPinConflictException(long currentVersion, string? changedBy, string? changedAt, bool isPinned)
+    : Exception("The auxiliary pin changed. Refresh the Timeline and review the current pin before applying your retained selection.")
+{
+    internal long CurrentVersion { get; } = currentVersion;
+    internal string? ChangedBy { get; } = changedBy;
+    internal string? ChangedAt { get; } = changedAt;
+    internal bool IsPinned { get; } = isPinned;
 }
 
 internal sealed class TimelineAuxiliaryPinException(string code, string message) : Exception(message)

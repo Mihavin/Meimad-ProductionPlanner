@@ -173,7 +173,7 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         {
             await apiClient.SetTimelineAuxiliaryPinAsync(new TimelineAuxiliaryPinRequest(
                 interval.OperationId, interval.RequirementId, interval.WorkstationId, interval.EmployeeId,
-                interval.StartsAt, interval.EndsAt, pinStart, null), clientId, editGeneration);
+                interval.StartsAt, interval.EndsAt, pinStart, null, interval.PinVersion), clientId, editGeneration);
             Invalidate();
             await RefreshAsync();
             StatusMessage = pinStart
@@ -191,7 +191,7 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         if (apiClient is null || !CanPin) return;
         try
         {
-            await apiClient.ClearTimelineAuxiliaryPinAsync(interval.OperationId, interval.RequirementId, clientId, editGeneration);
+            await apiClient.ClearTimelineAuxiliaryPinAsync(interval.OperationId, interval.RequirementId, interval.PinVersion, clientId, editGeneration);
             Invalidate();
             await RefreshAsync();
             StatusMessage = $"{interval.Label} unpinned.";

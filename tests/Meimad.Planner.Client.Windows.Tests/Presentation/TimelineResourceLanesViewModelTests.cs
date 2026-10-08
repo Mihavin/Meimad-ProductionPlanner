@@ -42,6 +42,7 @@ public sealed class TimelineResourceLanesViewModelTests
         var pin = Assert.Single(api.Pins);
         Assert.Equal(("op-1", "req-final", "station-inspection", true, "editor", 5L), (pin.Request.BatchOperationId, pin.Request.RequirementId, pin.Request.WorkstationId, pin.Request.PinStart, pin.ClientId, pin.Generation));
         Assert.Equal(interval.StartsAt, pin.Request.PlannedStartsAt);
+        Assert.Equal(interval.PinVersion, pin.Request.ExpectedVersion);
         Assert.Equal(2, api.RequestCount);
         Assert.Contains("pinned to its resource and start", viewModel.StatusMessage);
 
@@ -50,6 +51,21 @@ public sealed class TimelineResourceLanesViewModelTests
         Assert.Equal(("op-1", "req-final"), Assert.Single(api.Cleared));
         Assert.Equal(3, api.RequestCount);
         Assert.Contains("unpinned", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Stale_pin_keeps_the_displayed_selection_and_does_not_silently_retry()
+    {
+        var api = new FakeApiClient(Snapshot()) { RefusePin = true };
+        var viewModel = new TimelineViewModel { FromDate = Start.UtcDateTime, ToDate = Start.AddDays(10).UtcDateTime };
+        viewModel.AttachSession(api, "editor", new EditModeStatus(ClientEditState.Editor, 5, null, null, DateTimeOffset.UtcNow, 30));
+        await viewModel.RefreshAsync();
+        var interval = viewModel.Resources.Single().Intervals.Single();
+        await viewModel.PinAsync(interval, true);
+        Assert.Single(api.Pins);
+        Assert.Equal(1, api.RequestCount);
+        Assert.Same(interval, viewModel.Resources.Single().Intervals.Single());
+        Assert.Contains("Refresh", viewModel.StatusMessage);
     }
 
     private static TimelineSnapshot Snapshot() => new(
@@ -66,13 +82,14 @@ public sealed class TimelineResourceLanesViewModelTests
             [
                 new TimelineResourceInterval("op-1|req-final", "op-1", "req-final", "batch-1", "B-1", "PN-1", 10, "Mill", 50,
                     "Final inspection", "FORWARD", Start.AddHours(3), Start.AddHours(4), false,
-                    "Earliest feasible slot after the predecessor/anchor.", "station-inspection", null, null, "WORKSTATION")
+                    "Earliest feasible slot after the predecessor/anchor.", "station-inspection", null, null, "WORKSTATION", PinVersion: 7)
             ])
         ]);
 
     private sealed class FakeApiClient(TimelineSnapshot snapshot) : StubPlannerApiClient, IPlannerApiClient
     {
         internal int RequestCount { get; private set; }
+        internal bool RefusePin { get; init; }
 
         internal List<(TimelineAuxiliaryPinRequest Request, string ClientId, long Generation)> Pins { get; } = [];
 
@@ -87,11 +104,14 @@ public sealed class TimelineResourceLanesViewModelTests
         public Task<TimelineAuxiliaryPin> SetTimelineAuxiliaryPinAsync(TimelineAuxiliaryPinRequest request, string clientId, long editGeneration, CancellationToken cancellationToken = default)
         {
             Pins.Add((request, clientId, editGeneration));
+            if (RefusePin) throw new PlannerApiException(System.Net.HttpStatusCode.PreconditionFailed,
+                "auxiliary_pin_version_conflict", "Refresh the Timeline and review the current pin.");
             return Task.FromResult(new TimelineAuxiliaryPin(request.BatchOperationId, request.RequirementId, request.WorkstationId, request.EmployeeId, request.PinStart ? request.PlannedStartsAt : null));
         }
 
-        public Task ClearTimelineAuxiliaryPinAsync(string batchOperationId, string requirementId, string clientId, long editGeneration, CancellationToken cancellationToken = default)
+        public Task ClearTimelineAuxiliaryPinAsync(string batchOperationId, string requirementId, long expectedVersion, string clientId, long editGeneration, CancellationToken cancellationToken = default)
         {
+            Assert.Equal(7, expectedVersion);
             Cleared.Add((batchOperationId, requirementId));
             return Task.CompletedTask;
         }

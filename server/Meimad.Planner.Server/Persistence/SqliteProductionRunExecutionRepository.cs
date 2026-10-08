@@ -59,13 +59,20 @@ internal sealed class SqliteProductionRunExecutionRepository(
         await using (var duplicate = connection.CreateCommand())
         {
             duplicate.Transaction = transaction;
-            duplicate.CommandText = "SELECT completed_cycle_count FROM production_run_cycle_events WHERE source=$source AND source_event_id=$event;";
+            duplicate.CommandText = "SELECT completed_cycle_count, production_run_id, production_run_program_id, observed_at FROM production_run_cycle_events WHERE source=$source AND source_event_id=$event;";
             duplicate.Parameters.AddWithValue("$source", command.Source); duplicate.Parameters.AddWithValue("$event", command.SourceEventId);
-            var prior = await duplicate.ExecuteScalarAsync(token);
-            if (prior is not null)
+            await using var prior = await duplicate.ExecuteReaderAsync(token);
+            if (await prior.ReadAsync(token))
             {
+                if (!string.Equals(prior.GetString(1), runId, StringComparison.Ordinal)
+                    || !string.Equals(prior.GetString(2), programId, StringComparison.Ordinal)
+                    || DateTimeOffset.Parse(prior.GetString(3), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) != command.ObservedAt)
+                    throw new ProductionRunStateException("cycle_event_binding_conflict",
+                        "This source event was already recorded for a different Run, program, or observation time. Retry the original event unchanged, or use a new source event ID for a new observation.");
+                var completedCycleCount = prior.GetInt32(0);
+                await prior.DisposeAsync();
                 await transaction.CommitAsync(token);
-                return new((await runs.GetAsync(runId, token))!, true, Convert.ToInt32(prior));
+                return new((await runs.GetAsync(runId, token))!, true, completedCycleCount);
             }
         }
         await EnsureRunAsync(connection, transaction, runId, expectedVersion, ["IN_PROGRESS"], token);

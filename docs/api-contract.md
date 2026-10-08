@@ -1,5 +1,17 @@
 # API Contract
 
+## Audit repairs: auxiliary pins and cycle retries (2026-10-08)
+
+`GET /api/v1/timeline` auxiliary resource intervals now include `pinVersion`, an integer stamp for `(operationId, requirementId)`. Zero means no pin has ever been retained; a cleared pin retains its positive stamp. Clients must use the displayed stamp, including for create after clear.
+
+`PUT /api/v1/timeline/auxiliary-pins` requires body `expectedVersion` (nonnegative integer) and returns `version` with the existing pin fields. `DELETE /api/v1/timeline/auxiliary-pins/{batchOperationId}/{requirementId}` requires query `expectedVersion`. Both still require `planning.board`. Missing/invalid preconditions return 428 `auxiliary_pin_version_required`; a stale version returns 412 `auxiliary_pin_version_conflict` with `currentVersion` and `isPinned` inside the existing details array, durable `changedBy`/`changedAt`, and `error.conflict` (`resource`, `changedBy`, `changedAt`, `advice`). Clients preserve their selection and refresh for explicit review. Set/clear compare and advance the stamp within the write transaction; an absent pin with the correct stamp still returns 404 on clear without advancing it.
+
+Set rejects unrelated/inactive requirements (`auxiliary_pin_requirement_mismatch`), wrong resource classes (`auxiliary_pin_resource_class_mismatch`), and resources failing active/type/capacity/capability/Skill checks (`auxiliary_pin_resource_ineligible`), all 422. Ordinary calendar contention remains a recalculation concern. Machine assignments/backlog are untouched. Old read clients remain compatible; old unversioned pin writes require a client upgrade.
+
+Production Run cycle retries retain global `(source, sourceEventId)` deduplication. The persisted Run ID, program ID and observation instant must also match; compare instants in UTC, not their textual offsets. Identical retries return the original `completedCycleCount`, `wasDuplicate=true`, and the current projection of that same original Run, even with a stale original If-Match. A changed Run/program/time returns 409 `cycle_event_binding_conflict`, with no count/allocation change. This command always represents one physical cycle; it has no caller-supplied count. Authentication/permissions are checked before returning a duplicate.
+
+The [approved stage-gate matrix](implementation-plan.md#audit-handoff-2026-10-08) is a target for C05/U02, not a new implemented endpoint contract. Handoff is tracking only; package generation keeps its existing any-signed-in-Windows-user permission.
+
 **Accounts replace Single Edit Mode (schema v86, owner decision 2026-09-27).** Every Windows-client
 API call carries `Authorization: Bearer <session token>` from `POST /api/v1/auth/sign-in`; each
 mutation needs the permission of its area (§2). Users work in parallel: every change carries the

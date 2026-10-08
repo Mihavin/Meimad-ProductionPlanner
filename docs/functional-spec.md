@@ -1,5 +1,13 @@
 # Functional Specification
 
+## Audit repair decisions (2026-10-08)
+
+Auxiliary-resource pin edits must carry the version the planner saw, including create and clear. Clearing retains the version history so another user's old “no pin” view cannot overwrite an intervening decision. Stale edits explain who changed the pin and when, retain the client's displayed selection, and require refresh/review. A pin's requirement must belong to the Batch Operation's actual Case Operation; selected Employees/Workstations must satisfy the active class, type, capacity, capability and Skill requirements. Ordinary resource contention shifts provisional prediction and never silently changes Machine assignment/backlog.
+
+A repeated cycle-event key must identify the same Run, program and observation instant. Conflicting key reuse is refused without changing any coupled output; a genuine retry counts once and returns the original cycle receipt.
+
+The owner approved the [stage-gate matrix](implementation-plan.md#audit-handoff-2026-10-08): planning permits incomplete preparation; package creation requires exact current context and mode-appropriate engineering/tool facts; a valid current package establishes Ready for Setup; physical handoff is tracking only; actual loader execution or existing supported manual reports establish setup start; production requires material/engineering/tool readiness and configured exact-binding verification. This supersedes older mandatory-handoff wording. The matrix is an approved target awaiting C05/U02 implementation; the current changes implement pin/cycle repairs only. Package generation remains available to any signed-in Windows account without a new approver.
+
 Kitaron status clarification: `OrderClosed` is a coded field where `1` is open and `2` is closed; only code `2` maps to `inactive`. Other recognized Boolean closure fields close on a nonzero value. `StopProduction` still takes cancellation precedence.
 
 ## Criticality, external delay, and layered calendars

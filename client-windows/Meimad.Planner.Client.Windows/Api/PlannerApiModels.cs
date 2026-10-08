@@ -2054,7 +2054,8 @@ internal sealed record TimelineResourceInterval(
     string? WorkstationId,
     string? EmployeeId,
     string? ExternalResourceId,
-    string ResourceClass)
+    string ResourceClass,
+    long PinVersion = 0)
 {
     public string Label => StepNumber is { } step
         ? $"{BatchNumber} OP{OperationNumber} · {step} {Name}"
@@ -2073,14 +2074,16 @@ internal sealed record TimelineAuxiliaryPinRequest(
     DateTimeOffset PlannedStartsAt,
     DateTimeOffset PlannedEndsAt,
     bool PinStart,
-    string? Reason);
+    string? Reason,
+    long ExpectedVersion);
 
 internal sealed record TimelineAuxiliaryPin(
     string BatchOperationId,
     string RequirementId,
     string? WorkstationId,
     string? EmployeeId,
-    DateTimeOffset? StartsAt);
+    DateTimeOffset? StartsAt,
+    long Version = 0);
 
 internal sealed record TimelineBatch(
     string BatchId,

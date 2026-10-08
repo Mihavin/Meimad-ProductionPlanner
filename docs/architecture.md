@@ -1,5 +1,7 @@
 # Architecture
 
+Audit repair slice (2026-10-08): schema v97 introduces a Server-owned auxiliary-pin version ledger that survives clear/recreate. Pin eligibility and expected-version checks share the SQLite write transaction; Windows carries the observed stamp and retains selection on conflict. Cycle deduplication validates the persisted immutable target/payload before reading the same Run's current projection. Neither path changes Machine scheduling authority, CNC identity or TV/tablet scope. The approved action-specific readiness/handoff matrix and remaining source-audit findings are tracked in [the implementation plan](implementation-plan.md#audit-handoff-2026-10-08); unified readiness, complete backup sets and local AI remain future implementation work.
+
 The Kitaron connector treats `OrderClosed` as a coded value: `1` is open and `2` is closed. Other recognized Boolean row/header closure values close on nonzero, and `StopProduction` retains cancellation precedence.
 
 Controller workflow boundary: **Persistent CNC workflow mode variable: REMOVED.**

@@ -791,7 +791,7 @@ internal interface IPlannerApiClient : IDisposable
         Task.FromResult<IReadOnlyList<PlannerKitaronStation>>([]);
     Task<PlannerKitaronStation> DecideKitaronStationAsync(int kitaronStationId, KitaronStationDecision decision, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<TimelineAuxiliaryPin> SetTimelineAuxiliaryPinAsync(TimelineAuxiliaryPinRequest request, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    Task ClearTimelineAuxiliaryPinAsync(string batchOperationId, string requirementId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task ClearTimelineAuxiliaryPinAsync(string batchOperationId, string requirementId, long expectedVersion, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<PlannerEmployeeSkills> GetEmployeeSkillsAsync(string employeeId,
         CancellationToken cancellationToken = default) =>
         Task.FromResult(new PlannerEmployeeSkills(employeeId, []));
@@ -3239,8 +3239,8 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return await ReadSuccessAsync<TimelineAuxiliaryPin>(response, cancellationToken);
     }
 
-    public Task ClearTimelineAuxiliaryPinAsync(string batchOperationId, string requirementId, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
-        DeleteAsync($"api/v1/timeline/auxiliary-pins/{Uri.EscapeDataString(batchOperationId)}/{Uri.EscapeDataString(requirementId)}", clientId, editGeneration, cancellationToken);
+    public Task ClearTimelineAuxiliaryPinAsync(string batchOperationId, string requirementId, long expectedVersion, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        DeleteAsync($"api/v1/timeline/auxiliary-pins/{Uri.EscapeDataString(batchOperationId)}/{Uri.EscapeDataString(requirementId)}?expectedVersion={expectedVersion.ToString(CultureInfo.InvariantCulture)}", clientId, editGeneration, cancellationToken);
 
     public async Task<PlannerEmployeeSkills> GetEmployeeSkillsAsync(string employeeId,
         CancellationToken cancellationToken = default)

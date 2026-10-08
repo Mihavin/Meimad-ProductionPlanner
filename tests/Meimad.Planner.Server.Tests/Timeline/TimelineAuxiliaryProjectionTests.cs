@@ -153,7 +153,7 @@ public sealed class TimelineAuxiliaryProjectionTests
             using var forbidden = await client.PutAsJsonAsync("/api/v1/timeline/auxiliary-pins", new
             {
                 batchOperationId = "op-1", requirementId = "req-final", workstationId = "station-inspection-2",
-                plannedStartsAt = start.AddHours(1), plannedEndsAt = start.AddHours(1).AddMinutes(15), pinStart = true
+                expectedVersion = 0, plannedStartsAt = start.AddHours(1), plannedEndsAt = start.AddHours(1).AddMinutes(15), pinStart = true
             });
             Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
             viewer.Dispose();
@@ -163,7 +163,7 @@ public sealed class TimelineAuxiliaryProjectionTests
             using var pinned = await client.PutAsJsonAsync("/api/v1/timeline/auxiliary-pins", new
             {
                 batchOperationId = "op-1", requirementId = "req-final", workstationId = "station-inspection-2",
-                plannedStartsAt = start.AddHours(1), plannedEndsAt = start.AddHours(1).AddMinutes(15), pinStart = true
+                expectedVersion = 0, plannedStartsAt = start.AddHours(1), plannedEndsAt = start.AddHours(1).AddMinutes(15), pinStart = true
             });
             Assert.Equal(HttpStatusCode.OK, pinned.StatusCode);
 
@@ -177,9 +177,9 @@ public sealed class TimelineAuxiliaryProjectionTests
             Assert.DoesNotContain(afterDocument.RootElement.GetProperty("resources").EnumerateArray(),
                 value => value.GetProperty("resourceId").GetString() == "station-inspection");
 
-            using var cleared = await client.DeleteAsync("/api/v1/timeline/auxiliary-pins/op-1/req-final");
+            using var cleared = await client.DeleteAsync("/api/v1/timeline/auxiliary-pins/op-1/req-final?expectedVersion=1");
             Assert.Equal(HttpStatusCode.NoContent, cleared.StatusCode);
-            using var clearedAgain = await client.DeleteAsync("/api/v1/timeline/auxiliary-pins/op-1/req-final");
+            using var clearedAgain = await client.DeleteAsync("/api/v1/timeline/auxiliary-pins/op-1/req-final?expectedVersion=2");
             Assert.Equal(HttpStatusCode.NotFound, clearedAgain.StatusCode);
 
             using var restored = await client.GetAsync($"/api/v1/timeline?{Horizon}");
@@ -191,6 +191,108 @@ public sealed class TimelineAuxiliaryProjectionTests
             Assert.Equal(start, restoredInterval.GetProperty("startsAt").GetDateTimeOffset());
         });
     }
+
+    [Fact]
+    public async Task Pin_versions_survive_clear_and_parallel_creates_have_one_winner()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services, PinRequirementSql);
+            object Request(long? version) => new
+            {
+                batchOperationId = "op-1", requirementId = "req-final", workstationId = "station-inspection",
+                plannedStartsAt = "2026-08-11T12:00:00Z", plannedEndsAt = "2026-08-11T12:15:00Z",
+                pinStart = false, expectedVersion = version
+            };
+            using var missing = await client.PutAsJsonAsync("/api/v1/timeline/auxiliary-pins", Request(null));
+            Assert.Equal(HttpStatusCode.PreconditionRequired, missing.StatusCode);
+            using var missingClear = await client.DeleteAsync("/api/v1/timeline/auxiliary-pins/op-1/req-final");
+            Assert.Equal(HttpStatusCode.PreconditionRequired, missingClear.StatusCode);
+            var creates = await Task.WhenAll(
+                client.PutAsJsonAsync("/api/v1/timeline/auxiliary-pins", Request(0)),
+                client.PutAsJsonAsync("/api/v1/timeline/auxiliary-pins", Request(0)));
+            Assert.Single(creates, r => r.StatusCode == HttpStatusCode.OK);
+            Assert.Single(creates, r => r.StatusCode == HttpStatusCode.PreconditionFailed);
+            foreach (var response in creates) response.Dispose();
+            using var staleClear = await client.DeleteAsync("/api/v1/timeline/auxiliary-pins/op-1/req-final?expectedVersion=0");
+            Assert.Equal(HttpStatusCode.PreconditionFailed, staleClear.StatusCode);
+            using var conflict = JsonDocument.Parse(await staleClear.Content.ReadAsStringAsync());
+            var detail = conflict.RootElement.GetProperty("error").GetProperty("details")[0];
+            Assert.Equal(1, detail.GetProperty("currentVersion").GetInt64());
+            Assert.True(detail.GetProperty("isPinned").GetBoolean());
+            Assert.False(string.IsNullOrWhiteSpace(detail.GetProperty("changedBy").GetString()));
+            Assert.NotNull(detail.GetProperty("changedAt").GetString());
+            using var clear = await client.DeleteAsync("/api/v1/timeline/auxiliary-pins/op-1/req-final?expectedVersion=1");
+            Assert.Equal(HttpStatusCode.NoContent, clear.StatusCode);
+            using var staleCreate = await client.PutAsJsonAsync("/api/v1/timeline/auxiliary-pins", Request(0));
+            Assert.Equal(HttpStatusCode.PreconditionFailed, staleCreate.StatusCode);
+            using var projection = await client.GetAsync($"/api/v1/timeline?{Horizon}");
+            using var json = JsonDocument.Parse(await projection.Content.ReadAsStringAsync());
+            var interval = json.RootElement.GetProperty("resources")[0].GetProperty("intervals")[0];
+            Assert.False(interval.GetProperty("isPinned").GetBoolean());
+            Assert.Equal(2, interval.GetProperty("pinVersion").GetInt64());
+            using var recreated = await client.PutAsJsonAsync("/api/v1/timeline/auxiliary-pins", Request(2));
+            recreated.EnsureSuccessStatusCode();
+            using var recreatedJson = JsonDocument.Parse(await recreated.Content.ReadAsStringAsync());
+            Assert.Equal(3, recreatedJson.RootElement.GetProperty("version").GetInt64());
+        });
+    }
+
+    [Theory]
+    [InlineData("op-2", "station-inspection", null, "", "auxiliary_pin_requirement_mismatch")]
+    [InlineData("op-1", null, "resource-qa", "", "auxiliary_pin_resource_class_mismatch")]
+    [InlineData("op-1", "station-deburr", null, "", "auxiliary_pin_resource_ineligible")]
+    [InlineData("op-1", "station-inspection", null, "UPDATE workstations SET is_active=0;", "auxiliary_pin_resource_ineligible")]
+    [InlineData("op-1", "station-inspection", null, "UPDATE operation_resource_requirements SET required_capability='precision';", "auxiliary_pin_resource_ineligible")]
+    [InlineData("op-1", "station-inspection", null, "UPDATE operation_resource_requirements SET capacity_required=2;", "auxiliary_pin_resource_ineligible")]
+    [InlineData("op-1", null, "resource-qa", "UPDATE operation_resource_requirements SET resource_class='EMPLOYEE',workstation_type_id=NULL,required_skill_id='skill-inspect';", "auxiliary_pin_resource_ineligible")]
+    public async Task Invalid_pin_context_is_rejected_atomically(string operation, string? station, string? employee, string change, string code)
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services, PinRequirementSql + change);
+            using var response = await client.PutAsJsonAsync("/api/v1/timeline/auxiliary-pins", new
+            {
+                batchOperationId = operation, requirementId = "req-final", workstationId = station, employeeId = employee,
+                expectedVersion = 0, pinStart = false,
+                plannedStartsAt = "2026-08-11T12:00:00Z", plannedEndsAt = "2026-08-11T12:15:00Z"
+            });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Contains(code, await response.Content.ReadAsStringAsync());
+            await using var connection = await application.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT (SELECT count(*) FROM auxiliary_pin_versions) + (SELECT count(*) FROM resource_schedule_work);";
+            Assert.Equal(0L, await command.ExecuteScalarAsync());
+        });
+    }
+
+    [Fact]
+    public async Task Qualified_employee_and_unicode_capability_match_the_allocator()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services, PinRequirementSql + """
+                UPDATE operation_resource_requirements SET required_skill_id='skill-inspect',required_capability='ТОЧНОСТЬ';
+                UPDATE workstations SET capabilities_json='["точность"]' WHERE id='station-inspection';
+                INSERT INTO employee_skills(employee_resource_id,skill_id,assigned_at,assigned_by)
+                    VALUES('resource-qa','skill-inspect','2026-08-01T00:00:00Z','planner');
+                """);
+            using var response = await client.PutAsJsonAsync("/api/v1/timeline/auxiliary-pins", new
+            {
+                batchOperationId = "op-1", requirementId = "req-final", workstationId = "station-inspection", employeeId = "resource-qa",
+                expectedVersion = 0, pinStart = false,
+                plannedStartsAt = "2026-08-11T12:00:00Z", plannedEndsAt = "2026-08-11T12:15:00Z"
+            });
+            response.EnsureSuccessStatusCode();
+        });
+    }
+
+    private const string PinRequirementSql = """
+        INSERT INTO skills(id,name,created_at,updated_at) VALUES('skill-inspect','Inspect','2026-08-01T00:00:00Z','2026-08-01T00:00:00Z');
+        INSERT INTO operation_resource_requirements(id,case_operation_id,sequence_position,resource_class,workstation_type_id,
+            estimated_duration_seconds,created_at,updated_at)
+        VALUES('req-final','case-op-1',0,'WORKSTATION','type-inspection',900,'2026-08-01T00:00:00Z','2026-08-01T00:00:00Z');
+        """;
 
     private static async Task SeedAsync(IServiceProvider services, string extraSql)
     {

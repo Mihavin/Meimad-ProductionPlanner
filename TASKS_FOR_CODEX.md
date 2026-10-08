@@ -1,5 +1,7 @@
 # TASKS FOR CODEX
 
+Additional 2026-10-08 backlog: [audit repairs, industrial UI and local AI](docs/tasks/audit-and-local-ai.md). Current evidence, owner decisions and completion status are recorded in [the implementation plan](docs/implementation-plan.md#audit-handoff-2026-10-08). Preserve the tasks below except where an explicitly recorded later owner decision supersedes them.
+
 This file is the working task buffer for Codex. Implement the tasks below in the repository. When a task set is completed, this file may be cleared/replaced with the next task set.
 
 ## 1. Simplify device identity and update AGENTS.md

@@ -108,7 +108,7 @@ internal static class TimelineAuxiliaryProjector
                     pin?.WorkstationId,
                     pin?.EmployeeId,
                     pin?.StartsAt));
-                workContext[workId] = new WorkContext(operation, requirement, pin is not null);
+                workContext[workId] = new WorkContext(operation, requirement, pin?.IsActive == true);
             }
         }
         // A dependency on a step that was left out (anchor outside the horizon) is dropped rather
@@ -202,7 +202,8 @@ internal static class TimelineAuxiliaryProjector
                 context.Requirement.StepNumber, context.Requirement.Name ?? StepLabel(context.Requirement),
                 context.Requirement.Direction, assignment.StartsAt, assignment.EndsAt, assignment.IsPinned,
                 assignment.Explanation, assignment.WorkstationId, assignment.EmployeeId, assignment.ExternalResourceId,
-                context.Requirement.ResourceClass);
+                context.Requirement.ResourceClass,
+                pins.GetValueOrDefault(assignment.WorkId)?.Version ?? 0);
             if (assignment.WorkstationId is not null)
                 AddToLane(lanes, assignment.WorkstationId, "workstation", workstationNames.GetValueOrDefault(assignment.WorkstationId) ?? assignment.WorkstationId, interval);
             if (assignment.EmployeeId is not null)

@@ -73,7 +73,8 @@ internal sealed record TimelineProjectionResourceInterval(
     string? WorkstationId,
     string? EmployeeId,
     string? ExternalResourceId,
-    string ResourceClass);
+    string ResourceClass,
+    long PinVersion = 0);
 
 internal sealed record TimelineProductionRunProjection(
     string ProductionRunId, string MachineId, DateTimeOffset StartsAt, DateTimeOffset EndsAt,

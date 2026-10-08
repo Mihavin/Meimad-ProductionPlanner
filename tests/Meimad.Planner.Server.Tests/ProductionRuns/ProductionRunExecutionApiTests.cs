@@ -11,6 +11,60 @@ namespace Meimad.Planner.Server.Tests.ProductionRuns;
 
 public sealed class ProductionRunExecutionApiTests
 {
+    [Theory]
+    [InlineData("missing-run", "program-1", "2026-08-23T12:00:00Z")]
+    [InlineData("run-1", "missing-program", "2026-08-23T12:00:00Z")]
+    [InlineData("run-1", "program-1", "2026-08-23T12:00:01Z")]
+    public async Task Reused_event_with_different_binding_conflicts_without_changing_counts(string run, string program, string observedAt)
+    {
+        await RunAsync(async (app, client) =>
+        {
+            await SeedAsync(app.Services);
+            using var first = Request("\"production-run:run-1:v1\"", "event-1");
+            using var accepted = await client.SendAsync(first);
+            accepted.EnsureSuccessStatusCode();
+            using var retry = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/production-runs/{run}/programs/{program}/cycles")
+            {
+                Content = JsonContent.Create(new { source = "TEST", sourceEventId = "event-1", observedAt })
+            };
+            retry.Headers.TryAddWithoutValidation("If-Match", $"\"production-run:{run}:v1\"");
+            using var rejected = await client.SendAsync(retry);
+            Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+            Assert.Contains("cycle_event_binding_conflict", await rejected.Content.ReadAsStringAsync());
+            using var unchanged = Request("\"production-run:run-1:v1\"", "event-1");
+            using var receipt = await client.SendAsync(unchanged);
+            receipt.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await receipt.Content.ReadAsStringAsync());
+            Assert.Equal(1, json.RootElement.GetProperty("completedCycleCount").GetInt32());
+            Assert.Equal(2, json.RootElement.GetProperty("run").GetProperty("programs")[0].GetProperty("outputs")[0].GetProperty("producedQuantity").GetInt32());
+        });
+    }
+
+    [Fact]
+    public async Task Parallel_retries_count_once_and_equivalent_observation_offsets_match()
+    {
+        await RunAsync(async (app, client) =>
+        {
+            await SeedAsync(app.Services);
+            using var first = Request("\"production-run:run-1:v1\"", "parallel-event");
+            using var second = Request("\"production-run:run-1:v1\"", "parallel-event");
+            second.Content = JsonContent.Create(new { source = "TEST", sourceEventId = "parallel-event", observedAt = "2026-08-23T15:00:00+03:00" });
+            var responses = await Task.WhenAll(client.SendAsync(first), client.SendAsync(second));
+            var duplicates = 0;
+            foreach (var response in responses)
+            {
+                using (response)
+                {
+                    response.EnsureSuccessStatusCode();
+                    using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                    if (json.RootElement.GetProperty("wasDuplicate").GetBoolean()) duplicates++;
+                    Assert.Equal(1, json.RootElement.GetProperty("completedCycleCount").GetInt32());
+                }
+            }
+            Assert.Equal(1, duplicates);
+        });
+    }
+
     [Fact]
     public async Task One_cycle_advances_all_coupled_outputs_idempotently_and_stops_exactly()
     {

@@ -1,5 +1,7 @@
 # Production Run and multi-output Manufacturing Program architecture
 
+Cycle-retry correction (2026-10-08, C06): the existing global `(source, source_event_id)` identity now also verifies persisted Run/program and UTC observation instant. Same key with a different or nonexistent target or different observation time returns `cycle_event_binding_conflict` atomically. A true retry returns the original completed-cycle receipt and the current projection of the same original Run; the current projection is not a historical receipt snapshot. Each request records exactly one coupled cycle. No schema change, counter rounding, output overproduction or CNC sequence-authority change is introduced.
+
 **Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
 verification variables: SUPPORTED** only for the configured, commissioned
 challenge/response handshake and never as durable workflow state.
