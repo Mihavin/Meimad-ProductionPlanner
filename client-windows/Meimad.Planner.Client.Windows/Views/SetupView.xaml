@@ -113,7 +113,7 @@
 
         <TabControl x:Name="AdministrationTabs" Grid.Row="2">
             <TabItem ToolTip="Manage working calendars, shifts, and breaks">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource CalendarButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Calendars" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Calendar}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Calendars" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="320" />
@@ -260,7 +260,7 @@
             </TabItem>
 
             <TabItem ToolTip="Manage production Machines">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource MachinesButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Machines" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Machine}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Machines" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2*" />
@@ -675,7 +675,7 @@
             </TabItem>
 
             <TabItem ToolTip="Manage Machine Types and capabilities">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource MachinesButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Machine Types" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Machine}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Machine Types" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2*" />
@@ -723,7 +723,7 @@
             </TabItem>
 
             <TabItem ToolTip="Manage G-code postprocessors">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource MachinesButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Postprocessors" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.NcCreator}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Postprocessors" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="8">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
                     <Border Grid.Column="0" Style="{StaticResource SetupSection}">
@@ -754,7 +754,7 @@
             </TabItem>
 
             <TabItem ToolTip="Choose which Customers the Server pushes to the cloud customer portal">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource UsersButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Client Portal" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Portal}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Client Portal" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="8">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
                     <Border Grid.Column="0" Style="{StaticResource SetupSection}">
@@ -1043,7 +1043,7 @@
             </TabItem>
 
             <TabItem ToolTip="Manage employees, roles, skills, and availability">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource ResourcesButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Employees / Resources" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Worker}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Employees / Resources" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <TabControl Margin="0,4,0,0">
                     <TabItem Header="Employees">
                 <Grid Margin="8">
@@ -1203,7 +1203,7 @@
             </TabItem>
 
             <TabItem ToolTip="Manage holiday calendar availability">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource CalendarButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Israeli Holidays" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Calendar}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Israeli Holidays" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="8">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
                     <Border Grid.Column="0" Style="{StaticResource SetupSection}">
@@ -1240,7 +1240,7 @@
             </TabItem>
 
             <TabItem ToolTip="Import planning data from an Excel workbook">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource ImportButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Excel Case + Order Import" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Import}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Excel Case + Order Import" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="8" FlowDirection="LeftToRight">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -1312,7 +1312,7 @@
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                         <StackPanel Grid.Column="0" Style="{StaticResource SetupField}"><TextBlock Text="Workbook path" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding LegacyImport.SelectedFilePath, UpdateSourceTrigger=PropertyChanged}" ToolTip="Choose a copy of the workbook. The original file is never modified." /></StackPanel>
                                         <StackPanel Grid.Column="1" Style="{StaticResource SetupField}" Margin="8,0,0,8"><TextBlock Text="Planning sheet" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding LegacyImport.SheetChoices}" Text="{Binding LegacyImport.SourceSheetName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEditable="True" ToolTip="Choose a detected worksheet, then validate / refresh the preview." /><TextBlock Text="Open-orders sheet (optional)" Style="{StaticResource SetupFieldLabel}" Margin="0,5,0,0" /><ComboBox ItemsSource="{Binding LegacyImport.OptionalSheetChoices}" Text="{Binding LegacyImport.OpenOrdersSheetName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEditable="True" ToolTip="Leave blank when open Orders are not part of this import." /></StackPanel>
-                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Bottom"><Button Content="Browse…" Click="BrowseLegacyWorkbook_Click" Margin="8,0,0,0" /><Button Command="{Binding LegacyImport.PreviewCommand}" Style="{StaticResource TemplateIconButton}" ToolTip="Preview and validate the selected workbook" AutomationProperties.Name="Preview workbook" Margin="8,0,0,0"><Image Source="{StaticResource ImportButtonIcon}" Width="24" Height="24" /></Button></StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Bottom"><Button Content="Browse…" Click="BrowseLegacyWorkbook_Click" Margin="8,0,0,0" /><Button Command="{Binding LegacyImport.PreviewCommand}" Style="{StaticResource TemplateIconButton}" ToolTip="Preview and validate the selected workbook" AutomationProperties.Name="Preview workbook" Margin="8,0,0,0"><Image Source="{DynamicResource Icon.Search}" Width="24" Height="24" /></Button></StackPanel>
                                     </Grid>
                                     <TextBlock Text="{Binding LegacyImport.ErrorMessage}" Foreground="{DynamicResource ErrorTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
                                     <TextBlock Text="{Binding LegacyImport.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,10,0,0" />
@@ -1494,7 +1494,7 @@
             </TabItem>
 
             <TabItem ToolTip="Configure and send production reports">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource ReportsButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Reports / Email" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Reports}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Reports / Email" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <ScrollViewer Margin="8" VerticalScrollBarVisibility="Auto"><Border Style="{StaticResource SetupSection}" MaxWidth="760" HorizontalAlignment="Left"><StackPanel IsEnabled="{Binding IsEditor}">
                     <TextBlock Text="Report and email delivery" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
                     <UniformGrid Columns="2">
