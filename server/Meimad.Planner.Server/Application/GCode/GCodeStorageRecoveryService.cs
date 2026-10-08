@@ -73,6 +73,7 @@ internal sealed class GCodeStorageRecoveryService : IHostedService
 
     private void TryDelete(string directory, string reason)
     {
+        using var recoveryLease = Meimad.Planner.Server.Backup.RecoveryArtifactLease.Acquire();
         try
         {
             Directory.Delete(directory, recursive: true);

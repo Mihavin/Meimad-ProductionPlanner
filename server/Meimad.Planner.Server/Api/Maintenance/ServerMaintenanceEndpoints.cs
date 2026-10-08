@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Backup;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Maintenance;
 using Meimad.Planner.Server.Application.Accounts;
@@ -13,6 +14,15 @@ internal static class ServerMaintenanceEndpoints
         group.MapPost("/collected-data/preview", PreviewAsync);
         group.MapPost("/collected-data/purge", PurgeAsync);
         group.MapPost("/backups/download", DownloadBackupAsync);
+        group.MapGet("/recovery-sets", async (RecoverySetService service, CancellationToken token) => Results.Ok(await service.StatusAsync(token)));
+        group.MapPost("/recovery-sets", async (HttpContext context, RecoverySetService service, CancellationToken token) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out var user, out var error)) return error!;
+            try { return Results.Ok(await service.CreateAsync(user!.UserName, token)); }
+            catch (InvalidOperationException exception) { return PlanningHttpSupport.Error(409, "recovery_not_configured", exception.Message, context); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+            { return PlanningHttpSupport.Error(409, "recovery_set_failed", "Recovery set could not be completed. Check storage access, the recovery password file, keys and referenced artifacts.", context); }
+        });
     }
 
     private static async Task<IResult> GetDatabaseAsync(

@@ -1,10 +1,17 @@
 # Architecture
 
+## C08 durable ERP delivery boundary
+
+SQLite owns immutable push intent and lifecycle, while SQL Server owns ERP commit. The Server persists Prepared before it can claim Writing or call the target. A successful return from SQL commit precedes the local success receipt; failures between these authorities are represented explicitly as OutcomeUnknown. The SQL target reports proven pre-commit rollback separately; commit-attempt errors are conservatively uncertain. If SQLite is unavailable after writing, the durable Writing claim blocks replacement attempts and is recovered on the next Server startup. Recovery runs before the push hosted service starts; it never dispatches retained intents.
+
+The repository serializes new deliveries and claims with SQLite transactions/CAS; the in-process semaphore is only an additional guard. The deployment remains one authoritative Server process per database; startup recovery is not a distributed lease for multiple live Server processes. Reconciliation uses reads against the stored target and appends versioned evidence; acknowledgment records the reviewing user and enables a new freshly planned run without replaying the old one or asserting attribution. No remote worker, general outbox transport or ERP API is added. Existing SQL Server acceptance limitations remain.
+
+
 ## C07 ERP comparison boundary
 
 The existing four-field Kitaron push carries typed expected ERP values from read to write. Read-committed preview queries omit NOLOCK. The writer acquires update/range locks on each target Work Order and its operation rows in a Serializable transaction, validates identity, unique matching, current open status and exact mapped values, then updates all changed fields of the row. Locks remain until the whole push commits; a failed comparison rolls back all independent items too. Direct update counts use OUTPUT INTO and an output parameter, independent of AFTER-trigger counts. Enabled INSTEAD OF triggers are unsupported and refused. No SQL Server database option is enabled by this change.
 
-The optional preview stamp binds a displayed preview to the next manual request; Windows carries it without calculating ERP rules. An unstamped run still constructs its own fresh plan and validates its expected values at commit. The existing owner-approved SQL connector/login is unchanged. Import-only installations should retain a read-only SQL role: ApplicationIntent.ReadOnly alone is not authorization. No vendor-approved integration API has been established by this change; the existing direct SQL path and factory triggers require isolated acceptance. C08 owns durable intent and ambiguous commit reconciliation.
+The optional preview stamp binds a displayed preview to the next manual request; Windows carries it without calculating ERP rules. An unstamped run still constructs its own fresh plan and validates its expected values at commit. The existing owner-approved SQL connector/login is unchanged. Import-only installations should retain a read-only SQL role: ApplicationIntent.ReadOnly alone is not authorization. No vendor-approved integration API has been established by this change; the existing direct SQL path and factory triggers require isolated acceptance. C08 implements durable intent and uncertain-outcome review as described above.
 
 
 ## C05 shared readiness core

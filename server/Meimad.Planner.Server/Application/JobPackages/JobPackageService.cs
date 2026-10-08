@@ -572,6 +572,7 @@ internal sealed class JobPackageService
 
     private static void DeleteGeneratedDirectory(string path, string packageRoot)
     {
+        using var recoveryLease = Meimad.Planner.Server.Backup.RecoveryArtifactLease.Acquire();
         var fullPath = Path.GetFullPath(path);
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(packageRoot));
         if (IsChildPath(root, fullPath)

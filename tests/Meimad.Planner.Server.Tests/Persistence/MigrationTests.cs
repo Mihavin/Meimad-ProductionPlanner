@@ -82,7 +82,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(100L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(101L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -368,7 +368,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(100L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(101L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -1658,7 +1658,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 101;";
+            command.CommandText = "PRAGMA user_version = 102;";
             await command.ExecuteNonQueryAsync();
         }
 
@@ -1676,6 +1676,11 @@ public sealed class MigrationTests
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
+            DROP TABLE IF EXISTS kitaron_push_reconciliations;
+            DROP TABLE IF EXISTS kitaron_push_intents;
+            ALTER TABLE kitaron_push_runs DROP COLUMN lifecycle_state;
+            ALTER TABLE kitaron_push_runs DROP COLUMN intent_version;
+            DELETE FROM schema_migrations WHERE version = 101;
             DROP TRIGGER IF EXISTS project_manual_timing_after_insert;
             DROP VIEW IF EXISTS manual_timing_aggregate;
             DROP VIEW IF EXISTS manual_timing_warnings;

@@ -53,3 +53,10 @@ artifacts/
 # in alongside them (sample projects, other-platform builds, ...). Only our own doc is tracked.
 focas/*
 !focas/MEIMAD-FOCAS-LIBRARY.md
+
+# Encrypted recovery sets and local recovery credentials
+*.mprb
+*.mprb.*
+*.recovery-status.json*
+*.dpapi
+*.credential.xml

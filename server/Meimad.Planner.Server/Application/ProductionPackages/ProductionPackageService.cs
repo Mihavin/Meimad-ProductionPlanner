@@ -604,6 +604,7 @@ internal sealed class ProductionPackageService(
 
     private static void DeleteDirectory(string path)
     {
+        using var recoveryLease = Meimad.Planner.Server.Backup.RecoveryArtifactLease.Acquire();
         try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }

@@ -384,6 +384,7 @@ internal sealed class GCodeArtifactStore
 
     private static void DeleteDirectory(string path)
     {
+        using var recoveryLease = Meimad.Planner.Server.Backup.RecoveryArtifactLease.Acquire();
         try
         {
             if (Directory.Exists(path))

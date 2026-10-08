@@ -4843,5 +4843,15 @@
   "Create package": "Создать пакет",
   "Report setup start": "Отметить начало наладки",
   "Start run": "Начать запуск",
-  "Record production": "Отметить производство"
+  "Record production": "Отметить производство",
+  "Inspect ERP values": "Проверить значения ERP",
+  "I reviewed the uncertain outcome": "Я проверил неопределённый исход",
+  "Acknowledge review": "Подтвердить проверку",
+  "Outcome unknown": "Исход неизвестен",
+  "Not written": "Не записано",
+  "Unconfirmed": "Не подтверждено",
+  "Review acknowledged": "Проверка подтверждена",
+  "Preparing": "Подготовка",
+  "Prepared": "Подготовлено",
+  "Writing": "Запись"
 }

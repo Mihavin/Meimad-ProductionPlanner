@@ -1008,9 +1008,9 @@
                         <Border Grid.Column="0" Style="{StaticResource SetupSection}">
                             <DockPanel>
                                 <TextBlock DockPanel.Dock="Top" Text="{Binding ResultTitle}" FontWeight="SemiBold" Margin="0,0,0,4"/>
-                                <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Notes}" Margin="0,0,0,4">
+                                <ScrollViewer DockPanel.Dock="Top" MaxHeight="180" VerticalScrollBarVisibility="Auto"><ItemsControl ItemsSource="{Binding Notes}" Margin="0,0,0,4">
                                     <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/></DataTemplate></ItemsControl.ItemTemplate>
-                                </ItemsControl>
+                                </ItemsControl></ScrollViewer>
                                 <DataGrid ItemsSource="{Binding Changes}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" AutomationProperties.Name="Kitaron push changes">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="Work Order" Binding="{Binding WorkOrderNumber}" Width="85"/>
@@ -1025,13 +1025,18 @@
                         </Border>
                         <Border Grid.Column="2" Style="{StaticResource SetupSection}">
                             <DockPanel>
-                                <TextBlock DockPanel.Dock="Top" Text="Recent pushes" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                    <TextBlock Text="Recent pushes" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                    <Button Content="Inspect ERP values" Command="{Binding ReconcileCommand}"/>
+                                    <CheckBox Content="I reviewed the uncertain outcome" IsChecked="{Binding ReviewConfirmed}" Margin="0,6"/>
+                                    <Button Content="Acknowledge review" Command="{Binding AcknowledgeCommand}" ToolTip="Allow future fresh pushes without claiming this run succeeded or retrying it"/>
+                                </StackPanel>
                                 <DataGrid ItemsSource="{Binding Runs}" SelectedItem="{Binding SelectedRun}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" AutomationProperties.Name="Recent Kitaron pushes">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="Started" Binding="{Binding StartedText}" Width="110"/>
                                         <DataGridTextColumn Header="Started by" Binding="{Binding TriggerText}" Width="90"/>
-                                        <DataGridTextColumn Header="Result" Binding="{Binding StatusText}" Width="60"/>
-                                        <DataGridTextColumn Header="Values" Binding="{Binding ValuesWritten}" Width="55"/>
+                                        <DataGridTextColumn Header="Result" Binding="{Binding StatusText}" Width="135"/>
+                                        <DataGridTextColumn Header="Values" Binding="{Binding ValuesWrittenText}" Width="95"/>
                                         <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*"/>
                                     </DataGrid.Columns>
                                 </DataGrid>

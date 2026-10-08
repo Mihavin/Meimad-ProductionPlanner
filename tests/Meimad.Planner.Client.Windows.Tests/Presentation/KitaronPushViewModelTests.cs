@@ -7,6 +7,34 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 public sealed class KitaronPushViewModelTests
 {
     [Fact]
+    public async Task Unknown_outcome_review_never_pushes_and_requires_explicit_acknowledgement()
+    {
+        var api = new FakeApiClient();
+        var viewModel = new KitaronPushViewModel();
+        viewModel.AttachSession(api, editor: true);
+        await viewModel.RefreshAsync();
+        viewModel.Runs.Add(new(new("unknown", "manual", "planner", DateTimeOffset.UtcNow, null,
+            "failed", 1, 0, 0, "Outcome unknown", "OutcomeUnknown", 1)));
+        viewModel.SelectedRun = viewModel.Runs.Last();
+        await viewModel.LoadRunChangesAsync(viewModel.SelectedRun.Run);
+        Assert.Equal("Outcome unknown", viewModel.SelectedRun.StatusText);
+        Assert.True(viewModel.ReconcileCommand.CanExecute(null));
+        Assert.False(viewModel.AcknowledgeCommand.CanExecute(null));
+        await viewModel.ReviewAsync(true);
+        Assert.Equal(0, api.Reviews);
+        await viewModel.ReviewAsync(false);
+        Assert.Equal(1, api.Reviews);
+        Assert.False(viewModel.AcknowledgeCommand.CanExecute(null));
+        viewModel.ReviewConfirmed = true;
+        Assert.True(viewModel.AcknowledgeCommand.CanExecute(null));
+        await viewModel.ReviewAsync(true);
+        Assert.Equal(2, api.Reviews);
+        Assert.Equal(2, api.ReviewVersion);
+        Assert.Equal(0, api.Pushes);
+        Assert.False(viewModel.ReconcileCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task Refused_push_retains_preview_precondition_until_the_user_refreshes_it()
     {
         var api = new FakeApiClient { RefusePush = true };
@@ -101,6 +129,8 @@ public sealed class KitaronPushViewModelTests
         internal int SavedVersion { get; private set; }
         internal IReadOnlyList<KitaronPushMappingModel> SavedMappings { get; private set; } = [];
         internal int Pushes { get; private set; }
+        internal int Reviews { get; private set; }
+        internal int ReviewVersion { get; private set; }
         internal string? LastPreviewStamp { get; private set; }
 
         public Task<KitaronPushSettingsResource> GetKitaronPushAsync(CancellationToken cancellationToken = default) =>
@@ -116,6 +146,22 @@ public sealed class KitaronPushViewModelTests
 
         public Task<KitaronPushResultInfo> PreviewKitaronPushAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(Result(null));
+
+        public Task<KitaronPushIntentInfo> GetKitaronPushIntentAsync(string runId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new KitaronPushIntentInfo(runId, "OutcomeUnknown", 1, new(Result(null).Changes), []));
+
+        public Task<KitaronPushIntentInfo> ReviewKitaronPushAsync(string runId, int expectedVersion, bool acknowledge, CancellationToken cancellationToken = default)
+        {
+            Reviews++;
+            ReviewVersion = expectedVersion;
+            // Keep the selected run in the refreshed log.
+            runs.Clear();
+            runs.Add(new(runId, "manual", "planner", DateTimeOffset.UtcNow, null, "failed", 1, 0, 0, "Unknown",
+                acknowledge ? "Reconciled" : "OutcomeUnknown", expectedVersion + 1));
+            return Task.FromResult(new KitaronPushIntentInfo(runId, acknowledge ? "Reconciled" : "OutcomeUnknown",
+                expectedVersion + 1, new(Result(null).Changes),
+                [new("reviewer", DateTimeOffset.UtcNow, [], "Outcome remains unknown.")]));
+        }
 
         public Task<KitaronPushResultInfo> RunKitaronPushAsync(CancellationToken cancellationToken = default, string? previewStamp = null)
         {

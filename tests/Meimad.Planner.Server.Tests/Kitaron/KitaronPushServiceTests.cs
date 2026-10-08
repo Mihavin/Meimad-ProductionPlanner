@@ -12,6 +12,121 @@ namespace Meimad.Planner.Server.Tests.Kitaron;
 public sealed class KitaronPushServiceTests
 {
     [Fact]
+    public async Task External_write_requires_a_committed_intent_and_Writing_claim()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var protection = new EphemeralDataProtectionProvider();
+        await SeedAsync(fixture.Database, protection, connectorEnabled: true);
+        var repository = new SqliteKitaronPushRepository(fixture.Database);
+        var target = new FakeKitaron
+        {
+            BeforeWrite = async () =>
+            {
+                var run = Assert.Single(await repository.ListRunsAsync(20, default));
+                var intent = await repository.ReadIntentAsync(run.RunId, default);
+                Assert.Equal("Writing", intent.State);
+                Assert.Equal(4, intent.Intent!.Writes.Count);
+                Assert.Single(intent.Intent.Forecasts);
+            }
+        };
+        await Service(fixture.Database, protection, target).RunAsync("manual", "planner", default);
+        Assert.Equal(1, target.WriteCalls);
+    }
+
+    [Fact]
+    public async Task Failure_to_persist_intent_never_calls_ERP_writer()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var protection = new EphemeralDataProtectionProvider();
+        await SeedAsync(fixture.Database, protection, connectorEnabled: true);
+        await using var sql = await fixture.Database.OpenConnectionAsync();
+        await using var command = sql.CreateCommand();
+        command.CommandText = "CREATE TRIGGER fail_intent BEFORE INSERT ON kitaron_push_intents BEGIN SELECT RAISE(ABORT,'injected storage failure'); END;";
+        await command.ExecuteNonQueryAsync();
+        var target = new FakeKitaron();
+        var service = Service(fixture.Database, protection, target);
+        await Assert.ThrowsAsync<KitaronPushBlockedException>(() => service.RunAsync("manual", "planner", default));
+        Assert.Equal(0, target.WriteCalls);
+        Assert.Equal("FailedBeforeCommit", Assert.Single(await service.ListRunsAsync(default)).LifecycleState);
+    }
+
+    [Fact]
+    public async Task Lost_response_after_external_write_preserves_intent_and_blocks_retry_until_review()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var protection = new EphemeralDataProtectionProvider();
+        await SeedAsync(fixture.Database, protection, connectorEnabled: true);
+        var target = new FakeKitaron { FailAfterWrites = true };
+        var service = Service(fixture.Database, protection, target);
+        var failure = await Assert.ThrowsAsync<KitaronPushOutcomeUnknownException>(() =>
+            service.RunAsync("manual", "planner", CancellationToken.None));
+        Assert.DoesNotContain("nothing was written", failure.Message, StringComparison.OrdinalIgnoreCase);
+        var intent = await service.ReadIntentAsync(failure.RunId, CancellationToken.None);
+        Assert.Equal("OutcomeUnknown", intent.State);
+        Assert.Equal(4, intent.Intent!.Writes.Count);
+        Assert.Single(intent.Intent.Operations);
+        Assert.DoesNotContain("secret", System.Text.Json.JsonSerializer.Serialize(intent), StringComparison.Ordinal);
+        Assert.Equal(4, target.Written.Count);
+        await Assert.ThrowsAsync<KitaronPushBlockedException>(() => service.RunAsync("automatic", null, CancellationToken.None));
+        Assert.Equal(1, target.WriteCalls);
+
+        var inspected = await service.ReconcileAsync(intent.RunId, intent.Version, "reviewer", CancellationToken.None);
+        Assert.Equal("OutcomeUnknown", inspected.State);
+        Assert.All(Assert.Single(inspected.Reconciliations).Values, x => Assert.Equal("MatchesIntent", x.Comparison));
+        await Assert.ThrowsAsync<KitaronPushConflictException>(() => service.AcknowledgeAsync(intent.RunId, intent.Version, "reviewer", CancellationToken.None));
+        var resolved = await service.AcknowledgeAsync(intent.RunId, inspected.Version, "reviewer", CancellationToken.None);
+        Assert.Equal("Reconciled", resolved.State);
+        Assert.Equal("Acknowledgement", resolved.Reconciliations.Last().Kind);
+        Assert.Equal(1, target.WriteCalls);
+        Assert.Empty((await service.RunAsync("manual", "planner", CancellationToken.None)).Changes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Receipt_failure_after_commit_keeps_uncertainty_durable_across_restart(bool failEveryReceipt)
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var protection = new EphemeralDataProtectionProvider();
+        await SeedAsync(fixture.Database, protection, connectorEnabled: true);
+        await using var sql = await fixture.Database.OpenConnectionAsync();
+        await using var command = sql.CreateCommand();
+        command.CommandText = "CREATE TRIGGER fail_receipt BEFORE UPDATE ON kitaron_push_runs WHEN NEW.lifecycle_state IN ("
+            + (failEveryReceipt ? "'Succeeded','OutcomeUnknown'" : "'Succeeded'")
+            + ") BEGIN SELECT RAISE(ABORT,'injected receipt failure'); END;";
+        await command.ExecuteNonQueryAsync();
+        var target = new FakeKitaron();
+        var service = Service(fixture.Database, protection, target);
+        var failure = await Assert.ThrowsAsync<KitaronPushOutcomeUnknownException>(() => service.RunAsync("manual", "planner", CancellationToken.None));
+        var durable = await service.ReadIntentAsync(failure.RunId, CancellationToken.None);
+        Assert.Equal(failEveryReceipt ? "Writing" : "OutcomeUnknown", durable.State);
+        Assert.Equal(4, target.Written.Count);
+        command.CommandText = "DROP TRIGGER fail_receipt;";
+        await command.ExecuteNonQueryAsync();
+        var restarted = Service(fixture.Database, protection, target);
+        await restarted.RecoverInterruptedAsync(CancellationToken.None);
+        Assert.Equal("OutcomeUnknown", (await restarted.ReadIntentAsync(failure.RunId, CancellationToken.None)).State);
+        await Assert.ThrowsAsync<KitaronPushBlockedException>(() => restarted.RunAsync("automatic", null, CancellationToken.None));
+        Assert.Equal(1, target.WriteCalls);
+    }
+
+    [Theory]
+    [InlineData(false, "FailedBeforeCommit")]
+    [InlineData(true, "OutcomeUnknown")]
+    public async Task Cancellation_records_whether_an_external_write_was_attempted(bool duringWrite, string expected)
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var protection = new EphemeralDataProtectionProvider();
+        await SeedAsync(fixture.Database, protection, connectorEnabled: true);
+        var service = Service(fixture.Database, protection, new FakeKitaron { CancelReads = !duringWrite, CancelWrites = duringWrite });
+        var error = await Record.ExceptionAsync(() => service.RunAsync("manual", "planner", CancellationToken.None));
+        Assert.NotNull(error);
+        if (duringWrite) Assert.IsType<KitaronPushOutcomeUnknownException>(error);
+        else Assert.IsType<OperationCanceledException>(error);
+        Assert.Equal(expected, Assert.Single(await service.ListRunsAsync(CancellationToken.None)).LifecycleState);
+    }
+
+    [Fact]
     public async Task A_stale_displayed_preview_is_refused_before_external_write()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
@@ -115,7 +230,7 @@ public sealed class KitaronPushServiceTests
         var blocked = await Assert.ThrowsAsync<KitaronPushBlockedException>(() =>
             service.RunAsync("manual", "planner", CancellationToken.None));
 
-        Assert.StartsWith("Kitaron did not accept the changes; nothing was written.", blocked.Message, StringComparison.Ordinal);
+        Assert.StartsWith("Push failed before ERP commit; nothing was written by this run.", blocked.Message, StringComparison.Ordinal);
         var run = Assert.Single(await service.ListRunsAsync(CancellationToken.None));
         Assert.Equal("failed", run.Status);
         Assert.Equal(0, run.ValuesWritten);
@@ -214,6 +329,10 @@ public sealed class KitaronPushServiceTests
 
         internal bool FailWrites { get; init; }
         internal bool ConflictWrites { get; init; }
+        internal bool FailAfterWrites { get; init; }
+        internal bool CancelReads { get; init; }
+        internal bool CancelWrites { get; init; }
+        internal Func<Task>? BeforeWrite { get; init; }
         internal int WriteCalls { get; private set; }
         internal void EditQuantity(double value) => values["OperationQty"] = value;
 
@@ -223,6 +342,7 @@ public sealed class KitaronPushServiceTests
             StoredKitaronConnectionSettings connection, string password, IReadOnlyCollection<int> workOrderNumbers,
             IReadOnlyList<string> columns, CancellationToken cancellationToken)
         {
+            if (CancelReads) throw new OperationCanceledException();
             Assert.Equal("secret", password);
             Assert.Equal([41043], workOrderNumbers);
             return Task.FromResult<IReadOnlyList<KitaronOperationRow>>(
@@ -231,19 +351,21 @@ public sealed class KitaronPushServiceTests
             ]);
         }
 
-        public Task WriteAsync(
+        public async Task WriteAsync(
             StoredKitaronConnectionSettings connection, string password, IReadOnlyList<KitaronPushWrite> writes,
             CancellationToken cancellationToken)
         {
             WriteCalls++;
+            if (BeforeWrite is not null) await BeforeWrite();
+            if (CancelWrites) throw new OperationCanceledException();
             if (ConflictWrites) throw KitaronPushComparison.Conflict(5001);
-            if (FailWrites) throw new InvalidOperationException("Lock request time out period exceeded.");
+            if (FailWrites) throw new KitaronPushNotCommittedException("Transaction rolled back before commit.");
             foreach (var write in writes)
             {
                 values[write.Column] = write.Value;
                 Written.Add(write);
             }
-            return Task.CompletedTask;
+            if (FailAfterWrites) throw new IOException("Connection lost around ERP commit.");
         }
     }
 }

@@ -3094,7 +3094,8 @@ internal sealed record KitaronPushRunInfo(
     int OperationsMatched,
     int ValuesWritten,
     int OperationsSkipped,
-    string? Message);
+    string? Message,
+    string? LifecycleState = null, int IntentVersion = 1);
 
 internal sealed record KitaronPushChangeInfo(
     int WorkOrderNumber,
@@ -3115,3 +3116,11 @@ internal sealed record KitaronPushResultInfo(
     IReadOnlyList<KitaronPushChangeInfo> Changes,
     IReadOnlyList<string> Notes,
     string? PreviewStamp = null);
+
+internal sealed record KitaronPushIntentInfo(string RunId, string State, int Version,
+    KitaronPushIntentDetails? Intent, IReadOnlyList<KitaronReconciliationInfo> Reconciliations);
+internal sealed record KitaronPushIntentDetails(IReadOnlyList<KitaronPushChangeInfo> Changes);
+internal sealed record KitaronReconciliationInfo(string Actor, DateTimeOffset ObservedAt,
+    IReadOnlyList<KitaronReconciliationValueInfo> Values, string Message, string Kind = "Observation");
+internal sealed record KitaronReconciliationValueInfo(long RowId, string Column, string Comparison, KitaronStoredValueInfo? Current);
+internal sealed record KitaronStoredValueInfo(string Kind, string? Text);

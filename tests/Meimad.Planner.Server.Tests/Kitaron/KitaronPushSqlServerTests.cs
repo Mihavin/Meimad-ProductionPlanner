@@ -57,13 +57,13 @@ public sealed class KitaronPushSqlServerTests
             END
             """);
         var failingWrites = await db.PlanAsync();
-        await Assert.ThrowsAsync<SqlException>(() =>
+        await Assert.ThrowsAsync<KitaronPushNotCommittedException>(() =>
             SqlServerKitaronPushTarget.WriteAsync(db.Connection, failingWrites, CancellationToken.None));
         Assert.Equal(1m, await db.QuantityAsync(1));
         await db.ExecuteAsync("DROP TRIGGER dbo.PushTest;");
         await db.ExecuteAsync("CREATE TRIGGER dbo.PushTest ON dbo.TSubRootCard INSTEAD OF UPDATE AS BEGIN SET NOCOUNT ON; END");
         var writes = await db.PlanAsync();
-        await Assert.ThrowsAsync<SqlException>(() => SqlServerKitaronPushTarget.WriteAsync(db.Connection, writes, CancellationToken.None));
+        await Assert.ThrowsAsync<KitaronPushNotCommittedException>(() => SqlServerKitaronPushTarget.WriteAsync(db.Connection, writes, CancellationToken.None));
         Assert.Equal(1m, await db.QuantityAsync(1));
     }
 
