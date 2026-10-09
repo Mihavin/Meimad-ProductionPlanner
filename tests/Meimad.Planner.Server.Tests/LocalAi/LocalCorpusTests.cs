@@ -26,9 +26,10 @@ public sealed class LocalCorpusTests
             await File.WriteAllTextAsync(Path.Combine(root, "child", "hidden.txt"), "RUN-123 not approved");
             var settings = await service.UpdateAsync(new(0, [root]), "admin", default);
             var index = await service.IndexAsync(settings.Version, default);
-            Assert.Equal(1, index.IndexedFiles);
+            Assert.Equal(2, index.IndexedFiles);
             foreach (var query in new[] { "RUN-123", "שלום", "привет" })
-                Assert.Equal("instructions.md", Assert.Single(await service.SearchAsync(query, default)).Title);
+                Assert.Contains(await service.SearchAsync(query, default), match => match.Title == "instructions.md");
+            Assert.Equal("child/hidden.txt", Assert.Single(await service.SearchAsync("not approved", default)).Title);
             var evidence = fixture.App.Services.GetRequiredService<LocalEvidenceService>();
             var bundle = await evidence.ReadAsync(new("FindSimilarIncidents", From: DateTimeOffset.UtcNow.AddHours(-1),
                 To: DateTimeOffset.UtcNow, SearchTerm: "RUN-123"), default);
@@ -36,11 +37,11 @@ public sealed class LocalCorpusTests
             Assert.Equal(text, await File.ReadAllTextAsync(file));
             await File.WriteAllTextAsync(file, "Changed source RUN-123");
             Assert.False(await evidence.SourcesVisibleAsync(bundle, default));
-            Assert.Empty(await service.SearchAsync("RUN-123", default));
+            Assert.DoesNotContain(await service.SearchAsync("RUN-123", default), match => match.Title == "instructions.md");
             await service.IndexAsync(settings.Version, default);
-            Assert.Contains("Changed source", Assert.Single(await service.SearchAsync("RUN-123", default)).Excerpt);
+            Assert.Contains(await service.SearchAsync("RUN-123", default), match => match.Excerpt.Contains("Changed source", StringComparison.Ordinal));
             File.Delete(file);
-            Assert.Empty(await service.SearchAsync("RUN-123", default));
+            Assert.DoesNotContain(await service.SearchAsync("RUN-123", default), match => match.Title == "instructions.md");
             await service.UpdateAsync(new(settings.Version, []), "admin", default);
             Assert.Equal(0L, await fixture.ScalarAsync("SELECT COUNT(*) FROM local_ai_documents"));
             await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateAsync(new(settings.Version, [root]), "admin", default));
@@ -60,7 +61,7 @@ public sealed class LocalCorpusTests
     }
 
     [Fact]
-    public async Task Oversized_and_binary_documents_are_isolated_without_reading_subfolders()
+    public async Task Oversized_and_binary_documents_are_isolated_across_approved_subfolders()
     {
         await using var fixture = await Fixture.CreateAsync();
         var root = Path.Combine(Path.GetTempPath(), "MeimadCorpus", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
@@ -69,10 +70,12 @@ public sealed class LocalCorpusTests
             await File.WriteAllTextAsync(Path.Combine(root, "large.txt"), new string('x', 262145));
             await File.WriteAllBytesAsync(Path.Combine(root, "binary.md"), [0, 1, 255]);
             await File.WriteAllTextAsync(Path.Combine(root, "good.txt"), "Known useful reference");
+            var child = Path.Combine(root, "child"); Directory.CreateDirectory(child);
+            await File.WriteAllTextAsync(Path.Combine(child, "nested.txt"), "Nested useful reference");
             var service = fixture.App.Services.GetRequiredService<LocalCorpusService>();
             var settings = await service.UpdateAsync(new(0, [root]), "admin", default);
             var result = await service.IndexAsync(settings.Version, default);
-            Assert.Equal(1, result.IndexedFiles); Assert.Equal(2, result.SkippedFiles);
+            Assert.Equal(2, result.IndexedFiles); Assert.Equal(2, result.SkippedFiles);
         }
         finally
         {

@@ -71,19 +71,19 @@ internal sealed class LocalCorpusService(SqliteDatabase database, TimeProvider c
             {
                 token.ThrowIfCancellationRequested();
                 RecoveryPaths.RejectLinks(root.Path);
-                // Explicitly nonrecursive: subfolders require their own approval.
-                foreach (var path in Directory.EnumerateFiles(root.Path, "*", SearchOption.TopDirectoryOnly))
+                foreach (var path in EnumerateFiles(root.Path, token))
                 {
                     token.ThrowIfCancellationRequested();
                     if (++visited > 10000) throw new ArgumentException("Index exceeds 10,000 directory entries; narrow approved folders.");
                     if (!Supported(path)) { skipped++; continue; }
                     try
                     {
-                        var content = await ReadFileAsync(root.Path, Path.GetFileName(path), token);
+                        var relative = RelativePath(root.Path, path);
+                        var content = await ReadFileAsync(root.Path, relative, token);
                         totalBytes += Encoding.UTF8.GetByteCount(content.Text);
                         if (documents.Count >= 5000 || totalBytes > 32 * 1024 * 1024) throw new ArgumentException("Index exceeds 5,000 documents or 32 MiB; narrow approved folders.");
-                        documents.Add(new(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(root.RootId + ":" + Path.GetFileName(path).ToUpperInvariant()))),
-                            root.RootId, Path.GetFileName(path), content.Hash, content.Text));
+                        documents.Add(new(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(root.RootId + ":" + relative.ToUpperInvariant()))),
+                            root.RootId, relative, content.Hash, content.Text));
                     }
                     catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or DecoderFallbackException)
                     { skipped++; }
@@ -144,6 +144,29 @@ internal sealed class LocalCorpusService(SqliteDatabase database, TimeProvider c
         return matches;
     }
     private static bool Supported(string path) => Path.GetExtension(path).ToLowerInvariant() is ".txt" or ".md";
+
+    private static IEnumerable<string> EnumerateFiles(string root, CancellationToken token)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            token.ThrowIfCancellationRequested();
+            var folder = pending.Pop();
+            RecoveryPaths.RejectLinks(folder);
+            foreach (var path in Directory.EnumerateFiles(folder, "*", SearchOption.TopDirectoryOnly).OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+                yield return path;
+            foreach (var directory in Directory.EnumerateDirectories(folder, "*", SearchOption.TopDirectoryOnly)
+                .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                RecoveryPaths.RejectLinks(directory);
+                pending.Push(directory);
+            }
+        }
+    }
+
+    private static string RelativePath(string root, string path) =>
+        Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/');
     internal async Task<bool> IsCurrentAsync(string id, string hash, CancellationToken token)
     {
         var settings = await ReadAsync(token);
