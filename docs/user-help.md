@@ -243,7 +243,9 @@ The TV Dashboard is a read-only kiosk view served by the Server at:
 
 `http://<planner-server>:5080/tv-dashboard/`
 
-It shows display-enabled machines, the current operation, part picture, operation identity, machine state, and calculated setup/current-part/Batch progress. Conflicts, next jobs, planning controls, and editing forms are intentionally hidden. The small connection indicator changes color with the Server connection state. During a short outage, the last valid snapshot remains on screen.
+It shows display-enabled machines, the current operation (Part Number, Work Order — `פק"ע` in Hebrew — and Operation), the execution state in words, the parts made against the Work Order, the measured average cycle, and a thin progress bar. Conflicts, next jobs, planning controls, and editing forms are intentionally hidden. The small connection indicator changes color with the Server connection state and names it in its tooltip. During a short outage, the last valid snapshot remains on screen.
+
+Press **Full screen** in the top bar (or F11 on a keyboard) to fill the TV; press it again, or Escape, to leave. On a TV browser without the full-screen API the button says so for a few seconds; use the browser's own full-screen mode instead. If the board shows a `Dashboard script error` line, the TV's browser could not run the page: note the text and report it. The language links (EN / עב / РУ) change the board's language.
 
 E-Ink devices display the official package and machine/setup instructions downloaded from the Server. Package content, checklist marks, comments, assignments, and planning facts remain read-only/local as applicable. While the current Server-resolved run is `IN_SETUP_RUN`, holding D4 for 1.2 seconds submits **Send to QC**. The command supplies no run or timestamp, does not require a sign-in, and changes only the tablet workflow status to `IN_QC`. The Server endpoint is implemented and idempotent; the physical button/display flow is compiled but still requires hardware verification before shop-floor acceptance.
 

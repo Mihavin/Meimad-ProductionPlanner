@@ -1,19 +1,9 @@
-:root {
-  --background: #071019;
-  --panel: #13212d;
-  --panel-border: #334756;
-  --text: #ffffff;
-  --muted: #b9c5cd;
-  --connected: #39d353;
-  --connecting: #f5c542;
-  --disconnected: #ff4d4f;
-  --idle: #71808b;
-  --current: #1687e8;
-  --setup: #e5b72f;
-  --paused: #ffb020;
-  --completed: #39d353;
-  --machine-count: 1;
-}
+/* Factory TV board. Written for the browsers of factory TVs (Samsung Tizen ships Chromium
+   47-94): flexbox only, no CSS grid, custom properties, clamp/min functions or flex gap. Band text
+   uses rem units; app.js sets the root font size from the band height, and the 12px default
+   below keeps the page readable before the script runs. Every state is written as text. */
+
+html { font-size: 12px; }
 
 * { box-sizing: border-box; }
 
@@ -26,222 +16,122 @@ body {
 
 body {
   margin: 0;
-  display: grid;
-  grid-template-rows: clamp(42px, 5.5vh, 68px) minmax(0, 1fr);
-  background: var(--background);
-  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  background: #071019;
+  color: #ffffff;
   font-family: "Segoe UI", Arial, sans-serif;
   font-variant-numeric: tabular-nums;
 }
 
 .topbar {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   min-width: 0;
-  padding: 0 clamp(14px, 1.5vw, 30px);
+  height: 5.5vh;
+  min-height: 42px;
+  max-height: 68px;
+  padding: 0 1.5vw;
   background: #0b1721;
   border-bottom: 1px solid #2b3c49;
 }
 
-.topbar-tools { display: flex; align-items: center; gap: clamp(14px, 1.4vw, 28px); }
-.language-nav { display: flex; align-items: center; gap: 4px; direction: ltr; }
+.topbar-tools { display: flex; align-items: center; }
+.topbar-tools > * { margin-left: 1.4vw; }
+html[dir="rtl"] .topbar-tools > * { margin-left: 0; margin-right: 1.4vw; }
+
+.language-nav { display: flex; align-items: center; direction: ltr; }
 .language-nav a {
   min-width: 34px;
+  margin-left: 4px;
   padding: 5px 7px;
   border: 1px solid #405462;
   border-radius: 4px;
-  color: var(--muted);
-  font-size: clamp(11px, .75vw, 15px);
+  color: #b9c5cd;
+  font-size: 0.8vw;
   font-weight: 800;
   line-height: 1;
   text-align: center;
   text-decoration: none;
 }
-.language-nav a:hover, .language-nav a:focus-visible { color: var(--text); border-color: #8dccff; }
+.language-nav a:first-child { margin-left: 0; }
+.language-nav a:hover, .language-nav a:focus { color: #ffffff; border-color: #8dccff; }
 .language-nav a.active { color: #071019; border-color: #8dccff; background: #8dccff; }
+
+.fullscreen-toggle {
+  padding: 5px 9px;
+  border: 1px solid #405462;
+  border-radius: 4px;
+  background: #13212d;
+  color: #d5dde3;
+  font-family: inherit;
+  font-size: 0.8vw;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fullscreen-toggle:hover, .fullscreen-toggle:focus { color: #ffffff; border-color: #8dccff; outline: none; }
+.fullscreen-toggle[aria-pressed="true"] { color: #071019; border-color: #8dccff; background: #8dccff; }
 
 h1 {
   margin: 0;
-  font-size: clamp(22px, 2vw, 38px);
+  font-size: 2vw;
   font-weight: 800;
   line-height: 1;
   letter-spacing: .02em;
   text-transform: uppercase;
 }
 
+/* Server connection dot: colour plus the aria-label/title text. */
 .server-status {
-  width: clamp(12px, 1vw, 18px);
-  height: clamp(12px, 1vw, 18px);
+  width: 1vw;
+  height: 1vw;
+  min-width: 12px;
+  min-height: 12px;
   flex: 0 0 auto;
-  border: 2px solid rgb(255 255 255 / 45%);
+  border: 2px solid rgba(255, 255, 255, 0.45);
   border-radius: 50%;
-  background: var(--connecting);
-  box-shadow: 0 0 12px currentColor;
-  color: var(--connecting);
+  background: #f5c542;
+  box-shadow: 0 0 12px #f5c542;
 }
-
-.server-status-connected {
-  color: var(--connected);
-  background: var(--connected);
-}
-
-.server-status-connecting {
-  color: var(--connecting);
-  background: var(--connecting);
-}
-
-.server-status-disconnected {
-  color: var(--disconnected);
-  background: var(--disconnected);
-}
-
-.machine-grid {
-  min-width: 0;
-  min-height: 0;
-  display: grid;
-  grid-template-rows: repeat(var(--machine-count), minmax(0, 1fr));
-  gap: 3px;
-  padding: 5px 10px 8px;
-  overflow: hidden;
-}
-
-.machine-row {
-  min-width: 0;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(130px, 8vw) minmax(240px, 17vw) minmax(110px, 8vw) minmax(105px, 9vw) minmax(64px, 6vw) minmax(260px, 1fr) minmax(300px, 1.25fr);
-  align-items: center;
-  padding: 2px 8px;
-  overflow: hidden;
-  background: var(--panel);
-  border-left: 5px solid var(--idle);
-  border-radius: 3px;
-  direction: ltr;
-}
-
-
-.machine-identity {
-  min-width: 0;
-  width: 100%;
-  text-align: center;
-}
-
-.machine-number {
-  overflow: hidden;
-  color: var(--text);
-  font-size: clamp(18px, 1.4vw, 28px);
-  font-weight: 900;
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.machine-name {
-  margin: 0 8px;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: clamp(13px, 1vw, 20px);
+.server-status-text {
+  margin-left: 0.5vw;
+  color: #b9c5cd;
+  font-size: 0.8vw;
   font-weight: 700;
-  line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.machine-connection {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-  font-size: clamp(13px, 1vw, 20px);
-  font-weight: 800;
   text-transform: uppercase;
   white-space: nowrap;
 }
+html[dir="rtl"] .server-status-text { margin-left: 0; margin-right: 0.5vw; }
+.server-status-connected { background: #39d353; box-shadow: 0 0 12px #39d353; }
+.server-status-connecting { background: #f5c542; box-shadow: 0 0 12px #f5c542; }
+.server-status-disconnected { background: #ff4d4f; box-shadow: 0 0 12px #ff4d4f; }
 
-.machine-connection > span {
-  width: clamp(10px, .75vw, 15px);
-  height: clamp(10px, .75vw, 15px);
-  border-radius: 50%;
-  background: var(--disconnected);
-  box-shadow: 0 0 8px var(--disconnected);
-}
-
-.connection-online { color: var(--connected); }
-.connection-online > span { background: var(--connected); box-shadow: 0 0 8px var(--connected); }
-.connection-offline { color: #ff8a8c; }
-
-.machine-telemetry {
-  overflow: hidden;
-  color: #8dccff;
-  font-size: clamp(12px, .9vw, 18px);
-  font-weight: 900;
-  letter-spacing: .02em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.machine-telemetry.unavailable { color: #82909a; }
-
-.operation { min-width: 0; overflow: hidden; padding: 0 10px; }
-.operation.empty { color: #82909a; font-size: clamp(14px, 1.1vw, 22px); }
-.operation-title, .operation-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.operation-title { font-size: clamp(15px, 1.25vw, 24px); }
-.operation-name { margin-top: 4px; color: var(--muted); font-size: clamp(12px, .95vw, 18px); }
-.batch { margin-left: 12px; color: #d5dde3; font-weight: 650; }
-.job-op { color: #8dccff; font-weight: 800; }
-.preview-frame { display: grid; place-items: center; min-width: 0; min-height: 0; }
-.job-preview { width: clamp(54px, 5.5vw, 96px); height: min(clamp(54px, 5.5vw, 96px), calc((100vh - 90px) / var(--machine-count))); object-fit: contain; border-radius: 4px; background: #eef2f4; }
-.job-preview.placeholder { display: grid; place-items: center; background: #1b2d3a; color: #91a0aa; font-size: clamp(9px, .7vw, 13px); font-weight: 700; text-align: center; }
-.job-preview[hidden] { display: none; }
-
-html[dir="rtl"] .operation,
-html[dir="rtl"] .execution,
-html[dir="rtl"] .machine-connection { direction: rtl; text-align: right; }
-html[dir="rtl"] .batch { margin-right: 12px; margin-left: 0; }
-.operation-title strong, .job-op, .machine-number { direction: ltr; unicode-bidi: isolate; }
-
-.execution { min-width: 0; padding: 0 12px; }
-.execution-line { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; min-width: 0; }
-.status-label { flex: 0 0 auto; color: #8dccff; font-size: clamp(15px, 1.2vw, 24px); font-weight: 900; text-transform: uppercase; }
-.completion-label { overflow: hidden; color: var(--text); font-size: clamp(14px, 1.1vw, 22px); font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
-.status-paused .status-label { color: var(--paused); }
-.status-completed .status-label { color: var(--completed); }
-.status-waiting .status-label { color: var(--muted); }
-.progress-track { height: clamp(8px, .8vh, 14px); margin-top: 8px; overflow: hidden; border-radius: 999px; background: #263947; }
-.progress-track > span { display: block; width: var(--progress, 0%); height: 100%; background: var(--current); }
-.status-paused .progress-track > span { background: var(--paused); }
-.status-completed .progress-track > span { background: var(--completed); }
-
-.empty-state {
-  grid-column: 1 / -1;
-  grid-row: 1 / -1;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-  font-size: clamp(22px, 3vw, 52px);
-  font-weight: 750;
-  text-align: center;
-}
-
-/* Compact factory-board layout. One horizontal band per Machine, matching the
-   reference screen while keeping every state readable without color. */
+/* One horizontal band per Machine; the bands share the height left under the header. */
 .machine-grid {
-  gap: 0;
-  padding: 0 clamp(10px, 1.25vw, 24px) 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 1.25vw 2px;
   background: #09131c;
+  overflow: hidden;
 }
 
 .machine-row {
-  --row-height: calc((100vh - clamp(42px, 5.5vh, 68px)) / var(--machine-count));
-  grid-template-columns: minmax(145px, 19%) minmax(260px, 1fr) minmax(260px, 38%);
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
   align-items: stretch;
-  padding: 0;
+  overflow: hidden;
   background: #14232e;
-  border: 0;
   border-bottom: 3px solid #071019;
-  border-radius: 0;
+  direction: ltr;
 }
 
 .machine-identity,
@@ -254,7 +144,9 @@ html[dir="rtl"] .batch { margin-right: 12px; margin-left: 0; }
 }
 
 .machine-identity {
-  padding: 3px clamp(8px, 1vw, 18px);
+  flex: 0 0 19%;
+  min-width: 145px;
+  padding: 3px 1vw;
   border-right: 1px solid #2a3b47;
   text-align: left;
 }
@@ -262,39 +154,63 @@ html[dir="rtl"] .batch { margin-right: 12px; margin-left: 0; }
 .machine-number {
   display: flex;
   align-items: center;
-  gap: clamp(6px, .55vw, 11px);
-  font-size: clamp(14px, min(1.45vw, calc(var(--row-height) * .34)), 28px);
+  overflow: hidden;
+  color: #ffffff;
+  font-size: 1.8rem;
+  font-weight: 900;
   line-height: 1.05;
+  white-space: nowrap;
 }
 
 .machine-name {
   margin: 3px 0 0;
+  overflow: hidden;
   color: #9eb1bf;
-  font-size: clamp(10px, min(.92vw, calc(var(--row-height) * .22)), 18px);
+  font-size: 1.15rem;
   font-weight: 500;
   line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* CNC connection after the Machine number: a dot plus the state in words. */
 .machine-connection {
   display: inline-flex;
   flex: 0 0 auto;
+  align-items: center;
+  margin-left: 0.6vw;
 }
-
-.machine-connection > span {
-  width: clamp(7px, .55vw, 11px);
-  height: clamp(7px, .55vw, 11px);
-  box-shadow: none;
+.connection-dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  min-width: 7px;
+  min-height: 7px;
+  margin-right: 0.3vw;
+  border-radius: 50%;
+  background: #ff4d4f;
 }
+.connection-text {
+  color: #ff8a8c;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.connection-online .connection-dot { background: #39d353; }
+.connection-online .connection-text { color: #6fdc85; }
 
 .operation {
-  padding: 3px clamp(10px, 1.25vw, 24px);
+  flex: 1 1 0;
+  padding: 3px 1.25vw;
 }
 
 .operation-title {
   display: flex;
   align-items: baseline;
   min-width: 0;
-  font-size: clamp(14px, min(1.5vw, calc(var(--row-height) * .36)), 29px);
+  font-size: 1.9rem;
   line-height: 1.05;
 }
 
@@ -305,8 +221,8 @@ html[dir="rtl"] .batch { margin-right: 12px; margin-left: 0; }
   white-space: nowrap;
 }
 
-.batch {
-  margin-left: clamp(12px, 1.25vw, 24px);
+.work-order {
+  margin-left: 1.25vw;
   color: #f4f6f8;
   font-weight: 800;
   white-space: nowrap;
@@ -315,65 +231,119 @@ html[dir="rtl"] .batch { margin-right: 12px; margin-left: 0; }
 .job-op {
   margin-left: .35em;
   color: #8dccff;
+  font-weight: 800;
   white-space: nowrap;
 }
 
 .operation-name {
   margin-top: 4px;
+  overflow: hidden;
   color: #b9cad5;
-  font-size: clamp(10px, min(.9vw, calc(var(--row-height) * .22)), 18px);
+  font-size: 1.15rem;
   line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .operation.empty {
-  grid-column: 2 / 4;
-  padding-left: clamp(10px, 1.25vw, 24px);
+  flex: 1 1 0;
+  padding-left: 1.25vw;
   color: #8fa5b4;
-  font-size: clamp(13px, min(1.25vw, calc(var(--row-height) * .3)), 24px);
+  font-size: 1.6rem;
 }
 
 .execution {
-  padding: 3px clamp(12px, 1.5vw, 28px);
+  flex: 0 0 38%;
+  min-width: 260px;
+  padding: 3px 1.5vw;
   border-left: 1px solid #2a3b47;
 }
 
 .execution-line {
-  gap: clamp(8px, 1vw, 18px);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  min-width: 0;
 }
 
 .status-label {
+  flex: 0 0 auto;
+  margin-right: 1vw;
   color: #e9edf0;
-  font-size: clamp(15px, min(1.65vw, calc(var(--row-height) * .4)), 31px);
+  font-size: 2.1rem;
+  font-weight: 900;
   line-height: 1;
+  text-transform: uppercase;
 }
 
 .completion-label {
+  overflow: hidden;
   color: #c0ccd4;
-  font-size: clamp(10px, min(.9vw, calc(var(--row-height) * .22)), 18px);
+  font-size: 1.15rem;
   font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cycle-average {
   margin-top: 3px;
   color: #8dccff;
-  font-size: clamp(9px, min(.78vw, calc(var(--row-height) * .19)), 16px);
+  font-size: 1rem;
   font-weight: 750;
   line-height: 1;
   text-align: right;
 }
 
+/* Execution state colours; the state is always written in .status-label as well. */
+.status-paused .status-label { color: #ffb020; }
+.status-completed .status-label { color: #39d353; }
 .status-waiting .status-label { color: #e9edf0; }
+
 .progress-track {
-  height: clamp(5px, .65vh, 10px);
-  margin-top: clamp(5px, .7vh, 10px);
+  height: 0.65vh;
+  min-height: 5px;
+  max-height: 10px;
+  margin-top: 0.7vh;
+  overflow: hidden;
   border-radius: 999px;
   background: #304653;
 }
+.progress-track > span { display: block; width: 0; height: 100%; background: #1687e8; }
+.status-paused .progress-track > span { background: #ffb020; }
+.status-completed .progress-track > span { background: #39d353; }
 
+.empty-state,
+.script-error {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2vh 3vw;
+  color: #b9c5cd;
+  font-size: 3vw;
+  font-weight: 750;
+  text-align: center;
+}
+
+.script-error {
+  color: #ffb020;
+  font-size: 1.8vw;
+  font-family: Consolas, "Courier New", monospace;
+  word-break: break-word;
+}
+
+html[dir="rtl"] .operation,
+html[dir="rtl"] .execution { direction: rtl; text-align: right; }
 html[dir="rtl"] .machine-identity { text-align: right; border-right: 0; border-left: 1px solid #2a3b47; }
 html[dir="rtl"] .machine-number { justify-content: flex-end; }
-html[dir="rtl"] .batch { margin-right: clamp(12px, 1.25vw, 24px); margin-left: 0; }
+html[dir="rtl"] .machine-connection { margin-left: 0; margin-right: 0.6vw; }
+html[dir="rtl"] .connection-dot { margin-right: 0; margin-left: 0.3vw; }
+html[dir="rtl"] .work-order { margin-right: 1.25vw; margin-left: 0; }
 html[dir="rtl"] .job-op { margin-right: .35em; margin-left: 0; }
+html[dir="rtl"] .status-label { margin-right: 0; margin-left: 1vw; }
+html[dir="rtl"] .cycle-average { text-align: left; }
+html[dir="rtl"] .execution { border-left: 0; border-right: 1px solid #2a3b47; }
+.operation-title strong, .job-op, .machine-number { direction: ltr; unicode-bidi: isolate; }
 
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }

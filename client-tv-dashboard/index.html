@@ -7,7 +7,30 @@
   <base href="/tv-dashboard/">
   <title>Meimad Machine Status</title>
   <meta name="description" content="Read-only factory-floor machine status dashboard">
-  <link rel="stylesheet" href="styles.css?v=0.1.36">
+  <link rel="stylesheet" href="styles.css?v=0.1.37">
+  <script>
+  // Plain ES5 on purpose: it must run on old TV browsers. When app.js fails to load or
+  // to parse, the error is written on the board instead of leaving a black screen.
+  (function () {
+    var search = window.location.search || "";
+    var requested = (/[?&]lang=(he|ru|en)/i.exec(search) || [])[1];
+    var browser = String(navigator.language || "en").toLowerCase();
+    var lang = requested ? requested.toLowerCase() : browser.indexOf("he") === 0 ? "he" : browser.indexOf("ru") === 0 ? "ru" : "en";
+    var labels = { en: "Dashboard script error", he: "שגיאה בסקריפט לוח המכונות", ru: "Ошибка сценария панели станков" };
+    window.addEventListener("error", function (event) {
+      var grid = document.getElementById("machine-grid");
+      if (!grid) return;
+      var message = (event && event.message) || "unknown error";
+      if (event && event.filename) message += " (" + String(event.filename).replace(/^.*\//, "") + ":" + (event.lineno || 0) + ")";
+      grid.innerHTML = "";
+      var box = document.createElement("div");
+      box.className = "script-error";
+      box.setAttribute("role", "alert");
+      box.textContent = labels[lang] + ": " + message;
+      grid.appendChild(box);
+    });
+  })();
+  </script>
 </head>
 <body>
   <header class="topbar">
@@ -18,8 +41,10 @@
         <a href="?lang=he" data-language="he" lang="he">עב</a>
         <a href="?lang=ru" data-language="ru" lang="ru">РУ</a>
       </nav>
+      <button type="button" id="fullscreen-toggle" class="fullscreen-toggle" aria-pressed="false">Full screen</button>
       <span id="server-status" class="server-status server-status-connecting"
         role="status" aria-live="polite" aria-label="Connecting" title="Connecting"></span>
+      <span id="server-status-text" class="server-status-text">Connecting</span>
     </div>
   </header>
 
@@ -27,6 +52,6 @@
     <div class="empty-state">Waiting for machine status</div>
   </main>
 
-  <script src="app.js?v=0.1.36" defer></script>
+  <script src="app.js?v=0.1.37" defer></script>
 </body>
 </html>

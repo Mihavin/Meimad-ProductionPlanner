@@ -1416,11 +1416,12 @@ The list response wraps conflicts with `planRevision`, `calculatedAt`, `freshnes
 
 ### 7.3 TV Dashboard read-only projection
 
-`GET /api/v1/tv-dashboard` is implemented, supports `If-None-Match`, and never requires Edit Mode headers. An unchanged projection returns `304` with an empty body. Authentication is not implemented yet; the target policy remains `dashboard.read` or `planning.read`. There are currently no query parameters or display groups.
+`GET /api/v1/tv-dashboard` is implemented, supports `If-None-Match`, and needs no sign-in (it is a sign-in-exempt prefix, like the TV's live WebSocket `/api/v1/machines/live`, which accepts only a `subscribe` message and publishes Machine snapshots). An unchanged projection returns `304` with an empty body. There are currently no query parameters or display groups. The projection carries `schemaVersion` 2 and `dashboardBuild` (`0.1.37`): the page requires schema 2 and reloads itself once when the build differs from its own `DASHBOARD_BUILD`, then shows `Dashboard update required` rather than looping; change the build in `app.js`, `index.html`, `TvDashboardService` and `TvDashboardApiTests` together. The page polls every `refreshAfterSeconds` (5–300 s, configured by `TvDashboard:RefreshAfterSeconds`, default 15) besides the live socket, and does not render `previewUrl`.
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "dashboardBuild": "0.1.37",
   "generatedAt": "2026-08-11T11:10:00Z",
   "freshness": "current",
   "refreshAfterSeconds": 15,

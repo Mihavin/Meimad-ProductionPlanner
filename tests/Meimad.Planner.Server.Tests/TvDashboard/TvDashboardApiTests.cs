@@ -23,7 +23,7 @@ public sealed class TvDashboardApiTests
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var root = document.RootElement;
             Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
-            Assert.Equal("0.1.36", root.GetProperty("dashboardBuild").GetString());
+            Assert.Equal("0.1.37", root.GetProperty("dashboardBuild").GetString());
             Assert.Equal(15, root.GetProperty("refreshAfterSeconds").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("machineCount").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("urgentBatchCount").GetInt32());
@@ -70,7 +70,10 @@ public sealed class TvDashboardApiTests
             Assert.Contains("?lang=he", html, StringComparison.Ordinal);
             Assert.Contains("?lang=ru", html, StringComparison.Ordinal);
             Assert.Contains("id=\"server-status\"", html, StringComparison.Ordinal);
-            Assert.DoesNotContain("<button", html, StringComparison.OrdinalIgnoreCase);
+            // The only controls are the language links and the full-screen toggle (display only):
+            // no forms, inputs or anything that could send a change.
+            Assert.Equal(1, html.Split("<button", StringSplitOptions.None).Length - 1);
+            Assert.Contains("<button type=\"button\" id=\"fullscreen-toggle\"", html, StringComparison.Ordinal);
             Assert.DoesNotContain("<form", html, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("<input", html, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("Server URL", html, StringComparison.OrdinalIgnoreCase);
@@ -82,8 +85,8 @@ public sealed class TvDashboardApiTests
             Assert.Contains("no-store", styles.Headers.CacheControl?.ToString(), StringComparison.Ordinal);
             var css = await styles.Content.ReadAsStringAsync();
             Assert.Contains("overflow: hidden", css, StringComparison.Ordinal);
-            Assert.Contains("grid-template-rows: repeat(var(--machine-count)", css, StringComparison.Ordinal);
             Assert.Contains(".machine-row", css, StringComparison.Ordinal);
+            Assert.Contains("flex-direction: column", css, StringComparison.Ordinal);
             Assert.DoesNotContain(".machine-card", css, StringComparison.Ordinal);
 
             using var script = await client.GetAsync("/tv-dashboard/app.js");
@@ -94,6 +97,12 @@ public sealed class TvDashboardApiTests
             Assert.Contains("type: \"subscribe\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machineIds", javascript, StringComparison.Ordinal);
             Assert.Contains("fitGrid(machines.length)", javascript, StringComparison.Ordinal);
+            Assert.Contains("fullscreen-toggle", javascript, StringComparison.Ordinal);
+            // Every connection colour has its state written next to it (rule 13).
+            Assert.Contains("id=\"server-status-text\"", html, StringComparison.Ordinal);
+            Assert.Contains("class=\"connection-text\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("Math.max(5, Number(data.refreshAfterSeconds)", javascript, StringComparison.Ordinal);
+            Assert.Contains("requestFullscreen", javascript, StringComparison.Ordinal);
             Assert.Contains("server-status-connected", css, StringComparison.Ordinal);
             Assert.Contains("machine.current", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("machine.next", javascript, StringComparison.Ordinal);
@@ -102,23 +111,32 @@ public sealed class TvDashboardApiTests
             Assert.Contains("progressLabel(progress)", javascript, StringComparison.Ordinal);
             Assert.Contains("progress-track", css, StringComparison.Ordinal);
             Assert.Contains(".machine-connection", css, StringComparison.Ordinal);
-            Assert.Contains(".machine-telemetry", css, StringComparison.Ordinal);
-            Assert.Contains("grid-template-columns: minmax(145px, 19%)", css, StringComparison.Ordinal);
+            Assert.Contains("flex: 0 0 19%", css, StringComparison.Ordinal);
             Assert.DoesNotContain("renderPreview(machine.current)", javascript, StringComparison.Ordinal);
             Assert.Contains("const identity = `<div class=\"machine-identity\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machine.connection", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain(">${escapeHtml(connectionState)}</div>", javascript, StringComparison.Ordinal);
-            Assert.Contains("machine.machineStatus", javascript, StringComparison.Ordinal);
-            Assert.Contains("DASHBOARD_BUILD = \"0.1.36\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("DASHBOARD_BUILD = \"0.1.37\"", javascript, StringComparison.Ordinal);
             Assert.Contains("data.dashboardBuild !== DASHBOARD_BUILD", javascript, StringComparison.Ordinal);
             Assert.Contains("machineStatus: \"מצב מכונות\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machineStatus: \"Состояние станков\"", javascript, StringComparison.Ordinal);
             // Every visible label comes from the language dictionaries.
-            Assert.Contains("average: \"ממוצע\"", javascript, StringComparison.Ordinal);
-            Assert.Contains("average: \"Сред.\"", javascript, StringComparison.Ordinal);
-            Assert.Contains("title=\"${escapeHtml(t.machineStateTitle)}\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("averageCycle: \"מחזור ממוצע\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("averageCycle: \"Ср. цикл\"", javascript, StringComparison.Ordinal);
+            // Project-management terms: the TV says Work order (פק"ע / Заказ-наряд), never Batch.
+            Assert.Contains("workOrder: \"Work order\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("workOrder: 'פק\"ע'", javascript, StringComparison.Ordinal);
+            Assert.Contains("workOrder: \"Заказ-наряд\"", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"Batch\"", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("אצווה", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("Партия", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("`AVG ", javascript, StringComparison.Ordinal);
-            Assert.DoesNotContain("title=\"MTConnect machine state\"", javascript, StringComparison.Ordinal);
+            // Factory TVs run old Tizen browsers (Chromium 47+): the page stays ES2015 and flexbox only.
+            foreach (var token in new[] { "?.", "??", "replaceAll(", "async ", "await ", "padStart(", "catch {", "URLSearchParams", ".finally(", "Object.values" })
+                Assert.DoesNotContain(token, javascript, StringComparison.Ordinal);
+            foreach (var token in new[] { "clamp(", " min(", "var(--", "display: grid", "gap:", "place-items", "aspect-ratio", "inset:" })
+                Assert.DoesNotContain(token, css, StringComparison.Ordinal);
+            Assert.Contains("window.addEventListener(\"error\"", html, StringComparison.Ordinal);
             Assert.Contains("language === \"he\" ? \"rtl\" : \"ltr\"", javascript, StringComparison.Ordinal);
             Assert.Contains("html[dir=\"rtl\"]", css, StringComparison.Ordinal);
             Assert.DoesNotContain("urgentBatches", javascript, StringComparison.Ordinal);

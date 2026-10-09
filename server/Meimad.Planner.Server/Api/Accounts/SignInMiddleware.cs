@@ -21,6 +21,9 @@ internal sealed class SignInMiddleware(RequestDelegate next)
         "/api/tablets/",
         "/api/v1/eink/tablets/",
         "/api/v1/tv-dashboard",
+        // The TV page's live Machine updates: the socket only accepts a subscribe message and
+        // publishes snapshots, so it is as read-only as the projection.
+        "/api/v1/machines/live",
         "/api/v1/kitaron/connection",
         "/api/v1/kitaron/mapping",
         "/api/v1/kitaron/sync"

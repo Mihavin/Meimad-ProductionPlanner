@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.WebSockets;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.Accounts;
@@ -234,6 +235,27 @@ public sealed class AccountApiTests
         });
     }
 
+    [Fact]
+    public async Task A_TV_on_the_factory_LAN_opens_the_live_machine_socket_without_an_account()
+    {
+        // The TV page subscribes to /api/v1/machines/live for live updates; like the projection it
+        // needs no sign-in (owner report 2026-10-08: TVs never received live updates). Other
+        // Machine reads from the LAN still need an account.
+        await RunWithApplicationAsync(async (application, client) =>
+        {
+            var sockets = application.GetTestServer().CreateWebSocketClient();
+            sockets.ConfigureRequest = request => request.Headers[RemoteAddressHeader] = "192.168.0.20";
+            using var socket = await sockets.ConnectAsync(new Uri("ws://localhost/api/v1/machines/live"), default);
+            Assert.Equal(WebSocketState.Open, socket.State);
+            await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", default);
+
+            using var remote = new HttpRequestMessage(HttpMethod.Get, "/api/v1/machines");
+            remote.Headers.Add(RemoteAddressHeader, "192.168.0.20");
+            using var refused = await client.SendAsync(remote);
+            Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+        });
+    }
+
     private const string RemoteAddressHeader = "X-Test-Remote-Address";
 
     /// <summary>The test server has no network: a header stands in for a request from another PC.</summary>
@@ -289,7 +311,9 @@ public sealed class AccountApiTests
         return document.RootElement.GetProperty("error").GetProperty("code").GetString();
     }
 
-    private static async Task RunAsync(Func<HttpClient, Task> test)
+    private static Task RunAsync(Func<HttpClient, Task> test) => RunWithApplicationAsync((_, client) => test(client));
+
+    private static async Task RunWithApplicationAsync(Func<WebApplication, HttpClient, Task> test)
     {
         var directory = Path.Combine(Path.GetTempPath(), "MeimadPlanner.Accounts.Tests", Guid.NewGuid().ToString("N"));
         var application = ServerApplication.Build(
@@ -300,7 +324,7 @@ public sealed class AccountApiTests
         {
             await application.StartAsync();
             using var client = application.GetTestClient();
-            await test(client);
+            await test(application, client);
             await application.StopAsync();
         }
         finally
