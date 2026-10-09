@@ -10,6 +10,8 @@ internal sealed record LocalAiFeedbackUpdate(int ExpectedVersion, bool Useful, s
 internal sealed partial class LocalAiRequestService
 {
     private volatile bool suspended;
+    /// <summary>Optional model work (chat) may run: AI is enabled and an administrator has not suspended it.</summary>
+    internal bool InferenceAvailable => options.Enabled && !suspended;
     private const string ControlKey = "local_ai_pilot_control";
     internal async Task<LocalAiControl> ReadControlAsync(CancellationToken token)
     {

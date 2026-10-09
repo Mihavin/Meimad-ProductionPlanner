@@ -10,6 +10,7 @@ internal sealed class LocalCorpusViewModel : INotifyPropertyChanged
     public string Query { get; set; } = "";
     public string Status { get; private set; } = "No folder is implicitly approved. Load the current configuration before editing.";
     public IReadOnlyList<CorpusMatch> Matches { get; private set; } = [];
+    public bool Indexing { get; private set; }
     public AsyncCommand LoadCommand { get; }
     public AsyncCommand SaveCommand { get; }
     public AsyncCommand IndexCommand { get; }
@@ -103,7 +104,7 @@ internal sealed class LocalCorpusViewModel : INotifyPropertyChanged
     }
     internal void AttachSession(IPlannerApiClient? client, bool manage)
     {
-        generation++; api = client; canManage = manage; loaded = false; busy = false; Folders = ""; Query = ""; Matches = []; InferenceControl = null;
+        generation++; api = client; canManage = manage; loaded = false; busy = false; Indexing = false; Folders = ""; Query = ""; Matches = []; InferenceControl = null;
         AiSettings = null; AiEnabled = false; ModelId = ""; ModelDigest = ""; RuntimeVersion = ""; BaseUrl = ""; InstalledModels = []; selectedModel = null;
         CpuThreads = "0"; KeepAliveSeconds = "300"; MaxModelMemoryMb = "0"; ProcessorCount = 0;
         AiSettingsStatus = "Load the AI settings to see whether local inference is enabled on the Server."; Changed();
@@ -139,9 +140,17 @@ internal sealed class LocalCorpusViewModel : INotifyPropertyChanged
             }
             else if (action == "index")
             {
-                var result = await client.IndexLocalCorpusAsync(version);
+                Indexing = true; Changed();
+                var progress = await client.StartLocalCorpusIndexAsync(version);
+                while (progress.Status is "QUEUED" or "SCANNING")
+                {
+                    if (current != generation) return;
+                    Status = FormatIndexProgress(progress); Changed();
+                    await Task.Delay(TimeSpan.FromSeconds(1));
+                    progress = await client.GetLocalCorpusIndexAsync(progress.JobId);
+                }
                 if (current != generation) return;
-                Status = $"Indexed {result.IndexedFiles} files; skipped {result.SkippedFiles}. Completed {result.CompletedAt:u}.";
+                Status = FormatIndexProgress(progress);
             }
             else
             {
@@ -151,7 +160,21 @@ internal sealed class LocalCorpusViewModel : INotifyPropertyChanged
             }
         }
         catch (Exception exception) { if (current == generation) Status = exception.Message; }
-        finally { if (current == generation) { busy = false; Changed(); } }
+        finally { if (current == generation) { Indexing = false; busy = false; Changed(); } }
+    }
+    private static string FormatIndexProgress(CorpusIndexProgress progress)
+    {
+        var bytes = progress.BytesRead / (1024d * 1024d);
+        var current = string.IsNullOrWhiteSpace(progress.CurrentPath) ? "" : $" Current: {progress.CurrentPath}";
+        var ocr = progress.OcrAvailable ? $" {progress.OcrPages:n0} scanned PDF pages read by OCR."
+            : " OCR is not available on the Server PC; scanned PDF pages without text are skipped.";
+        return progress.Status switch
+        {
+            "COMPLETED" => $"Index completed: {progress.IndexedFiles:n0} files indexed, {progress.SkippedFiles:n0} skipped, {bytes:n1} MiB read.{ocr}",
+            "CANCELLED" => $"Index cancelled after {progress.FilesProcessed:n0} files ({progress.IndexedFiles:n0} indexed, {progress.SkippedFiles:n0} skipped). {progress.Error}",
+            "FAILED" => $"Index failed after {progress.FilesProcessed:n0} files ({progress.IndexedFiles:n0} indexed, {progress.SkippedFiles:n0} skipped). {progress.Error}",
+            _ => $"Indexing: {progress.FilesProcessed:n0} files processed; {progress.FilesDiscovered:n0} discovered; {progress.IndexedFiles:n0} indexed; {progress.SkippedFiles:n0} skipped; {bytes:n1} MiB read.{ocr}{current}"
+        };
     }
     private void Changed()
     {

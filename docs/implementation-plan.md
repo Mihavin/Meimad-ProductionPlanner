@@ -1,5 +1,22 @@
 # Implementation Plan
 
+## Ask AI chat window and PDF/OCR indexing (2026-10-09; implemented locally)
+
+**Owner requests:** "a simple chatbot window to provide answers in context — currently selected case, operation, NC revision(s) etc — and generic answers like 'what the tolerances in 30P45017200-001 for holes?', 'what material was received last week?'", and "index all pdf documents (run OCR if needed), drawings, part lists etc."
+
+**Decision recorded:** the owner's request authorizes free-text model answers for this separate chat path. The deterministic explanation routes keep their claims-only rule (the model may only reorder Server claims). Chat answers stay read-only, local (loopback runtime, factory LAN), grounded in Server-run lookups and labelled as possibly wrong.
+
+**Implemented:** `LocalAiChatService`/`LocalAiChatTools` and `/api/v1/local-ai/chat` (see API contract); `OllamaModelClient.ChatAsync` with tool calling; Windows **Ask AI** window (workspace row) with current-selection context and a selectable NC release row on the Cases tab; PDF indexing with PdfPig text extraction and Windows OCR fallback; schema v111 extraction column and PDF text cache; Server and Server tests target `net10.0-windows10.0.19041.0`; corpus help text corrected (subfolders are included).
+
+**Verified locally (2026-10-09):** `LocalAiChatTests` (tool loop and context, misspelled part numbers, inclusive factory-local receipt days, refusal of unknown lookups, read-only planning revision, disabled/invalid/ownership HTTP behavior, one active question and cancellation, PDF keyword search scoped by part number, changed PDF hidden until reindex, OCR fallback and hash cache, real Windows OCR of a rendered page); client `AskAiViewModelTests`; localization catalogs. A temporary probe with the pinned `qwen3.5:4b` on Ollama 0.40.2 and the real `30P450172200-001` folder answered the three sample questions correctly (closest-match part number, general/profile tolerances quoted from the parts list with the CATIA-dataset caveat, last week's receipts only); answers took 35–123 s on the CPU-only Server PC.
+
+**Open / not verified:**
+- Windows PDF rendering and OCR were verified in a console/test process, not yet inside the installed Windows Service (LocalSystem). Check the first rebuild's `ocrAvailable` and OCR page count after installation.
+- Only English OCR is installed on the Server PC. Hebrew scans need the Windows capability `Language.OCR~~~he-IL~0.0.1.0`; the recognizer currently prefers English.
+- Hole-specific tolerances of 30P parts live in the CATIA 3D MBD dataset (per the parts-list note) and are not readable; CAD/STEP PMI ingestion is not in scope.
+- First rebuild time and database growth for every PDF under the two approved roots are unmeasured; OCR is about one second per page on this PC.
+- Answer latency (about 0.5–2 minutes) is a property of the CPU-only host and the 4B model.
+
 ## D05 auxiliary reservation and assignment-identity indexing (2026-10-08; verified locally)
 
 The controlled 5,000-operation shop profile identified auxiliary scheduling as the largest calculation phase (one-reader median 7.30 s, whole Board median 15.25 s). The allocator now builds calculation-local indexes of reservation boundaries and per-resource reservations and reuses identical employee/workstation calendar intersections. Candidate boundaries, duplicate reservations, ordering, tie-breakers, pins and capacity semantics remain unchanged. Work/dependency lookup also avoids repeated linear scans. No schema, API or planning-policy change; **0.1.190 includes these optimizations**. Earlier builds below are historical baselines.
@@ -49,7 +66,7 @@ The installer script built **0.1.187** client and Server MSIs successfully with 
 
 ## Approved corpus, handoff and workbench follow-up (2026-10-08)
 
-Schema v105 adds a rebuildable approved text index. Administrators configure up to 16 explicit nonrecursive Server/share folders through Integrations → Approved documents, using version-checked writes. Configuration edits clear the index atomically. Only UTF-8 .txt/.md files up to 256 KiB are supported initially; junctions, binary/unsupported files and nested folders are excluded. Index budgets: 10,000 directory entries, 5,000 documents, 32 MiB source text. Literal case-insensitive search supports English/Russian/Hebrew, returns at most 20 results and rechecks approval/hash, excluding changed/deleted/revoked sources. No default corpus, recursive engineering-share ingestion, PDF/Office parser or external embedding API.
+Schema v105 plus v110 provide a rebuildable approved text index and a job staging table. Administrators configure up to 16 explicit Server/share folders through Integrations → Approved documents, using version-checked writes. Configuration edits clear the index atomically and cancel active rebuilds. UTF-8 `.txt`/`.md` files are scanned recursively; unsupported/binary/unreadable files are skipped individually, with no aggregate directory, document or source-byte budget. Reindex is a Server background job with progress polling and an atomic final swap. Literal case-insensitive search supports English/Russian/Hebrew, returns at most 20 results and rechecks approval/hash, excluding changed/deleted/revoked sources. No default corpus, PDF/Office parser or external embedding API.
 
 Schema v106 adds immutable physical handoff tracking: exact package/context, explicitly selected qualified setup operator, actor/time, qualification stamp, context sequence and idempotent receipt. Tool Room preparation permission is required. Existing setup-worker Machine skill matching is shared with Timeline. Concurrent/stale handoffs and superseded packages are refused atomically. History remains inspectable; no workflow, material, setup-start, loader or production gate changes. Operation exposes operator selection and history; Preparation reaches it through Open Operation.
 

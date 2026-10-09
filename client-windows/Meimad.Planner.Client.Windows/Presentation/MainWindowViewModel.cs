@@ -13,6 +13,12 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly IPlannerApiClientFactory apiClientFactory;
     private IPlannerApiClient? apiClient;
     private IPlannerApiClient? workbenchSessionClient;
+
+    /// <summary>The signed-in Server client used by the Ask AI window; null while signed out.</summary>
+    internal IPlannerApiClient? AiClient => workbenchSessionClient;
+
+    /// <summary>Raised when the account, its permissions or the Server change, so an open conversation is closed.</summary>
+    internal event EventHandler? AiSessionChanged;
     private string? workbenchSessionKey;
     private ClientSettings? activeSettings;
     private SignedInAccount? account;
@@ -620,6 +626,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             LocalAi.AttachSession(workbenchClient);
             LocalCorpus.AttachSession(workbenchClient, signedIn?.Has(PlannerPermissions.ManageSetup) == true);
             Navigation.Clear();
+            AiSessionChanged?.Invoke(this, EventArgs.Empty);
         }
         CaseWorkspace.AttachSession(apiClient, ClientId, For(
             PlannerPermissions.EditCases, PlannerPermissions.ManageWorkOrders,

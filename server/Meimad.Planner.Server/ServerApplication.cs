@@ -189,12 +189,16 @@ public static class ServerApplication
         builder.Services.AddSingleton<ArtifactReconciliationService>();
         builder.Services.AddSingleton<OperationalHealthService>();
         builder.Services.AddSingleton<LocalEvidenceService>();
+        builder.Services.AddSingleton<IPageTextRecognizer, WindowsPageTextRecognizer>();
+        builder.Services.AddSingleton<CorpusDocumentReader>();
         builder.Services.AddSingleton<LocalCorpusService>();
         builder.Services.AddSingleton<ExecutionContextService>();
         builder.Services.AddSingleton<PackageHandoffService>();
         builder.Services.AddSingleton(builder.Configuration.GetSection("LocalAi").Get<LocalAiOptions>() ?? new LocalAiOptions());
         builder.Services.AddSingleton<ILocalModelClient, OllamaModelClient>();
         builder.Services.AddSingleton<LocalAiRequestService>();
+        builder.Services.AddSingleton<LocalAiChatTools>();
+        builder.Services.AddSingleton<LocalAiChatService>();
         builder.Services.AddSingleton<LocalAiRuntimeDiagnostics>();
         builder.Services.AddSingleton<OperationalEvidenceReader>();
         builder.Services.AddSingleton<IAdministrativeSetupRepository, SqliteAdministrativeSetupRepository>();
@@ -212,6 +216,7 @@ public static class ServerApplication
         builder.Services.AddSingleton<CaseModelFileService>();
         builder.Services.AddHostedService<DatabaseInitializationService>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<LocalAiRequestService>());
+        builder.Services.AddHostedService(provider => provider.GetRequiredService<LocalAiChatService>());
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<ICaseRepository, SqliteCaseRepository>();
         builder.Services.AddSingleton<CaseService>();

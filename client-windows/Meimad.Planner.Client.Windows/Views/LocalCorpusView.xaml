@@ -27,9 +27,10 @@
   <WrapPanel Margin="0,8"><Button Content="Load inference control" Command="{Binding LoadInferenceCommand}" /><Button Content="Suspend inference" Command="{Binding SuspendInferenceCommand}" /><Button Content="Resume commissioned inference" Command="{Binding ResumeInferenceCommand}" /></WrapPanel>
   <TextBlock Text="{Binding InferenceStatus}" TextWrapping="Wrap" Margin="0,0,0,12" />
   <TextBlock Text="Approved document folders" FontSize="20" FontWeight="SemiBold" />
-  <TextBlock Text="Administrators: one absolute Server or factory-share folder per line. Approval makes UTF-8 .txt and .md documents available to all signed-in Windows users. Subfolders need separate approval. Originals are read-only." TextWrapping="Wrap" Margin="0,8" />
+  <TextBlock Text="Administrators: one absolute Server or factory-share folder per line, subfolders included. Approval makes UTF-8 .txt and .md documents and PDF files (drawings, parts lists, specifications; scanned pages are read by OCR) available to all signed-in Windows users and the AI assistant. Originals are read-only." TextWrapping="Wrap" Margin="0,8" />
   <TextBox Text="{Binding Folders, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" MinHeight="100" MaxHeight="240" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FlowDirection="LeftToRight" AutomationProperties.Name="Approved retrieval folders, one per line" />
   <WrapPanel Margin="0,8"><Button Content="Load approved folders" Command="{Binding LoadCommand}" /><Button Content="Approve folder list" Command="{Binding SaveCommand}" /><Button Content="Rebuild document index" Command="{Binding IndexCommand}" /></WrapPanel>
+  <ProgressBar Height="8" Margin="0,0,0,8" IsIndeterminate="True"><ProgressBar.Style><Style TargetType="ProgressBar"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Indexing}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></ProgressBar.Style></ProgressBar>
   <TextBlock Text="Search approved documents" FontWeight="SemiBold" Margin="0,12,0,4" />
   <TextBox Text="{Binding Query, UpdateSourceTrigger=PropertyChanged}" MaxLength="128" AutomationProperties.Name="Literal document phrase or exact identifier" />
   <Button Content="Search" Command="{Binding SearchCommand}" HorizontalAlignment="Left" Margin="0,8" />

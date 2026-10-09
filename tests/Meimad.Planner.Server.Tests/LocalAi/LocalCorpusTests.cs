@@ -61,7 +61,7 @@ public sealed class LocalCorpusTests
     }
 
     [Fact]
-    public async Task Oversized_and_binary_documents_are_isolated_across_approved_subfolders()
+    public async Task Large_and_binary_documents_are_indexed_or_skipped_individually_across_approved_subfolders()
     {
         await using var fixture = await Fixture.CreateAsync();
         var root = Path.Combine(Path.GetTempPath(), "MeimadCorpus", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
@@ -75,7 +75,39 @@ public sealed class LocalCorpusTests
             var service = fixture.App.Services.GetRequiredService<LocalCorpusService>();
             var settings = await service.UpdateAsync(new(0, [root]), "admin", default);
             var result = await service.IndexAsync(settings.Version, default);
-            Assert.Equal(2, result.IndexedFiles); Assert.Equal(2, result.SkippedFiles);
+            Assert.Equal(3, result.IndexedFiles); Assert.Equal(1, result.SkippedFiles);
+        }
+        finally
+        {
+            Assert.StartsWith(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "MeimadCorpus")) + Path.DirectorySeparatorChar, Path.GetFullPath(root));
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task Background_reindex_exposes_live_progress_and_completes_atomically()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var root = Path.Combine(Path.GetTempPath(), "MeimadCorpus", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, "nightly.md"), "background index content");
+            var service = fixture.App.Services.GetRequiredService<LocalCorpusService>();
+            var settings = await service.UpdateAsync(new(0, [root]), "admin", default);
+            var started = await service.StartIndexingAsync(settings.Version, default);
+            Assert.Equal("QUEUED", started.Status);
+            CorpusIndexProgress? progress = started;
+            for (var attempt = 0; attempt < 50 && progress is { Status: "QUEUED" or "SCANNING" }; attempt++)
+            {
+                await Task.Delay(20);
+                progress = service.ReadIndexProgress(started.JobId);
+                Assert.NotNull(progress);
+            }
+            Assert.Equal("COMPLETED", progress!.Status);
+            Assert.Equal(1, progress.FilesDiscovered);
+            Assert.Equal(1, progress.FilesProcessed);
+            Assert.Equal(1, progress.IndexedFiles);
+            Assert.Contains(await service.SearchAsync("background index", default), match => match.Title == "nightly.md");
         }
         finally
         {

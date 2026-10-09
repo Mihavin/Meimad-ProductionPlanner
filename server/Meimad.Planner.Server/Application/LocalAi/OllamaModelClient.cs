@@ -6,9 +6,18 @@ using Meimad.Planner.Server.Configuration;
 namespace Meimad.Planner.Server.Application.LocalAi;
 
 internal sealed record ModelResult(string Content, int? InputTokens, int? OutputTokens, long? DurationNanoseconds);
+/// <summary>One chat message for the runtime: system, user, assistant (optionally with its raw tool calls) or tool.</summary>
+internal sealed record ChatModelMessage(string Role, string Content, JsonElement? ToolCalls = null, string? ToolName = null);
+internal sealed record ChatToolDefinition(string Name, string Description, JsonElement Parameters);
+internal sealed record ChatToolCall(string Name, JsonElement Arguments);
+internal sealed record ChatModelTurn(string Content, IReadOnlyList<ChatToolCall> ToolCalls, JsonElement? RawToolCalls,
+    int? InputTokens, int? OutputTokens, long? DurationNanoseconds);
 internal interface ILocalModelClient
 {
     Task<ModelResult> CompleteAsync(EvidenceBundle bundle, CancellationToken token);
+    /// <summary>One chat round: the model either answers or asks for Server-defined read-only tools.</summary>
+    Task<ChatModelTurn> ChatAsync(IReadOnlyList<ChatModelMessage> messages, IReadOnlyList<ChatToolDefinition> tools,
+        int contextTokens, CancellationToken token) => throw new NotSupportedException("This model client cannot chat.");
     /// <summary>Read-only look at the local runtime (version and installed models) for the AI settings page.</summary>
     Task<LocalAiRuntimeProbe> ProbeAsync(CancellationToken token) =>
         Task.FromResult(new LocalAiRuntimeProbe(false, "", null, [], "This model client cannot probe a runtime."));
@@ -31,19 +40,7 @@ internal sealed class OllamaModelClient(LocalAiOptions options) : ILocalModelCli
             throw new InvalidOperationException("Evidence exceeds the conservative input budget; use deterministic explanation.");
         using var handler = HandlerFactory?.Invoke() ?? new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false };
         using var client = new HttpClient(handler) { BaseAddress = uri, Timeout = Timeout.InfiniteTimeSpan };
-        using var version = await GetAsync(client, "api/version", token);
-        if (version.RootElement.GetProperty("version").GetString() != options.RuntimeVersion)
-            throw new InvalidOperationException("Runtime version does not match the commissioned version.");
-        using var tags = await GetAsync(client, "api/tags", token);
-        var matches = tags.RootElement.GetProperty("models").EnumerateArray().Where(model =>
-            model.GetProperty("name").GetString() == options.ModelId).ToArray();
-        if (matches.Length != 1 || !string.Equals(matches[0].GetProperty("digest").GetString()?.Replace("sha256:", "", StringComparison.Ordinal),
-                options.ModelDigest, StringComparison.OrdinalIgnoreCase)
-            || matches[0].TryGetProperty("remote_host", out _) || matches[0].TryGetProperty("remote_model", out _))
-            throw new InvalidOperationException("Installed model digest differs or refers to a remote model. No download will be requested.");
-        var sizeMb = SizeMb(matches[0]);
-        if (options.MaxModelMemoryMb > 0 && sizeMb > options.MaxModelMemoryMb)
-            throw new InvalidOperationException($"The installed model is {sizeMb} MB, over the {options.MaxModelMemoryMb} MB memory budget; it is not loaded.");
+        await VerifyRuntimeAsync(client, token);
         using var schema = JsonDocument.Parse(Schema);
         using var request = new HttpRequestMessage(HttpMethod.Post, "api/chat") { Content = JsonContent.Create(new
         {
@@ -72,6 +69,74 @@ internal sealed class OllamaModelClient(LocalAiOptions options) : ILocalModelCli
             throw new InvalidOperationException("Runtime reported invalid or excessive token/duration metadata.");
         return new(message.GetProperty("content").GetString() ?? "", inputTokens, outputTokens, durationNanoseconds);
     }
+    public async Task<ChatModelTurn> ChatAsync(IReadOnlyList<ChatModelMessage> messages, IReadOnlyList<ChatToolDefinition> tools,
+        int contextTokens, CancellationToken token)
+    {
+        var uri = options.Validate();
+        using var handler = HandlerFactory?.Invoke() ?? new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false };
+        using var client = new HttpClient(handler) { BaseAddress = uri, Timeout = Timeout.InfiniteTimeSpan };
+        await VerifyRuntimeAsync(client, token);
+        var ignoreNulls = new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/chat") { Content = JsonContent.Create(new
+        {
+            model = options.ModelId, stream = false, think = false,
+            messages = messages.Select(message => new { role = message.Role, content = message.Content, tool_calls = message.ToolCalls, tool_name = message.ToolName }),
+            tools = tools.Count == 0 ? null : tools.Select(tool => new { type = "function", function = new { name = tool.Name, description = tool.Description, parameters = tool.Parameters } }),
+            options = new { temperature = 0.2, num_ctx = contextTokens, num_predict = options.MaxOutputTokens, num_thread = options.CpuThreads > 0 ? (int?)options.CpuThreads : null },
+            keep_alive = options.KeepAliveSeconds + "s"
+        }, options: ignoreNulls) };
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+        using var body = await ReadAsync(response, token);
+        var root = body.RootElement;
+        if (!root.GetProperty("done").GetBoolean() || root.GetProperty("model").GetString() != options.ModelId
+            || root.GetProperty("done_reason").GetString() is not ("stop" or "length"))
+            throw new InvalidOperationException("Incomplete or unexpected model response.");
+        var message = root.GetProperty("message");
+        var content = message.TryGetProperty("content", out var text) ? text.GetString() ?? "" : "";
+        if (content.Length > 16384) throw new InvalidOperationException("Model answer exceeds its limit.");
+        var calls = new List<ChatToolCall>();
+        JsonElement? raw = null;
+        if (message.TryGetProperty("tool_calls", out var toolCalls) && toolCalls.ValueKind == JsonValueKind.Array && toolCalls.GetArrayLength() > 0)
+        {
+            raw = toolCalls.Clone();
+            foreach (var call in toolCalls.EnumerateArray().Take(8))
+            {
+                var function = call.GetProperty("function");
+                var arguments = function.TryGetProperty("arguments", out var value) ? value : default;
+                // Some runtimes send the arguments as a JSON string rather than an object.
+                if (arguments.ValueKind == JsonValueKind.String)
+                {
+                    try { arguments = JsonDocument.Parse(arguments.GetString()!).RootElement; }
+                    catch (JsonException) { arguments = default; }
+                }
+                calls.Add(new(function.GetProperty("name").GetString() ?? "",
+                    arguments.ValueKind == JsonValueKind.Object ? arguments.Clone() : JsonDocument.Parse("{}").RootElement));
+            }
+        }
+        int? inputTokens = root.TryGetProperty("prompt_eval_count", out var input) ? input.GetInt32() : null;
+        int? outputTokens = root.TryGetProperty("eval_count", out var output) ? output.GetInt32() : null;
+        long? durationNanoseconds = root.TryGetProperty("total_duration", out var duration) ? duration.GetInt64() : null;
+        return new(content, calls, raw, inputTokens, outputTokens, durationNanoseconds);
+    }
+
+    /// <summary>Only the commissioned runtime version and exact local model digest, within the memory budget, may run.</summary>
+    private async Task VerifyRuntimeAsync(HttpClient client, CancellationToken token)
+    {
+        using var version = await GetAsync(client, "api/version", token);
+        if (version.RootElement.GetProperty("version").GetString() != options.RuntimeVersion)
+            throw new InvalidOperationException("Runtime version does not match the commissioned version.");
+        using var tags = await GetAsync(client, "api/tags", token);
+        var matches = tags.RootElement.GetProperty("models").EnumerateArray().Where(model =>
+            model.GetProperty("name").GetString() == options.ModelId).ToArray();
+        if (matches.Length != 1 || !string.Equals(matches[0].GetProperty("digest").GetString()?.Replace("sha256:", "", StringComparison.Ordinal),
+                options.ModelDigest, StringComparison.OrdinalIgnoreCase)
+            || matches[0].TryGetProperty("remote_host", out _) || matches[0].TryGetProperty("remote_model", out _))
+            throw new InvalidOperationException("Installed model digest differs or refers to a remote model. No download will be requested.");
+        var sizeMb = SizeMb(matches[0]);
+        if (options.MaxModelMemoryMb > 0 && sizeMb > options.MaxModelMemoryMb)
+            throw new InvalidOperationException($"The installed model is {sizeMb} MB, over the {options.MaxModelMemoryMb} MB memory budget; it is not loaded.");
+    }
+
     public async Task<LocalAiRuntimeProbe> ProbeAsync(CancellationToken token)
     {
         Uri uri;

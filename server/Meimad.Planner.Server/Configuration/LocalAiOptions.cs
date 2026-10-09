@@ -14,6 +14,10 @@ internal sealed class LocalAiOptions
     public int MaxInputTokens { get; set; } = 8192;
     public int MaxOutputTokens { get; set; } = 1024;
     public int ForecastTimeoutSeconds { get; set; } = 3;
+    /// <summary>The whole chat answer, including every tool round, must finish within this time.</summary>
+    public int ChatTimeoutSeconds { get; set; } = 300;
+    /// <summary>The runtime context window for chat (Ollama <c>num_ctx</c>); history and tool results are trimmed to fit.</summary>
+    public int ChatContextTokens { get; set; } = 16384;
     /// <summary>CPU threads the model may use per request (Ollama <c>num_thread</c>); 0 leaves the runtime default.</summary>
     public int CpuThreads { get; set; }
     /// <summary>How long the model stays loaded in memory after a request (Ollama <c>keep_alive</c>); 0 unloads at once.</summary>
@@ -39,7 +43,7 @@ internal sealed class LocalAiOptions
             throw new ArgumentException("Pin an installed local model ID, 64-character SHA-256 digest and tested runtime version before enabling AI.");
         if (RequestTimeoutSeconds is < 1 or > 120 || MaxQueueWaitSeconds is < 1 or > 60
             || MaxInputTokens is < 1024 or > 32768 || MaxOutputTokens is < 128 or > 4096
-            || ForecastTimeoutSeconds is < 1 or > 10)
+            || ForecastTimeoutSeconds is < 1 or > 10 || ChatTimeoutSeconds is < 30 or > 900 || ChatContextTokens is < 4096 or > 65536)
             throw new ArgumentException("Local AI budgets exceed the permitted pilot bounds.");
         if (CpuThreads < 0 || CpuThreads > 256 || KeepAliveSeconds < 0 || KeepAliveSeconds > 86400 || MaxModelMemoryMb < 0 || MaxModelMemoryMb > 4_194_304)
             throw new ArgumentException("CPU threads (0-256), keep-alive seconds (0-86400) and the model memory budget in MB (0 = no limit) are out of range.");

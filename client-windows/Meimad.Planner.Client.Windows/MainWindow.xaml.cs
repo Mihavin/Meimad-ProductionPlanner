@@ -18,6 +18,7 @@ public partial class MainWindow : Window
     private readonly MainWindowViewModel viewModel;
     private readonly DispatcherTimer refreshTimer;
     private TimelineWindow? timelineWindow;
+    private AskAiWindow? askAiWindow;
     private bool hasInitialized;
     private bool refreshInProgress;
 
@@ -282,7 +283,66 @@ public partial class MainWindow : Window
         PlannerApiException.ConflictRaised -= OnConflictRaised;
         refreshTimer.Stop();
         timelineWindow?.Close();
+        askAiWindow?.Close();
         viewModel.Dispose();
+    }
+
+    private void AskAi_Click(object sender, RoutedEventArgs e)
+    {
+        if (askAiWindow is not null)
+        {
+            if (askAiWindow.WindowState == WindowState.Minimized) askAiWindow.WindowState = WindowState.Normal;
+            askAiWindow.Activate();
+            return;
+        }
+        askAiWindow = new AskAiWindow(new AskAiViewModel(() => viewModel.AiClient, CurrentAiSelection))
+        {
+            Owner = this,
+            Left = Left + Math.Max(0, ActualWidth - 600),
+            Top = Top + 90,
+        };
+        void SessionChanged(object? s, EventArgs a) => askAiWindow?.Close();
+        viewModel.AiSessionChanged += SessionChanged;
+        askAiWindow.Closed += (_, _) => { viewModel.AiSessionChanged -= SessionChanged; askAiWindow = null; };
+        askAiWindow.Show();
+    }
+
+    /// <summary>
+    /// The selection of the workspace the user is looking at: the Operation workbench, Shop or Timeline when
+    /// active, otherwise the Cases tab. The Server re-reads every ID, so a stale one is reported, not trusted.
+    /// </summary>
+    private AskAiSelection CurrentAiSelection()
+    {
+        string T(string text) => LocalizationService.Current.Translate(text);
+        var active = WorkspaceTabs.SelectedItem;
+        var workbench = viewModel.OperationWorkbench;
+        if (ReferenceEquals(active, OperationWorkspaceTab) && workbench.Details is { } details)
+        {
+            var exact = workbench.SelectedContext;
+            return new(new AiChatContext(details.CaseId, details.RecipeOperationId, details.BatchId, details.BatchOperationId,
+                details.ProcessRevisionId, workbench.Package?.GCodeReleaseId, exact?.MachineId, exact?.ProductionRunId), details.Breadcrumb);
+        }
+        if (ReferenceEquals(active, ShopWorkspaceTab) && viewModel.Shop.SelectedMachine is { } machine)
+        {
+            var output = viewModel.Shop.SelectedOutput;
+            return new(new AiChatContext(MachineId: machine.MachineId, ProductionRunId: output?.RunId),
+                $"{T("Machine")} {machine.Number} {machine.Name}" + (output is null ? "" : " · " + T("Production Run")));
+        }
+        if (ReferenceEquals(active, TimelineTab) && viewModel.Timeline.SelectedBatch is { } batch)
+            return new(new AiChatContext(BatchId: batch.BatchId), $"{batch.PartNumber} → {T("Batch")} {batch.BatchNumber}");
+        var cases = viewModel.CaseWorkspace;
+        if (cases.SelectedCase is { } selected)
+        {
+            var operation = cases.SelectedOperation;
+            var release = cases.SelectedGCodeRelease;
+            var parts = new List<string> { selected.PartNumber };
+            if (operation is not null) parts.Add($"OP{operation.OperationNumber} {operation.Name}");
+            if (cases.SelectedBatch is { } caseBatch) parts.Add(T("Batch") + " " + caseBatch.BatchNumber);
+            if (release is not null) parts.Add($"NC {release.PostprocessorName} r{release.PostSpecificRevision} ({release.OriginalFileName})");
+            return new(new AiChatContext(selected.CaseId, operation?.CaseOperationId, cases.SelectedBatch?.BatchId, null,
+                cases.ActiveProcessRevision?.ProcessRevisionId, release?.GCodeReleaseId), string.Join(" → ", parts));
+        }
+        return new(null, T("Nothing selected: general question"));
     }
 
     private void OpenTimelineWindow_Click(object sender, RoutedEventArgs e)

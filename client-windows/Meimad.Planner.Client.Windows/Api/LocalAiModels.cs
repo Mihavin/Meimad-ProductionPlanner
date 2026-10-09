@@ -29,6 +29,18 @@ internal sealed record LocalAiRequestStatus(string RequestId, string Status, Dat
     LocalExplanation? Result = null, string? ResultCode = null);
 internal sealed record CorpusRoot(string RootId, string Path);
 internal sealed record CorpusSettings(int Version, IReadOnlyList<CorpusRoot> Roots);
-internal sealed record CorpusIndexResult(int ConfigurationVersion, int IndexedFiles, int SkippedFiles, DateTimeOffset CompletedAt);
+internal sealed record CorpusIndexProgress(string JobId, int ConfigurationVersion, string Status,
+    long FilesDiscovered, long FilesProcessed, long IndexedFiles, long SkippedFiles, long BytesRead,
+    string? CurrentPath, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt, string? Error,
+    long OcrPages = 0, bool OcrAvailable = false);
+internal sealed record CorpusIndexResult(int ConfigurationVersion, long IndexedFiles, long SkippedFiles, DateTimeOffset CompletedAt);
 internal sealed record CorpusMatch(string DocumentId, string Title, string ContentHash, string Excerpt,
-    int StartCharacter, int EndCharacter, DateTimeOffset IndexedAt, string MatchReason);
+    int StartCharacter, int EndCharacter, DateTimeOffset IndexedAt, string MatchReason, string Extraction = "TEXT");
+internal sealed record AiChatTurn(string Role, string Content);
+/// <summary>The current selection sent with a question; every ID is optional.</summary>
+internal sealed record AiChatContext(string? CaseId = null, string? CaseOperationId = null, string? BatchId = null,
+    string? BatchOperationId = null, string? ProcessRevisionId = null, string? GCodeReleaseId = null,
+    string? MachineId = null, string? ProductionRunId = null);
+internal sealed record AiChatSource(string Kind, string Title, string? Reference = null);
+internal sealed record AiChatStatus(string ChatId, string Status, DateTimeOffset CreatedAt, string? Progress = null,
+    string? Answer = null, IReadOnlyList<AiChatSource>? Sources = null, string? ResultCode = null, DateTimeOffset? AnsweredAt = null);

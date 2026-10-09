@@ -22,11 +22,19 @@ internal static class LocalCorpusEndpoints
         endpoints.MapPost("/api/v1/local-ai/corpus/reindex", async (CorpusReindex request, HttpContext context, LocalCorpusService service, CancellationToken token) =>
         {
             if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out _, out var error)) return error!;
-            try { return Results.Ok(await service.IndexAsync(request.ExpectedVersion, token)); }
+            try
+            {
+                var progress = await service.StartIndexingAsync(request.ExpectedVersion, token);
+                return Results.Accepted($"/api/v1/local-ai/corpus/reindex/{progress.JobId}", progress);
+            }
             catch (ArgumentException exception) { return PlanningHttpSupport.Error(400, "corpus_invalid", exception.Message, context); }
             catch (InvalidOperationException exception) { return PlanningHttpSupport.Error(409, "corpus_changed", exception.Message, context); }
-            catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
-            { return PlanningHttpSupport.Error(422, "corpus_unavailable", "An approved folder cannot be read. Check Server access; the previous index is retained.", context); }
+        });
+        endpoints.MapGet("/api/v1/local-ai/corpus/reindex/{jobId}", (string jobId, HttpContext context, LocalCorpusService service) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out _, out var error)) return error!;
+            var progress = service.ReadIndexProgress(jobId);
+            return progress is null ? Results.NotFound() : Results.Ok(progress);
         });
         endpoints.MapGet("/api/v1/local-ai/documents/search", async (string query, HttpContext context, LocalCorpusService service, CancellationToken token) =>
         {

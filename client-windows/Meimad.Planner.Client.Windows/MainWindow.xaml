@@ -93,6 +93,8 @@
                     <Button Content="Operation" Tag="Operation" Click="Workspace_Click" ToolTip="Inspect the selected operation and exact package" />
                     <Button Content="Integrations" Tag="Integrations" Click="Workspace_Click" ToolTip="Inspect integration health and configuration" />
                     <Button Content="Back" Click="WorkbenchBack_Click" IsEnabled="{Binding Navigation.CanGoBack}" />
+                    <Button Content="Ask AI" Click="AskAi_Click" Margin="10,0,0,0"
+                            ToolTip="Ask the local AI about the current selection, parts, NC programs, material or documents" />
                     <CheckBox x:Name="LegacyNavigation" Content="Classic operation navigation" Click="LegacyNavigation_Click" VerticalAlignment="Center" Margin="10,0" />
                 </WrapPanel>
             </DockPanel>

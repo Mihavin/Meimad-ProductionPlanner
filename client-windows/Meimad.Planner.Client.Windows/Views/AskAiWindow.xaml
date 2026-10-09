@@ -1,0 +1,78 @@
+<Window Style="{DynamicResource {x:Type Window}}" x:Class="Meimad.Planner.Client.Windows.Views.AskAiWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Ask AI"
+        Width="560" Height="720" MinWidth="420" MinHeight="460"
+        ResizeMode="CanResizeWithGrip" ShowInTaskbar="True" WindowStartupLocation="Manual"
+        Background="{DynamicResource CanvasBrush}"
+        Foreground="{DynamicResource PrimaryTextBrush}"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="VisibleWhenTrue" />
+    </Window.Resources>
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="10,8" Margin="0,0,0,8">
+            <StackPanel>
+                <CheckBox Content="Ask about my current selection" IsChecked="{Binding UseSelection}"
+                          ToolTip="Send the selected Case, operation, batch, NC release, Machine or Production Run with the question" />
+                <TextBlock Text="{Binding SelectionDescription}" TextWrapping="Wrap" Margin="22,4,0,0"
+                           Foreground="{DynamicResource MutedTextBrush}" AutomationProperties.Name="Current selection" />
+            </StackPanel>
+        </Border>
+
+        <ScrollViewer x:Name="ConversationScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding Messages}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border x:Name="Bubble" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="10,6" Margin="0,0,0,8"
+                                Background="{DynamicResource PanelBrush}">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Speaker}" FontWeight="SemiBold" />
+                                <TextBox Text="{Binding Text, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0"
+                                         Background="Transparent" Foreground="{DynamicResource PrimaryTextBrush}" Padding="0,2"
+                                         AutomationProperties.Name="Message text" />
+                                <TextBlock Text="{Binding Sources}" TextWrapping="Wrap" FontSize="11" Margin="0,4,0,0"
+                                           Foreground="{DynamicResource MutedTextBrush}"
+                                           Visibility="{Binding HasSources, Converter={StaticResource VisibleWhenTrue}}" />
+                            </StackPanel>
+                        </Border>
+                        <DataTemplate.Triggers>
+                            <DataTrigger Binding="{Binding IsUser}" Value="True">
+                                <Setter TargetName="Bubble" Property="Background" Value="{DynamicResource SelectionBrush}" />
+                                <Setter TargetName="Bubble" Property="Margin" Value="40,0,0,8" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsError}" Value="True">
+                                <Setter TargetName="Bubble" Property="Background" Value="{DynamicResource WarningSurfaceBrush}" />
+                            </DataTrigger>
+                        </DataTemplate.Triggers>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <TextBlock Grid.Row="2" Text="{Binding Status}" TextWrapping="Wrap" Margin="0,6,0,4" AutomationProperties.Name="Assistant status" />
+
+        <TextBox x:Name="QuestionBox" Grid.Row="3" Text="{Binding Question, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True"
+                 TextWrapping="Wrap" MinHeight="54" MaxHeight="140" VerticalScrollBarVisibility="Auto" MaxLength="4000"
+                 PreviewKeyDown="QuestionBox_PreviewKeyDown"
+                 AutomationProperties.Name="Question" ToolTip="Enter sends; Shift+Enter starts a new line" />
+
+        <DockPanel Grid.Row="4" Margin="0,8,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Content="New chat" Command="{Binding NewChatCommand}" Margin="0,0,6,0" ToolTip="Clear the conversation" />
+                <Button Content="Stop" Command="{Binding StopCommand}" Margin="0,0,6,0" ToolTip="Cancel the question being answered" />
+                <Button Content="Send" Command="{Binding SendCommand}" IsDefault="False" MinWidth="80" />
+            </StackPanel>
+            <TextBlock Text="Answers come from the local AI using Planner data and approved documents. They can be wrong: check the source before acting. The assistant cannot change anything."
+                       TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,10,0" />
+        </DockPanel>
+    </Grid>
+</Window>

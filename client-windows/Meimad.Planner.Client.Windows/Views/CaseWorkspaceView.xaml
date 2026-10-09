@@ -564,7 +564,7 @@
                                         </DataGrid.Columns>
                                     </DataGrid>
                                     <TextBlock Text="Local post-revision history" FontWeight="SemiBold" Margin="0,14,0,5"/>
-                                    <DataGrid ItemsSource="{Binding GCodeReleases}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MaxHeight="190"
+                                    <DataGrid ItemsSource="{Binding GCodeReleases}" SelectedItem="{Binding SelectedGCodeRelease, Mode=TwoWay}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MaxHeight="190"
                                               ToolTip="Right-click or double-click a release to open it in the NC viewer.">
                                         <DataGrid.Resources>
                                             <ContextMenu x:Key="ReleaseRowMenu" x:Shared="False">

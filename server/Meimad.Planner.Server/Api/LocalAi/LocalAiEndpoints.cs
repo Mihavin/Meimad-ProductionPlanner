@@ -44,6 +44,31 @@ internal static class LocalAiEndpoints
             return fact is null ? Results.NotFound() : Results.Ok(new EvidenceInspection(fact,
                 work!.Result!.Currency, work.Result.CheckedAt, work.Result.Evidence.AsOfUtc));
         });
+        // Free-text assistant questions (owner request 2026-10-09). Read-only; answers stay in Server memory.
+        endpoints.MapPost("/api/v1/local-ai/chat", (ChatRequest request, HttpContext context, LocalAiChatService chat) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, null, out var user, out var error)) return error!;
+            context.Response.Headers.CacheControl = "no-store";
+            try
+            {
+                var work = chat.Submit(user!.UserId, request);
+                return Results.Accepted("/api/v1/local-ai/chat/" + work.ChatId, work);
+            }
+            catch (ArgumentException exception) { return PlanningHttpSupport.Error(400, "chat_invalid", exception.Message, context); }
+            catch (LocalAiUnavailableException exception) { return PlanningHttpSupport.Error(409, "ai_unavailable", exception.Message, context); }
+            catch (LocalAiBusyException) { context.Response.Headers.RetryAfter = "5"; return PlanningHttpSupport.Error(429, "ai_busy", "One active question per user and eight queued questions are allowed. Retry shortly.", context); }
+        });
+        endpoints.MapGet("/api/v1/local-ai/chat/{id}", (string id, HttpContext context, LocalAiChatService chat) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, null, out var user, out var error)) return error!;
+            context.Response.Headers.CacheControl = "no-store";
+            return chat.Read(user!.UserId, id) is { } work ? Results.Ok(work) : Results.NotFound();
+        });
+        endpoints.MapDelete("/api/v1/local-ai/chat/{id}", (string id, HttpContext context, LocalAiChatService chat) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, null, out var user, out var error)) return error!;
+            return chat.Cancel(user!.UserId, id) ? Results.Accepted() : Results.NotFound();
+        });
         endpoints.MapPost("/api/v1/local-ai/explanations", async (ExplanationRequest request, HttpContext context,
             LocalEvidenceService evidence, CancellationToken token) =>
         {

@@ -244,6 +244,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public ObservableCollection<PlannerPostprocessorReleaseStatus> GCodePostprocessors { get; } = [];
 
     public ObservableCollection<PlannerGCodeRelease> GCodeReleases { get; } = [];
+    /// <summary>The release row selected in the post-revision history; it gives the Ask AI window its NC context.</summary>
+    public PlannerGCodeRelease? SelectedGCodeRelease { get; set; }
 
     /// <summary>Subprogram files released with the selected program; only ticked ones go.</summary>
     public ObservableCollection<ReleaseSubprogramRow> ReleaseSubprograms { get; } = [];

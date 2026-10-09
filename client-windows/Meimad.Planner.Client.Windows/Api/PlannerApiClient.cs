@@ -24,9 +24,13 @@ internal interface IPlannerApiClient : IDisposable
     Task<LocalAiSettings> UpdateLocalAiSettingsAsync(int version, bool enabled, string modelId, string modelDigest, string runtimeVersion, int cpuThreads, int keepAliveSeconds, int maxModelMemoryMb, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<LocalAiRuntimeProbe> ProbeLocalAiRuntimeAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<LocalAiFeedback> SaveLocalAiFeedbackAsync(string id, int version, bool useful, string correction, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<AiChatStatus> AskAiAsync(IReadOnlyList<AiChatTurn> messages, AiChatContext? context, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<AiChatStatus> GetAiChatAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task CancelAiChatAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<CorpusSettings> GetLocalCorpusAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<CorpusSettings> UpdateLocalCorpusAsync(int version, IReadOnlyList<string> folders, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    Task<CorpusIndexResult> IndexLocalCorpusAsync(int version, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CorpusIndexProgress> StartLocalCorpusIndexAsync(int version, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CorpusIndexProgress> GetLocalCorpusIndexAsync(string jobId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<IReadOnlyList<CorpusMatch>> SearchLocalCorpusAsync(string query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<OperationalHealthPage> GetOperationalHealthAsync(string? cursor = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<OperationWorkbenchDetails> GetOperationWorkbenchAsync(string operationId, ProductionPackageContext? context, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -1628,6 +1632,21 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         using var response = await httpClient.DeleteAsync("api/v1/local-ai/requests/" + Uri.EscapeDataString(id), cancellationToken);
         await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
     }
+    public async Task<AiChatStatus> AskAiAsync(IReadOnlyList<AiChatTurn> messages, AiChatContext? context, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync("api/v1/local-ai/chat", new { messages, context }, JsonOptions, cancellationToken);
+        return await ReadSuccessAsync<AiChatStatus>(response, cancellationToken);
+    }
+    public async Task<AiChatStatus> GetAiChatAsync(string id, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/local-ai/chat/" + Uri.EscapeDataString(id), cancellationToken);
+        return await ReadSuccessAsync<AiChatStatus>(response, cancellationToken);
+    }
+    public async Task CancelAiChatAsync(string id, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.DeleteAsync("api/v1/local-ai/chat/" + Uri.EscapeDataString(id), cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+    }
     public async Task<CorpusSettings> GetLocalCorpusAsync(CancellationToken cancellationToken = default)
     {
         using var response = await httpClient.GetAsync("api/v1/local-ai/corpus", cancellationToken);
@@ -1638,10 +1657,15 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         using var response = await httpClient.PutAsJsonAsync("api/v1/local-ai/corpus", new { expectedVersion = version, folders }, cancellationToken);
         return await ReadSuccessAsync<CorpusSettings>(response, cancellationToken);
     }
-    public async Task<CorpusIndexResult> IndexLocalCorpusAsync(int version, CancellationToken cancellationToken = default)
+    public async Task<CorpusIndexProgress> StartLocalCorpusIndexAsync(int version, CancellationToken cancellationToken = default)
     {
         using var response = await importHttpClient.PostAsJsonAsync("api/v1/local-ai/corpus/reindex", new { expectedVersion = version }, cancellationToken);
-        return await ReadSuccessAsync<CorpusIndexResult>(response, cancellationToken);
+        return await ReadSuccessAsync<CorpusIndexProgress>(response, cancellationToken);
+    }
+    public async Task<CorpusIndexProgress> GetLocalCorpusIndexAsync(string jobId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/local-ai/corpus/reindex/" + Uri.EscapeDataString(jobId), cancellationToken);
+        return await ReadSuccessAsync<CorpusIndexProgress>(response, cancellationToken);
     }
     public async Task<IReadOnlyList<CorpusMatch>> SearchLocalCorpusAsync(string query, CancellationToken cancellationToken = default)
     {
