@@ -5,7 +5,13 @@ internal sealed class TimelineCalculationEngine
     // Bounds response size and calculation work for periodic per-operation reload phases.
     private const int MaximumLoadUnloadOccurrencesPerOperation = 10_000;
 
-    internal TimelineCalculationResult Calculate(TimelineCalculationInput input)
+    internal TimelineCalculationResult Calculate(TimelineCalculationInput input, CancellationToken cancellationToken = default)
+    {
+        using var scope = CalculationCancellation.Enter(cancellationToken);
+        return CalculateCore(input);
+    }
+
+    private TimelineCalculationResult CalculateCore(TimelineCalculationInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
         var horizonStart = input.HorizonStart.ToUniversalTime();
@@ -37,6 +43,7 @@ internal sealed class TimelineCalculationEngine
             .ToHashSet(StringComparer.Ordinal);
         foreach (var operationId in invalidOperations.OrderBy(value => value, StringComparer.Ordinal))
         {
+            CalculationCancellation.Check();
             conflicts.Add(
                 "duplicate_operation",
                 TimelineConflictSeverity.Blocking,
@@ -50,6 +57,7 @@ internal sealed class TimelineCalculationEngine
 
         foreach (var entry in backlogEntries)
         {
+            CalculationCancellation.Check();
             if (entry.Operation.SetupDuration < TimeSpan.Zero
                 || entry.Operation.ProductionDuration < TimeSpan.Zero
                 || entry.Operation.QaDuration < TimeSpan.Zero
@@ -145,6 +153,7 @@ internal sealed class TimelineCalculationEngine
             .ToHashSet(StringComparer.Ordinal);
         foreach (var node in nodes.Values.Where(value => value.Members.Count > 1))
         {
+            CalculationCancellation.Check();
             var modes = node.Members
                 .Select(operationId => operationEntries[operationId].Operation.PlanningMode)
                 .Distinct()
@@ -245,6 +254,7 @@ internal sealed class TimelineCalculationEngine
             .ToHashSet(StringComparer.Ordinal);
         foreach (var machineId in duplicateMachines.OrderBy(value => value, StringComparer.Ordinal))
         {
+            CalculationCancellation.Check();
             conflicts.Add(
                 "duplicate_machine_backlog",
                 TimelineConflictSeverity.Blocking,
@@ -255,6 +265,7 @@ internal sealed class TimelineCalculationEngine
 
         foreach (var backlog in backlogs)
         {
+            CalculationCancellation.Check();
             if (string.IsNullOrWhiteSpace(backlog.MachineId) || duplicateMachines.Contains(backlog.MachineId))
             {
                 continue;
@@ -262,6 +273,7 @@ internal sealed class TimelineCalculationEngine
 
             for (var position = 0; position < backlog.Operations.Count; position++)
             {
+                CalculationCancellation.Check();
                 var operation = backlog.Operations[position];
                 if (string.IsNullOrWhiteSpace(operation.OperationId))
                 {
@@ -413,6 +425,7 @@ internal sealed class TimelineCalculationEngine
         var listedPosition = 0;
         foreach (var dependency in dependencies)
         {
+            CalculationCancellation.Check();
             if (dependency.Type != TimelineDependencyType.LockedSimultaneous) continue;
             listedPosition++;
             lockedPositionByOperation.TryAdd(dependency.FromOperationId, 0);
@@ -421,6 +434,7 @@ internal sealed class TimelineCalculationEngine
         }
         foreach (var dependency in dependencies.OrderBy(value => value.DependencyId, StringComparer.Ordinal))
         {
+            CalculationCancellation.Check();
             if (!operations.ContainsKey(dependency.FromOperationId)
                 || !operations.ContainsKey(dependency.ToOperationId))
             {
@@ -495,6 +509,7 @@ internal sealed class TimelineCalculationEngine
 
         foreach (var operationId in invalidOperations)
         {
+            CalculationCancellation.Check();
             lockedGroupByOperation.Remove(operationId);
         }
 
@@ -510,6 +525,7 @@ internal sealed class TimelineCalculationEngine
         var nodes = new Dictionary<string, ScheduleNode>(StringComparer.Ordinal);
         foreach (var entry in operations.Values)
         {
+            CalculationCancellation.Check();
             if (invalidOperations.Contains(entry.Operation.OperationId))
             {
                 continue;
@@ -529,6 +545,7 @@ internal sealed class TimelineCalculationEngine
 
         foreach (var node in nodes.Values)
         {
+            CalculationCancellation.Check();
             // A locked-simultaneous group lists its members in flow order: a part goes from each to the next.
             node.Members.Sort((left, right) =>
             {
@@ -549,9 +566,11 @@ internal sealed class TimelineCalculationEngine
     {
         foreach (var backlog in backlogs)
         {
+            CalculationCancellation.Check();
             string? previousNode = null;
             foreach (var operation in backlog.Operations)
             {
+                CalculationCancellation.Check();
                 if (invalidOperations.Contains(operation.OperationId))
                 {
                     continue;
@@ -620,6 +639,7 @@ internal sealed class TimelineCalculationEngine
         var invalidNodes = new HashSet<string>(StringComparer.Ordinal);
         foreach (var node in nodes.Values.Where(value => value.Members.Count > 1))
         {
+            CalculationCancellation.Check();
             var duplicateMachines = node.Members
                 .GroupBy(operationId => operations[operationId].MachineId, StringComparer.Ordinal)
                 .Where(group => group.Count() > 1)
@@ -665,12 +685,14 @@ internal sealed class TimelineCalculationEngine
 
         while (pending.Count > 0)
         {
+            CalculationCancellation.Check();
             var blocked = pending
                 .Where(node => predecessors[node].Any(failed.Contains))
                 .OrderBy(value => value, StringComparer.Ordinal)
                 .ToArray();
             foreach (var nodeKey in blocked)
             {
+                CalculationCancellation.Check();
                 var node = nodes[nodeKey];
                 conflicts.Add(
                     "dependency_unresolved",
@@ -718,6 +740,7 @@ internal sealed class TimelineCalculationEngine
 
             foreach (var nodeKey in ready)
             {
+                CalculationCancellation.Check();
                 var node = nodes[nodeKey];
                 var earliest = predecessors[nodeKey].Count == 0
                     ? horizonStart
@@ -770,11 +793,13 @@ internal sealed class TimelineCalculationEngine
 
                 foreach (var result in scheduled.Results)
                 {
+                    CalculationCancellation.Check();
                     results[result.OperationId] = result;
                 }
 
                 foreach (var reservation in scheduled.ResourceReservations)
                 {
+                    CalculationCancellation.Check();
                     if (!occupiedResources.TryGetValue(reservation.ResourceId, out var occupied))
                     {
                         occupied = [];
@@ -821,8 +846,10 @@ internal sealed class TimelineCalculationEngine
             StringComparer.Ordinal);
         foreach (var (node, requiredPredecessors) in predecessors)
         {
+            CalculationCancellation.Check();
             foreach (var predecessor in requiredPredecessors)
             {
+                CalculationCancellation.Check();
                 successors[predecessor].Add(node);
             }
         }
@@ -833,6 +860,7 @@ internal sealed class TimelineCalculationEngine
 
         while (true)
         {
+            CalculationCancellation.Check();
             var pending = nodes.Keys.Where(node => !failed.Contains(node))
                 .ToHashSet(StringComparer.Ordinal);
             var scheduledStarts = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
@@ -842,6 +870,7 @@ internal sealed class TimelineCalculationEngine
 
             while (pending.Count > 0)
             {
+                CalculationCancellation.Check();
                 var ready = pending
                     .Where(node => successors[node].All(successor =>
                         scheduledStarts.ContainsKey(successor) || failed.Contains(successor)))
@@ -863,6 +892,7 @@ internal sealed class TimelineCalculationEngine
 
                 foreach (var nodeKey in ready)
                 {
+                    CalculationCancellation.Check();
                     var node = nodes[nodeKey];
                     var scheduledSuccessors = successors[nodeKey]
                         .Where(scheduledStarts.ContainsKey)
@@ -916,10 +946,12 @@ internal sealed class TimelineCalculationEngine
 
                     foreach (var result in scheduled.Results)
                     {
+                        CalculationCancellation.Check();
                         results[result.OperationId] = result;
                     }
                     foreach (var reservation in scheduled.ResourceReservations)
                     {
+                        CalculationCancellation.Check();
                         if (!occupiedResources.TryGetValue(reservation.ResourceId, out var occupied))
                         {
                             occupied = [];
@@ -985,8 +1017,10 @@ internal sealed class TimelineCalculationEngine
             StringComparer.Ordinal);
         foreach (var (node, requiredPredecessors) in predecessors)
         {
+            CalculationCancellation.Check();
             foreach (var predecessor in requiredPredecessors)
             {
+                CalculationCancellation.Check();
                 successors[predecessor].Add(node);
             }
         }
@@ -994,6 +1028,7 @@ internal sealed class TimelineCalculationEngine
         var failed = invalidNodes.ToHashSet(StringComparer.Ordinal);
         while (true)
         {
+            CalculationCancellation.Check();
             var pending = nodes.Keys.Where(node => !failed.Contains(node))
                 .ToHashSet(StringComparer.Ordinal);
             var scheduled = new Dictionary<string, ScheduledNode>(StringComparer.Ordinal);
@@ -1003,6 +1038,7 @@ internal sealed class TimelineCalculationEngine
 
             while (pending.Count > 0)
             {
+                CalculationCancellation.Check();
                 var blocked = pending.Where(node =>
                         predecessors[node].Any(failed.Contains))
                     .OrderBy(value => value, StringComparer.Ordinal)
@@ -1011,6 +1047,7 @@ internal sealed class TimelineCalculationEngine
                 {
                     foreach (var nodeKey in blocked)
                     {
+                        CalculationCancellation.Check();
                         failed.Add(nodeKey);
                         pending.Remove(nodeKey);
                         var node = nodes[nodeKey];
@@ -1060,6 +1097,7 @@ internal sealed class TimelineCalculationEngine
 
                 foreach (var nodeKey in ready)
                 {
+                    CalculationCancellation.Check();
                     if (!pending.Contains(nodeKey))
                     {
                         continue;
@@ -1173,10 +1211,12 @@ internal sealed class TimelineCalculationEngine
                     scheduled[nodeKey] = nodeResult;
                     foreach (var result in nodeResult.Results)
                     {
+                        CalculationCancellation.Check();
                         results[result.OperationId] = result;
                     }
                     foreach (var reservation in nodeResult.ResourceReservations)
                     {
+                        CalculationCancellation.Check();
                         if (!occupiedResources.TryGetValue(reservation.ResourceId, out var occupied))
                         {
                             occupied = [];
@@ -1212,8 +1252,10 @@ internal sealed class TimelineCalculationEngine
         var queue = new Queue<string>(roots);
         while (queue.TryDequeue(out var failedNode))
         {
+            CalculationCancellation.Check();
             foreach (var successor in successors[failedNode].OrderBy(value => value, StringComparer.Ordinal))
             {
+                CalculationCancellation.Check();
                 if (!failed.Add(successor))
                 {
                     continue;
@@ -1330,6 +1372,7 @@ internal sealed class TimelineCalculationEngine
         }
         while (remaining > 0)
         {
+            CalculationCancellation.Check();
             var partCount = Math.Min(remaining, partsPerLoad);
             runs.Add(new ProductionRun(partCount, true));
             remaining -= partCount;
@@ -1417,6 +1460,7 @@ internal sealed class TimelineCalculationEngine
 
         foreach (var group in sequentialByChild)
         {
+            CalculationCancellation.Check();
             var child = results[group.Key];
             var predecessors = group
                 .Select(dependency => results[dependency.FromOperationId])
@@ -1538,11 +1582,13 @@ internal sealed class TimelineCalculationEngine
         var commonFinish = latest;
         for (var attempt = 0; attempt < 64; attempt++)
         {
+            CalculationCancellation.Check();
             var backwardResults = new List<TimelineOperationResult>();
             var localOccupied = occupiedResources.ToDictionary(
                 pair => pair.Key, pair => new List<ResourceReservation>(pair.Value), StringComparer.Ordinal);
             foreach (var member in members)
             {
+                CalculationCancellation.Check();
                 if (!machineWindows.TryGetValue(member.MachineId, out var availability))
                 {
                     return null;
@@ -1558,6 +1604,7 @@ internal sealed class TimelineCalculationEngine
                 backwardResults.Add(scheduled.Result);
                 foreach (var reservation in scheduled.ResourceReservations)
                 {
+                    CalculationCancellation.Check();
                     if (!localOccupied.TryGetValue(reservation.ResourceId, out var occupied))
                     {
                         occupied = [];
@@ -1576,6 +1623,7 @@ internal sealed class TimelineCalculationEngine
                 // Earlier tries may have moved back further than needed: start later while it still fits.
                 for (var refinement = 0; refinement < 16; refinement++)
                 {
+                    CalculationCancellation.Check();
                     var slack = latest - forward.FinishesAt;
                     if (slack <= TimeSpan.Zero) break;
                     var start = forward.Results.Min(result => result.StartsAt);
@@ -1634,6 +1682,7 @@ internal sealed class TimelineCalculationEngine
         var loadNumber = loadOccurrenceCount + 1;
         for (var runIndex = productionRuns.Count - 1; runIndex >= 0; runIndex--)
         {
+            CalculationCancellation.Check();
             var run = productionRuns[runIndex];
             var production = AllocateBackward(
                 ProductionRunDuration(entry.Operation, run),
@@ -1833,6 +1882,7 @@ internal sealed class TimelineCalculationEngine
             pair => pair.Key, pair => new List<ResourceReservation>(pair.Value), StringComparer.Ordinal);
         foreach (var member in members)
         {
+            CalculationCancellation.Check();
             var scheduled = ScheduleMember(
                 member,
                 earliest,
@@ -1854,6 +1904,7 @@ internal sealed class TimelineCalculationEngine
             reservations.AddRange(scheduled.ResourceReservations);
             foreach (var reservation in scheduled.ResourceReservations)
             {
+                CalculationCancellation.Check();
                 if (!localOccupied.TryGetValue(reservation.ResourceId, out var occupied))
                 {
                     occupied = [];
@@ -1982,6 +2033,7 @@ internal sealed class TimelineCalculationEngine
         var partFinishes = flowPartsReady is null ? null : new Dictionary<int, DateTimeOffset>();
         for (var runIndex = 0; runIndex < productionRuns.Count; runIndex++)
         {
+            CalculationCancellation.Check();
             var run = productionRuns[runIndex];
             if (run.RequiresLoadUnload)
             {
@@ -2059,6 +2111,7 @@ internal sealed class TimelineCalculationEngine
             // In a flow, each part waits for the previous member to finish that same part.
             for (var index = 0; index < run.PartCount; index++, nextPart++)
             {
+                CalculationCancellation.Check();
                 var partEarliest = FlowReady(flowPartsReady, nextPart, 1, phaseEarliest);
                 var production = Allocate(entry.Operation.ProductionDuration, partEarliest, productionAvailability);
                 if (production is null)
@@ -2138,6 +2191,7 @@ internal sealed class TimelineCalculationEngine
         var ready = earliest;
         for (var part = first; part < first + count; part++)
         {
+            CalculationCancellation.Check();
             if (partsReady.TryGetValue(part, out var finish) && finish > ready) ready = finish;
         }
         return ready;
@@ -2187,15 +2241,7 @@ internal sealed class TimelineCalculationEngine
     private static bool HasRequiredSkill(
         IReadOnlyList<string> employeeSkills,
         IReadOnlyList<string> machineSkills)
-    {
-        if (employeeSkills.Any(value => string.Equals(value.Trim(), "*", StringComparison.Ordinal)))
-        {
-            return true;
-        }
-
-        return employeeSkills.Any(employeeSkill => machineSkills.Any(machineSkill =>
-            string.Equals(employeeSkill.Trim(), machineSkill.Trim(), StringComparison.OrdinalIgnoreCase)));
-    }
+        => SetupWorkerQualification.Matches(employeeSkills, machineSkills);
 
     private static int CompareReadyNodes(
         string left,
@@ -2368,6 +2414,7 @@ internal sealed class TimelineCalculationEngine
         var waits = new List<TimelineInterval>();
         for (var index = 0; index < ordered.Length - 1; index++)
         {
+            CalculationCancellation.Check();
             var start = ordered[index];
             var end = ordered[index + 1];
             if (end <= start)
@@ -2524,6 +2571,7 @@ internal sealed class TimelineCalculationEngine
         var intervals = new List<InstantWindow>();
         foreach (var window in windows)
         {
+            CalculationCancellation.Check();
             if (window.EndsAt <= earliest)
             {
                 continue;
@@ -2564,6 +2612,7 @@ internal sealed class TimelineCalculationEngine
         var intervals = new List<InstantWindow>();
         for (var index = windows.Count - 1; index >= 0; index--)
         {
+            CalculationCancellation.Check();
             var window = windows[index];
             if (window.StartsAt >= latest)
             {
@@ -2608,6 +2657,7 @@ internal sealed class TimelineCalculationEngine
         var valid = new List<InstantWindow>();
         foreach (var window in windows)
         {
+            CalculationCancellation.Check();
             var start = window.StartsAt.ToUniversalTime();
             var end = window.EndsAt.ToUniversalTime();
             if (end <= start)
@@ -2658,6 +2708,7 @@ internal sealed class TimelineCalculationEngine
         var merged = new List<InstantWindow> { ordered[0] };
         foreach (var window in ordered.Skip(1))
         {
+            CalculationCancellation.Check();
             var previous = merged[^1];
             if (window.StartsAt <= previous.EndsAt)
             {
@@ -2686,6 +2737,7 @@ internal sealed class TimelineCalculationEngine
         var rightIndex = 0;
         while (leftIndex < left.Count && rightIndex < right.Count)
         {
+            CalculationCancellation.Check();
             var start = left[leftIndex].StartsAt > right[rightIndex].StartsAt
                 ? left[leftIndex].StartsAt
                 : right[rightIndex].StartsAt;
@@ -2718,6 +2770,7 @@ internal sealed class TimelineCalculationEngine
         var result = new List<InstantWindow>();
         foreach (var window in source)
         {
+            CalculationCancellation.Check();
             var cursor = window.StartsAt;
             foreach (var block in normalizedBlocked.Where(block =>
                          block.EndsAt > window.StartsAt && block.StartsAt < window.EndsAt))

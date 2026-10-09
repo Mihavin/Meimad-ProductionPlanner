@@ -1,5 +1,50 @@
 # Meimad Production Planner — User Help
 
+## Shop, Preparation, Operation and Integrations
+
+Workbench follow-up: Preparation groups NC/Tool Room/Setup/QC queues. Open Operation to select an exact Run/program/output and inspect readiness/package hashes. Split work requires selection and refresh. Classic operation navigation remains available; Back returns to the source. Ctrl+Y is Redo; Ctrl+X is Cut.
+
+Physical handoff records the qualified setup worker receiving an exact package after actual delivery. Tool Room permission is required. This is tracking only; it does not start setup or prove loader execution. Historical handoffs remain visible.
+
+Integrations contains Health, AI assistance and Approved documents. AI assistance uses deterministic Server evidence when inference is disabled. Summaries require explicit UTC/offset instants; event counts are not parts produced. Answers are snapshots: inspect citations and refresh before acting. Administrators load/approve one Server-side folder per line, then rebuild the index. Only top-level UTF-8 .txt/.md files are indexed; subfolders need separate approval. Approved documents become visible to all signed-in Windows users. Removing roots clears cached documents. Search verifies current hashes without editing originals.
+
+In Shop, select a Machine and then its specific Run output. **Inspect selected output** opens Operation with that exact context. Connection, observation date and freshness are separate columns; an unknown state is not assumed idle. Operation shows batch demand and explicit Order/stock/scrap allocations. **Open reusable recipe in Cases** resolves the recipe of the selected process.
+
+Expand **Shift summary / Server evidence** in Shop to inspect the selected Machine's interval. The panel uses the Shop content area; collapse it to restore the tables and selection. Check the explicit start/end offsets before summarizing. Workflow totals, completed-cycle duration samples and package supersessions refer to that interval. CNC/tablet freshness and unresolved ERP outcomes are current samples; ERP outcomes are factory-wide. Duration samples use the Server's recorded cycle boundaries, not spindle time or full shift occupancy. No valid samples means unknown duration. The answer shows the configured factory timezone as well as UTC.
+
+**Build measured package** and **Build manual-offset package** use the existing Server validation. Manual offsets require the configured Machine capability. If the connection drops during a build, retry the same context/mode to reuse its request identity. A conflict keeps your selection and asks for refresh/review. **Inspect previous package** is visibly historical; return with **Refresh context** before exporting current work. **Verify package files** checks immutable file lengths and hashes. **Inspect runnable NC** opens verified bytes read-only; it never transfers to a Machine.
+
+AI's **Find similar incidents** searches a bounded time window and literal event/context phrase plus approved documents. Historical matches require applicability review. **Recheck answer sources** marks changed facts stale and removes unavailable document answers. **Inspect authorized source** rechecks the exact citation through the Server. **Useful answer / Not useful** records feedback, with an optional correction, without editing production facts.
+
+**Enable AI.** Under Integrations → Approved documents, the *Local AI* section lets an administrator switch the explanations model on: **Load AI settings** shows whether it is enabled, **Check local runtime** asks the runtime on the Server PC (Ollama at the loopback address in the Server configuration) for its version and installed models, choosing a model fills in its ID and digest, and **Save AI settings** with *Enable local AI* ticked switches it on at once — no Server restart, nothing downloaded. A model marked *remote* cannot be used, and saving without a complete model ID, digest and runtime version is refused. **Resource limits on the Server PC** (same section) keep the model from slowing the Server: *CPU threads* caps the threads one request may use (leave cores to the Server; 0 = runtime default), *Unload the model after (seconds)* frees its memory after an idle period, and *Model memory budget (MB)* refuses models whose file is larger (0 = no limit; the model list shows each size). Untick and save to switch AI off again. Below it, administrators can load the inference control, suspend inference immediately, and resume it when AI is enabled. Suspension survives restart; deterministic explanations remain available whether or not the model answers.
+
+## Timeline reports and busy requests
+
+Ordinary Timeline refresh accepts up to 180 days by default. For a longer selected date range, choose **Long-range report** (default maximum 730 days). Reports do not refresh automatically. Choose **Cancel** to stop waiting; the previously displayed projection stays visible. Administrators can configure both horizon limits on the Server.
+
+A busy response means the Server's projection/report or package-build limit has been reached. Retry after other work finishes; it does not mean your planning facts were changed. Packages that exceed configured file/aggregate limits are refused before publication. Repeated package requests still use their original idempotency receipt when one was already committed.
+
+## Inspect artifact storage
+
+Open Setup > Database / Backup > Artifact integrity. Refresh shows the last report; **Scan artifact storage** rechecks recorded files and hashes. ACTIVE/SUPERSEDED describe package references; VERIFIED/MISSING/CORRUPT describe file integrity. A report describes its inspection time. BUSY or BUILD_IN_PROGRESS means a new scan did not run; retry later. Missing or corrupt active files require investigation/restoration and do not change planning or CNC verification authority automatically.
+
+Abandoned and ambiguous publications stay in place for investigation. No original engineering files are moved. **Clean up eligible abandoned packages** uses the approved seven-day grace by default in the updated Server. Administrators may disable collection with `ProductionPackages:OrphanGraceDays=0`. This action removes only old, complete, verified production packages with no database references or unexpected contents. Started/incomplete publications, NC release orphans, all referenced files and backups remain retained. Scan again after cleanup or a lost response to see current state.
+
+## Review an ERP import before applying it
+
+On the Server PC, sign in with Setup permission and open Setup > Server maintenance. Choose the import preview action, inspect the totals, field changes and warnings, then tick the review checkbox and apply. If the list is truncated, it does not show every changed row. A preview expires after 15 minutes; a new successful preview replaces the previous one.
+
+If ERP, mapping or local planning facts changed, create and review a fresh preview. After a connection error during apply, retry the same preview to retrieve a committed result without applying it twice. Restart or expiry requires a fresh preview. The preview itself writes nothing to ERP and rolls back its temporary Planner work.
+
+The import uses SQL Server SNAPSHOT isolation when the Kitaron database has it and otherwise reads the source tables in one ordinary transaction; Planner does not change ERP settings, and the import runs either way (the read mode is recorded with the import). The automatic import keeps running every few minutes as before; this review flow is optional and does not replace automatic cleanup, which is awaiting the owner's decision. A connection check does not invalidate a preview.
+
+## Complete recovery sets
+
+In **Setup > Server maintenance**, Refresh shows whether complete recovery is configured, the latest verified snapshot age and the last attempt result. **Recovery point overdue** means no verified snapshot is recorded or it is older than the approved four-hour data-loss target. The four-hour restore target must be demonstrated in a recovery drill.
+
+With Setup permission and configured Server storage, **Create complete recovery set** saves an encrypted, restore-verified set on the Server's configured destination. **Download verified database-only backup** does not include release/package files or keys. Engineering folders need separate backups. Scheduled complete sets use Windows Task Scheduler on the Server PC. If a request times out, refresh and inspect the destination before retrying. See the administrator [recovery runbook](recovery-runbook.md).
+
+
 ## Reviewing an uncertain Kitaron push
 
 If a push shows **Outcome unknown**, do not push again. Select it in **Setup > Kitaron Push** to inspect the intended changes. **Inspect ERP values** reads current ERP values without writing them. Matching values do not prove this push committed; inspect the ERP history when needed.
@@ -11,7 +56,7 @@ This guide is for planners, supervisors, setup personnel, and machine operators.
 
 ## 1. Start here
 
-The Windows client now uses a workbench navigation rail. Choose **Light workshop** or **Graphite control room** at the top to switch appearance; the choice is saved on this computer and does not clear your current work. Icons follow the appearance: solid keys in Graphite, engraved outlines in Light. **Shop** opens the Planning Board, **Preparation** opens the NC Creator queue, **Operation** opens Cases, and **Integrations** opens Kitaron Stations. The rail also provides direct access to every existing screen. Configuration previously labeled Setup is now **Administration**; production setup work remains in **Setup Queue**. Technical drawings retain their own readable canvas and operational status colors.
+The Windows client uses a workbench navigation rail. Choose **Light workshop** or **Graphite control room** to switch appearance without clearing current work. **Shop** opens Machine observations and recorded Run outputs; **Preparation** groups NC, Tool Room, Setup and QC queues; **Operation** opens the exact-context inspector; **Integrations** opens health, AI assistance and approved-document controls. The rail retains every existing screen, including Planning Board, Cases and permissioned ERP administration. **Classic operation navigation** restores the earlier route to Cases. Configuration is labeled **Administration**; production setup remains in **Setup Queue**. Technical drawings retain their own canvas and operational status colors.
 
 1. Start the **Meimad Planner Server** service (or start the Server application during development).
 2. Open the Windows client and verify that the Server connection indicator is healthy.

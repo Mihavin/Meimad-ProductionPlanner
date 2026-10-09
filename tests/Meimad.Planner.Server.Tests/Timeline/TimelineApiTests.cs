@@ -14,6 +14,68 @@ namespace Meimad.Planner.Server.Tests.Timeline;
 public sealed class TimelineApiTests
 {
     [Fact]
+    public async Task Repeated_projection_has_stable_revision_and_time_is_explicit_in_identity()
+    {
+        await RunWithServerAsync(async (_, client) =>
+        {
+            const string path = "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&asOf=";
+            using var first = await client.GetAsync(path + "2026-08-11T08:00:00Z");
+            using var second = await client.GetAsync(path + "2026-08-11T09:00:00Z");
+            first.EnsureSuccessStatusCode(); second.EnsureSuccessStatusCode();
+            using var a = JsonDocument.Parse(await first.Content.ReadAsStringAsync());
+            using var b = JsonDocument.Parse(await second.Content.ReadAsStringAsync());
+            var fa = a.RootElement.GetProperty("freshness");
+            var fb = b.RootElement.GetProperty("freshness");
+            Assert.Equal("revision-stable", fa.GetProperty("status").GetString());
+            Assert.Equal(fa.GetProperty("revision").GetString(), fb.GetProperty("revision").GetString());
+            Assert.Equal(fa.GetProperty("runtimeId").GetString(), fb.GetProperty("runtimeId").GetString());
+            Assert.NotEqual(fa.GetProperty("evaluationAt").GetString(), fb.GetProperty("evaluationAt").GetString());
+            using var board = await client.GetAsync("/api/v1/planning-board");
+            board.EnsureSuccessStatusCode();
+            using var c = JsonDocument.Parse(await board.Content.ReadAsStringAsync());
+            Assert.Equal(fb.GetProperty("revision").GetString(), c.RootElement.GetProperty("freshness").GetProperty("revision").GetString());
+        });
+    }
+
+    [Fact]
+    public async Task Continuous_changes_return_retryable_error_without_a_mixed_board()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeimadPlanner.D02.Tests", Guid.NewGuid().ToString("N"));
+        var revision = new AlwaysChangingRevision();
+        await using var app = ServerApplication.Build([$"--Database:Path={root}/test.db"], builder =>
+        {
+            builder.UseSignedInTestServer();
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<Application.Projections.IProjectionRevisionReader>();
+                services.AddSingleton<Application.Projections.IProjectionRevisionReader>(revision);
+            });
+        });
+        try
+        {
+            await app.StartAsync();
+            using var client = app.GetTestClient();
+            using var response = await client.GetAsync("/api/v1/planning-board");
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            Assert.Equal("1", response.Headers.RetryAfter!.ToString());
+            Assert.Contains("projection_changed", await response.Content.ReadAsStringAsync());
+            Assert.Equal(7, revision.Reads); // Admission key + three before/after consistency checks.
+            await app.StopAsync();
+        }
+        finally
+        {
+            await app.DisposeAsync();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    private sealed class AlwaysChangingRevision : Application.Projections.IProjectionRevisionReader
+    {
+        internal int Reads;
+        public Task<string> ReadAsync(CancellationToken token) => Task.FromResult(Interlocked.Increment(ref Reads).ToString());
+    }
+    [Fact]
     public async Task Timeline_exposes_configured_time_scale_context_for_display_only()
     {
         await RunWithServerAsync(async (_, client) =>

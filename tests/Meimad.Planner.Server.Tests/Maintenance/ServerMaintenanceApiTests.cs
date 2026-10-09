@@ -14,6 +14,29 @@ namespace Meimad.Planner.Server.Tests.Maintenance;
 public sealed class ServerMaintenanceApiTests
 {
     [Fact]
+    public async Task Recovery_status_requires_signin_and_creation_requires_setup_permission()
+    {
+        await RunAsync(async (_, client, _) =>
+        {
+            using (client.SignedOut())
+            {
+                using var anonymous = await client.GetAsync("/api/v1/server-maintenance/recovery-sets");
+                Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+            }
+            using (client.SignedInWithOnly(Permissions.PlanMachines))
+            {
+                using var status = await client.GetAsync("/api/v1/server-maintenance/recovery-sets");
+                status.EnsureSuccessStatusCode();
+                Assert.Contains("\"recoveryPointTargetHours\":4", await status.Content.ReadAsStringAsync());
+                using var denied = await client.PostAsync("/api/v1/server-maintenance/recovery-sets", null);
+                Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+            }
+            using var unconfigured = await client.PostAsync("/api/v1/server-maintenance/recovery-sets", null);
+            Assert.Equal(HttpStatusCode.Conflict, unconfigured.StatusCode);
+            Assert.Contains("recovery_not_configured", await unconfigured.Content.ReadAsStringAsync());
+        });
+    }
+    [Fact]
     public async Task Status_and_preview_expose_only_the_protected_deletion_catalog()
     {
         await RunAsync(async (application, client, _) =>

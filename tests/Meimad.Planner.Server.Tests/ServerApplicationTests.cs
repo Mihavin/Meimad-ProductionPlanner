@@ -13,6 +13,13 @@ namespace Meimad.Planner.Server.Tests;
 public sealed class ServerApplicationTests
 {
     [Fact]
+    public void Staged_recovery_configuration_refuses_normal_startup()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            ServerApplication.Build(["--Recovery:ActivationPending=true"]));
+        Assert.Contains("staged only", exception.Message);
+    }
+    [Fact]
     public async Task Application_starts_and_stops_cleanly()
     {
         await using var application = CreateTestApplication();
@@ -183,7 +190,7 @@ public sealed class ServerApplicationTests
             await using var command = connection.CreateCommand();
             command.CommandText = "PRAGMA user_version;";
 
-            Assert.Equal(101L, (long)(await command.ExecuteScalarAsync())!);
+            Assert.Equal((long)DatabaseMigrator.LatestVersion, (long)(await command.ExecuteScalarAsync())!);
         }
         finally
         {

@@ -61,8 +61,10 @@ internal sealed class SqliteKitaronMappingRepository(SqliteDatabase database)
             SET detected_columns_json = $columns,
                 version = version + 1,
                 updated_at = $detectedAt
-            WHERE id = 1;
+            WHERE id = 1 AND (detected_columns_json IS NULL OR detected_columns_json <> $columns);
             """;
+        // Unchanged columns leave the row alone: every connection check records them, and a mapping
+        // version that moved with it blocked the automatic import as "mapping changed".
         command.Parameters.AddWithValue("$columns", JsonSerializer.Serialize(columns, JsonOptions));
         command.Parameters.AddWithValue("$detectedAt", detectedAt.UtcDateTime.ToString("O"));
         await command.ExecuteNonQueryAsync(cancellationToken);

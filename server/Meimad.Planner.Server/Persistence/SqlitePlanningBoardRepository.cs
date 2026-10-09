@@ -56,7 +56,7 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
             .ThenBy(operation => operation.BatchOperationId, StringComparer.Ordinal)
             .ToArray();
 
-        return new PlanningBoardSnapshot(DateTimeOffset.UtcNow, pool, projectedMachines);
+        return new PlanningBoardSnapshot(Application.Projections.ProjectionConsistency.EvaluationAt ?? DateTimeOffset.UtcNow, pool, projectedMachines);
     }
 
     private static async Task<IReadOnlyDictionary<string, string>> ReadBacklogStampsAsync(
@@ -370,7 +370,7 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
         var contexts = await SqliteProductionReadinessContextReader.ReadManyAsync(
             connection, transaction,
             operations.Select(operation => operation.BatchOperationId).ToArray(),
-            cancellationToken);
+            cancellationToken, verifiedPackages: verifiedPackages);
         for (var index = 0; index < operations.Count; index++)
         {
             var operation = operations[index];
@@ -398,7 +398,7 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
             };
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = Application.Projections.ProjectionConsistency.EvaluationAt ?? DateTimeOffset.UtcNow;
         return operations.Select(operation =>
         {
             if (operation.WorkFinishDate is null)

@@ -7,7 +7,7 @@ using Meimad.Planner.Client.Windows.Api;
 
 namespace Meimad.Planner.Client.Windows.Presentation;
 
-internal sealed class ServerMaintenanceViewModel : INotifyPropertyChanged
+internal sealed partial class ServerMaintenanceViewModel : INotifyPropertyChanged
 {
     private IPlannerApiClient? apiClient;
     private string clientId = string.Empty;
@@ -26,6 +26,8 @@ internal sealed class ServerMaintenanceViewModel : INotifyPropertyChanged
     private string statusMessage = "Only the listed diagnostic collections can be deleted.";
     private string previewSummary = "Preview the exact rows before deleting.";
     private long expectedTotalRows;
+    private string recoveryStatusText = "Refresh to read complete recovery-set status.";
+    private bool recoveryConfigured;
 
     internal ServerMaintenanceViewModel()
     {
@@ -33,6 +35,11 @@ internal sealed class ServerMaintenanceViewModel : INotifyPropertyChanged
         PreviewCommand = new AsyncCommand(PreviewAsync, CanRead);
         DeleteCommand = new AsyncCommand(DeleteAsync, CanDelete);
         DownloadBackupCommand = new AsyncCommand(DownloadBackupAsync, CanMutate);
+        CreateRecoverySetCommand = new AsyncCommand(CreateRecoverySetAsync, () => CanMutate() && recoveryConfigured);
+        PreviewImportCommand = new AsyncCommand(PreviewImportAsync, CanMutate);
+        ScanArtifactsCommand = new AsyncCommand(ScanArtifactsAsync, CanMutate);
+        CollectArtifactOrphansCommand = new AsyncCommand(CollectArtifactOrphansAsync, () => CanMutate() && artifactCleanupConfigured);
+        ApplyImportCommand = new AsyncCommand(ApplyImportAsync, () => CanMutate() && importPreview is not null && ImportReviewed);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -42,6 +49,8 @@ internal sealed class ServerMaintenanceViewModel : INotifyPropertyChanged
     public AsyncCommand PreviewCommand { get; }
     public AsyncCommand DeleteCommand { get; }
     public AsyncCommand DownloadBackupCommand { get; }
+    public AsyncCommand CreateRecoverySetCommand { get; }
+    public string RecoveryStatusText { get => recoveryStatusText; private set => SetField(ref recoveryStatusText, value); }
 
     public bool IsBusy { get => isBusy; private set => SetField(ref isBusy, value); }
     public bool IsEditor => isEditor;
@@ -98,6 +107,16 @@ internal sealed class ServerMaintenanceViewModel : INotifyPropertyChanged
         string newServerAddress)
     {
         var apiChanged = !ReferenceEquals(apiClient, newApiClient);
+        if (apiChanged || userId != newUserId || serverAddress != newServerAddress)
+        {
+            importPreview = null;
+            importReviewed = false;
+            ImportChanges.Clear();
+            ArtifactItems.Clear();
+            artifactCleanupConfigured = false;
+            ArtifactSummary = "Refresh to read the last artifact integrity scan.";
+            OnPropertyChanged(nameof(ImportReviewed));
+        }
         apiClient = newApiClient;
         clientId = newClientId;
         userId = newUserId;
@@ -147,6 +166,8 @@ internal sealed class ServerMaintenanceViewModel : INotifyPropertyChanged
                 $"+ shared memory {FormatBytes(database.SharedMemoryFileBytes)} = {FormatBytes(database.TotalOnDiskBytes)} on disk. " +
                 $"SQLite can reuse about {FormatBytes(database.ReusablePageBytes)}; schema v{database.SchemaVersion}.";
             StatusMessage = "Database storage and protected deletion catalog refreshed.";
+            await RefreshRecoveryAsync();
+            await RefreshArtifactsAsync();
             InvalidatePreview();
         }
         catch (Exception exception)
@@ -242,6 +263,47 @@ internal sealed class ServerMaintenanceViewModel : INotifyPropertyChanged
         }
     }
 
+    private async Task RefreshRecoveryAsync()
+    {
+        try
+        {
+            var status = await apiClient!.GetRecoveryStatusAsync();
+            recoveryConfigured = status.Configured;
+            var age = status.AgeHours is { } hours ? $"{hours:0.0} hours" : "no verified set recorded";
+            RecoveryStatusText = $"{(status.Configured ? "Configured" : "Not configured")}: {status.Destination ?? "destination not set"}. " +
+                $"Last verified snapshot: {age}. {(status.RecoveryPointOverdue ? "Recovery point overdue." : "Within recovery-point target.")} " +
+                $"Data-loss target: {status.RecoveryPointTargetHours} hours; restore target: {status.RecoveryTimeTargetHours} hours. " +
+                $"Scheduler: {status.ScheduleOwner}. Last attempt: {status.LastAttemptResult ?? "none"}.";
+        }
+        catch (Exception exception)
+        {
+            recoveryConfigured = false;
+            RecoveryStatusText = $"Recovery status unavailable: {exception.Message}";
+        }
+    }
+
+    internal async Task CreateRecoverySetAsync()
+    {
+        if (!CanMutate() || !recoveryConfigured) return;
+        IsBusy = true;
+        RaiseCommandStates();
+        try
+        {
+            var result = await apiClient!.CreateRecoverySetAsync();
+            StatusMessage = $"Complete recovery set {result.FileName} saved and restore-verified on the Server ({FormatBytes(result.ByteLength)}).";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"Recovery request was not confirmed: {exception.Message}. Refresh status before trying again.";
+        }
+        finally
+        {
+            await RefreshRecoveryAsync();
+            IsBusy = false;
+            RaiseCommandStates();
+        }
+    }
+
     private bool TryBuildPreview(out CollectedDataPreviewRequest? request, out string error)
     {
         request = null;
@@ -289,6 +351,11 @@ internal sealed class ServerMaintenanceViewModel : INotifyPropertyChanged
         PreviewCommand.RaiseCanExecuteChanged();
         DeleteCommand.RaiseCanExecuteChanged();
         DownloadBackupCommand.RaiseCanExecuteChanged();
+        CreateRecoverySetCommand.RaiseCanExecuteChanged();
+        PreviewImportCommand.RaiseCanExecuteChanged();
+        ScanArtifactsCommand.RaiseCanExecuteChanged();
+        CollectArtifactOrphansCommand.RaiseCanExecuteChanged();
+        ApplyImportCommand.RaiseCanExecuteChanged();
     }
 
     private static string FormatBytes(long value)

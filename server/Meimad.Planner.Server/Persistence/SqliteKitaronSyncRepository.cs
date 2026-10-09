@@ -7,8 +7,24 @@ using Microsoft.Data.Sqlite;
 namespace Meimad.Planner.Server.Persistence;
 
 internal sealed class SqliteKitaronSyncRepository(
-    SqliteDatabase database) : IKitaronSyncRepository
+    SqliteDatabase database, KitaronImportPolicy? policy = null) : IKitaronSyncRepository
 {
+    public async Task<KitaronSyncStatus?> FindReceiptAsync(string runId, CancellationToken token)
+    {
+        await using var connection = await database.OpenConnectionAsync(token);
+        return await ReadReceiptAsync(connection, null, runId, token);
+    }
+
+    private static async Task<KitaronSyncStatus?> ReadReceiptAsync(SqliteConnection connection, SqliteTransaction? transaction,
+        string runId, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT after_data_json FROM structured_event_log WHERE id=$id AND event_type='kitaron_import_applied'";
+        command.Parameters.AddWithValue("$id", "kitaron-import:" + runId);
+        var json = (string?)await command.ExecuteScalarAsync(token);
+        return json is null ? null : JsonSerializer.Deserialize<KitaronImportReceipt>(json)!.Status;
+    }
     public async Task<KitaronSyncStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
@@ -78,9 +94,47 @@ internal sealed class SqliteKitaronSyncRepository(
         KitaronSyncPlan plan,
         DateTimeOffset now,
         CancellationToken cancellationToken)
+        => (await ApplyCoreAsync(plan, now, cancellationToken, false)).Status;
+
+    public async Task<KitaronImportLocalPreview> PreviewAsync(KitaronSyncPlan plan, DateTimeOffset now, CancellationToken cancellationToken)
+        => (await ApplyCoreAsync(plan, now, cancellationToken, true)).Preview!;
+
+    private async Task<(KitaronSyncStatus Status, KitaronImportLocalPreview? Preview)> ApplyCoreAsync(
+        KitaronSyncPlan plan, DateTimeOffset now, CancellationToken cancellationToken, bool preview)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
+        if (!preview && plan.Evidence is not null
+            && await ReadReceiptAsync(connection, transaction, plan.Evidence.RunId, cancellationToken) is { } receipt)
+            return (receipt, null);
+        if (plan.ExpectedLocalRevision is not null)
+        {
+            if (!string.Equals(await SqliteKitaronImportContext.ReadAsync(connection, transaction, cancellationToken),
+                plan.ExpectedLocalRevision, StringComparison.Ordinal))
+                throw new KitaronSyncBlockedException("Local planning, mapping or connection state changed. Create a fresh import preview; nothing was applied.");
+        }
+        var requireReview = (policy ?? KitaronImportPolicy.Default).ReviewedApplyRequired
+            && !preview && plan.Evidence is { ReviewedPreview: false };
+        if (requireReview)
+        {
+            await using var mapping = connection.CreateCommand();
+            mapping.Transaction = transaction;
+            mapping.CommandText = """
+                SELECT json_extract(after_data_json,'$.Evidence.MappingVersion')
+                FROM structured_event_log WHERE event_type='kitaron_import_applied'
+                ORDER BY occurred_at DESC,id DESC LIMIT 1;
+                """;
+            var previous = await mapping.ExecuteScalarAsync(cancellationToken);
+            if (previous is not null && previous is not DBNull && Convert.ToInt32(previous) != plan.MappingVersion)
+                throw new KitaronSyncBlockedException("Mapping changed since the last applied import. Review and apply a fresh preview; nothing was imported.");
+            if (previous is null or DBNull)
+            {
+                mapping.CommandText = "SELECT COUNT(*) FROM kitaron_sync_links";
+                if (Convert.ToInt64(await mapping.ExecuteScalarAsync(cancellationToken)) > 0)
+                    throw new KitaronSyncBlockedException("Existing import mapping has no durable approval evidence. Review and apply a fresh preview before resuming automatic imports.");
+            }
+        }
+        var before = preview || requireReview ? await KitaronImportDiff.ReadAsync(connection, transaction, cancellationToken) : null;
         var counts = new MutableCounts();
         var caseIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var operationIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -254,8 +308,35 @@ internal sealed class SqliteKitaronSyncRepository(
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         var result = await ReadStatusAsync(connection, transaction, cancellationToken);
+        if (preview || requireReview)
+        {
+            var after = await KitaronImportDiff.ReadAsync(connection, transaction, cancellationToken);
+            var diff = KitaronImportDiff.Compare(before!, after, result);
+            if (preview)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return (result, diff);
+            }
+            if (diff.Destructive)
+                throw new KitaronSyncBlockedException("This import removes or deactivates existing records or changes their status. Review and apply a fresh preview; nothing was imported.");
+        }
+        if (plan.Evidence is not null)
+        {
+            await using var receiptCommand = connection.CreateCommand();
+            receiptCommand.Transaction = transaction;
+            receiptCommand.CommandText = """
+                INSERT INTO structured_event_log(id,event_type,occurred_at,user_id,related_entity_ids_json,after_data_json,event_key)
+                VALUES($id,'kitaron_import_applied',$now,$actor,$related,$receipt,$id);
+                """;
+            receiptCommand.Parameters.AddWithValue("$id", "kitaron-import:" + plan.Evidence.RunId);
+            receiptCommand.Parameters.AddWithValue("$actor", plan.Evidence.RequestedBy);
+            receiptCommand.Parameters.AddWithValue("$now", now.ToUniversalTime().ToString("O"));
+            receiptCommand.Parameters.AddWithValue("$related", JsonSerializer.Serialize(new { importRunId = plan.Evidence.RunId }));
+            receiptCommand.Parameters.AddWithValue("$receipt", JsonSerializer.Serialize(new KitaronImportReceipt(plan.Evidence, plan.ExpectedLocalRevision, result)));
+            await receiptCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
-        return result;
+        return (result, null);
     }
 
     private static async Task DeactivateMaterialOrdersAsync(

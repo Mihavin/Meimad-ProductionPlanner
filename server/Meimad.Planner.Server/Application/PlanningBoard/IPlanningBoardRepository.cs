@@ -14,7 +14,8 @@ internal sealed record PlanningBoardSnapshot(
     IReadOnlyList<ProductionRunPlanningCard>? ProductionRuns = null,
     string ConflictCalculationStatus = "unavailable",
     string ConflictCalculationMessage = "Conflicts were not calculated for this read.",
-    IReadOnlyList<PlanningBoardConflict>? Conflicts = null);
+    IReadOnlyList<PlanningBoardConflict>? Conflicts = null,
+    Domain.Projections.ProjectionFreshness? Freshness = null);
 
 internal sealed record PlanningBoardConflict(
     string ConflictId,

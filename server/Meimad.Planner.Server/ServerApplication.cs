@@ -18,6 +18,8 @@ using Meimad.Planner.Server.Api.LegacyImport;
 using Meimad.Planner.Server.Api.MachineAssignments;
 using Meimad.Planner.Server.Api.Materials;
 using Meimad.Planner.Server.Api.Maintenance;
+using Meimad.Planner.Server.Api.LocalAi;
+using Meimad.Planner.Server.Application.LocalAi;
 using Meimad.Planner.Server.Api.Machines;
 using Meimad.Planner.Server.Api.MachineTypes;
 using Meimad.Planner.Server.Api.Orders;
@@ -169,6 +171,9 @@ public static class ServerApplication
         builder.Services.AddSingleton(setupEstimationOptions);
         builder.Services.AddSingleton(legacyImportOptions);
         builder.Services.AddSingleton<SqliteDatabase>();
+        builder.Services.AddSingleton<IKitaronImportContextReader, SqliteKitaronImportContext>();
+        builder.Services.AddSingleton<Application.Projections.IProjectionRevisionReader, SqliteProjectionRevisionReader>();
+        builder.Services.AddSingleton<Application.Projections.ProjectionConsistency>();
         builder.Services.AddDataProtection()
             .SetApplicationName("Meimad.Planner.Server");
         builder.Services.AddSingleton<DatabaseMigrator>();
@@ -180,6 +185,18 @@ public static class ServerApplication
                 options.XmlRepository = new RecoveryKeys.DpapiRecoveryKeyRepository(Path.GetFullPath(recoveredKeys)));
         builder.Services.AddSingleton<IServerMaintenanceRepository, SqliteServerMaintenanceRepository>();
         builder.Services.AddSingleton<ServerMaintenanceService>();
+        builder.Services.AddSingleton<SqliteArtifactInventory>();
+        builder.Services.AddSingleton<ArtifactReconciliationService>();
+        builder.Services.AddSingleton<OperationalHealthService>();
+        builder.Services.AddSingleton<LocalEvidenceService>();
+        builder.Services.AddSingleton<LocalCorpusService>();
+        builder.Services.AddSingleton<ExecutionContextService>();
+        builder.Services.AddSingleton<PackageHandoffService>();
+        builder.Services.AddSingleton(builder.Configuration.GetSection("LocalAi").Get<LocalAiOptions>() ?? new LocalAiOptions());
+        builder.Services.AddSingleton<ILocalModelClient, OllamaModelClient>();
+        builder.Services.AddSingleton<LocalAiRequestService>();
+        builder.Services.AddSingleton<LocalAiRuntimeDiagnostics>();
+        builder.Services.AddSingleton<OperationalEvidenceReader>();
         builder.Services.AddSingleton<IAdministrativeSetupRepository, SqliteAdministrativeSetupRepository>();
         builder.Services.AddHttpClient<IIsraeliHolidaySource, HebcalIsraeliHolidaySource>(client =>
         {
@@ -194,6 +211,7 @@ public static class ServerApplication
         builder.Services.AddSingleton<ICaseModelFileRepository, SqliteCaseModelFileRepository>();
         builder.Services.AddSingleton<CaseModelFileService>();
         builder.Services.AddHostedService<DatabaseInitializationService>();
+        builder.Services.AddHostedService(provider => provider.GetRequiredService<LocalAiRequestService>());
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<ICaseRepository, SqliteCaseRepository>();
         builder.Services.AddSingleton<CaseService>();
@@ -225,6 +243,7 @@ public static class ServerApplication
         builder.Services.AddSingleton<PreparationQueueService>();
         builder.Services.AddSingleton<IProductionPackageRepository, SqliteProductionPackageRepository>();
         builder.Services.AddSingleton<ProductionPackageService>();
+        builder.Services.AddSingleton<Application.Projections.ProjectionResponseCache>();
         builder.Services.AddSingleton<IToolPreparationRepository, SqliteToolPreparationRepository>();
         builder.Services.AddSingleton<ToolPreparationService>();
         builder.Services.AddSingleton<SqliteSpindleInterfaceRepository>();
@@ -315,7 +334,7 @@ public static class ServerApplication
         builder.Services.AddSingleton<ICncConnectionManager>(services => services.GetRequiredService<CncConnectionManager>());
         builder.Services.AddHostedService(services => services.GetRequiredService<CncConnectionManager>());
         builder.Services.AddSingleton<CncConnectionService>();
-        builder.Services.AddHostedService<GCodeStorageRecoveryService>();
+        builder.Services.AddHostedService<ArtifactReconciliationStartup>();
         builder.Services.AddHostedService<NcAnalysisBackfillService>();
         builder.Services.AddSingleton<OpenXmlLegacyWorkbookReader>();
         builder.Services.AddSingleton<ILegacyImportRepository, SqliteLegacyImportRepository>();
@@ -324,6 +343,7 @@ public static class ServerApplication
         builder.Services.AddSingleton<IKitaronMappingRepository, SqliteKitaronMappingRepository>();
         builder.Services.AddSingleton<IKitaronConnectionTester, SqlServerKitaronConnectionTester>();
         builder.Services.AddSingleton<IKitaronSourceReader, SqlServerKitaronSourceReader>();
+        builder.Services.AddSingleton(KitaronImportPolicy.Default);
         builder.Services.AddSingleton<IKitaronSyncRepository, SqliteKitaronSyncRepository>();
         builder.Services.AddSingleton<KitaronConnectionService>();
         builder.Services.AddSingleton<KitaronMappingService>();
@@ -362,6 +382,44 @@ public static class ServerApplication
         application.UseWebSockets(new WebSocketOptions
         {
             KeepAliveInterval = TimeSpan.FromSeconds(30)
+        });
+
+        application.Use(async (context, next) =>
+        {
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { await next(context); }
+            finally
+            {
+                if (context.GetEndpoint() is RouteEndpoint endpoint && endpoint.RoutePattern.RawText is { } route && route.StartsWith("/api/", StringComparison.Ordinal))
+                {
+                    var tags = new System.Diagnostics.TagList { { "route", route }, { "status", context.Response.StatusCode } };
+                    Application.Projections.PlannerPerformanceMetrics.HttpRequests.Add(1, tags);
+                    Application.Projections.PlannerPerformanceMetrics.HttpDuration.Record(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, tags);
+                    if (context.Response.ContentLength is { } length)
+                        Application.Projections.PlannerPerformanceMetrics.HttpBytes.Record(length, tags);
+                }
+            }
+        });
+
+        application.Use(async (context, next) =>
+        {
+            try { await next(context); }
+            catch (Application.Projections.ProjectionBusyException exception) when (!context.Response.HasStarted)
+            {
+                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                context.Response.Headers.CacheControl = "no-store";
+                context.Response.Headers.RetryAfter = "1";
+                await context.Response.WriteAsJsonAsync(new { error = new { code = "projection_busy",
+                    message = exception.Message, correlationId = context.TraceIdentifier } }, context.RequestAborted);
+            }
+            catch (Application.Projections.ProjectionChangedException exception) when (!context.Response.HasStarted)
+            {
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                context.Response.Headers.CacheControl = "no-store";
+                context.Response.Headers.RetryAfter = "1";
+                await context.Response.WriteAsJsonAsync(new { error = new { code = "projection_changed",
+                    message = exception.Message, correlationId = context.TraceIdentifier } }, context.RequestAborted);
+            }
         });
 
         application.Use(async (context, next) =>
@@ -450,6 +508,10 @@ public static class ServerApplication
         application.MapResourcePlanningEndpoints();
         application.MapMaterialReconciliationEndpoints();
         application.MapServerMaintenanceEndpoints();
+        application.MapOperationalHealthEndpoints();
+        application.MapLocalAiEndpoints();
+        application.MapLocalAiPilotEndpoints();
+        application.MapLocalCorpusEndpoints();
         application.MapMachineEndpoints();
         application.MapCncEndpoints();
         application.MapCncVerificationEndpoints();

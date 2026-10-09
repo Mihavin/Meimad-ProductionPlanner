@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace Meimad.Planner.Server.Application.Kitaron;
 
-internal sealed class KitaronSyncService
+internal sealed partial class KitaronSyncService
 {
     private readonly IKitaronConnectionRepository connectionRepository;
     private readonly KitaronMappingService mappingService;
@@ -18,6 +18,7 @@ internal sealed class KitaronSyncService
     private readonly TimeProvider timeProvider;
     private readonly string workingFolderRoot;
     private readonly ILogger<KitaronSyncService> logger;
+    private readonly IKitaronImportContextReader? revisionReader;
     private readonly SemaphoreSlim gate = new(1, 1);
     private TaskCompletionSource runRequestSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int runRequested;
@@ -31,13 +32,15 @@ internal sealed class KitaronSyncService
         DatabaseOptions databaseOptions,
         TimeProvider timeProvider,
         ILogger<KitaronSyncService> logger,
-        IKitaronStationRepository stationRepository)
+        IKitaronStationRepository stationRepository,
+        IKitaronImportContextReader? revisionReader = null)
     {
         this.connectionRepository = connectionRepository;
         this.mappingService = mappingService;
         this.sourceReader = sourceReader;
         this.syncRepository = syncRepository;
         this.stationRepository = stationRepository;
+        this.revisionReader = revisionReader;
         this.timeProvider = timeProvider;
         this.logger = logger;
         passwordProtector = dataProtectionProvider.CreateProtector("Meimad.Planner.Kitaron.SqlPassword.v1");
@@ -82,57 +85,7 @@ internal sealed class KitaronSyncService
             await syncRepository.MarkStartedAsync(mapping.Version, now, cancellationToken);
             try
             {
-                if (mapping.Status != "ready_for_implementation")
-                    throw new KitaronSyncBlockedException("Save the mapping as Ready before synchronization.");
-                var connection = await connectionRepository.GetAsync(cancellationToken);
-                if (!connection.Enabled)
-                    throw new KitaronSyncBlockedException("Enable the Kitaron connector before synchronization.");
-                if (connection.LastTestStatus != "succeeded")
-                    throw new KitaronSyncBlockedException("Run a successful read-only connection test first.");
-                if (string.IsNullOrWhiteSpace(connection.ProtectedPassword))
-                    throw new KitaronSyncBlockedException("No Kitaron password is configured.");
-                if (!mapping.DetectedColumns.Any(column =>
-                        StringComparer.OrdinalIgnoreCase.Equals(column.Name, "RecordID")))
-                {
-                    throw new KitaronSyncBlockedException(
-                        "The configured planning view must expose RecordID for canonical Kitaron order synchronization.");
-                }
-
-                string password;
-                try { password = passwordProtector.Unprotect(connection.ProtectedPassword); }
-                catch (Exception exception)
-                {
-                    throw new KitaronSyncBlockedException(
-                        "The stored password cannot be decrypted on this Server. Save it again.") { Source = exception.Source };
-                }
-
-                var active = mapping.Fields
-                    .Where(field => field.Enabled
-                        && field.ModelModes.Contains(mapping.ModelMode, StringComparer.Ordinal)
-                        && field.TargetEntity is "cases" or "orders" or "case_operations" or "material_orders")
-                    .ToArray();
-                var workFields = active.Where(field => field.TargetEntity != "material_orders").ToArray();
-                var materialFields = active.Where(field => field.TargetEntity == "material_orders").ToArray();
-                var columns = workFields
-                    .Where(field => !field.ConnectorManaged
-                        && field.SourceColumn is not null
-                        && !StringComparer.OrdinalIgnoreCase.Equals(field.SourceColumn, "auto")
-                        && field.Transform != "generated_working_folder")
-                    .Select(field => field.SourceColumn!)
-                    .Append("RecordID")
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-                var materialColumns = materialFields
-                    .Where(field => field.SourceColumn is not null)
-                    .Select(field => field.SourceColumn!)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-                var snapshot = await sourceReader.ReadAsync(
-                    connection, password, columns, materialColumns, cancellationToken);
-                var existingCasePartNumbers = await syncRepository.GetExistingCasePartNumbersAsync(cancellationToken);
-                var stations = (await stationRepository.ListAsync(cancellationToken))
-                    .ToDictionary(station => station.KitaronStationId);
-                var plan = BuildPlan(snapshot, active, existingCasePartNumbers, mapping.Version, stations);
+                var plan = await PrepareAsync(mapping, withLocalRevision: false, cancellationToken);
                 return await syncRepository.ApplyAsync(plan, timeProvider.GetUtcNow(), cancellationToken);
             }
             catch (KitaronSyncBlockedException exception)
@@ -148,6 +101,83 @@ internal sealed class KitaronSyncService
             }
         }
         finally { gate.Release(); }
+    }
+
+    /// <summary>
+    /// Reads the source and builds the plan. <paramref name="withLocalRevision"/> also hashes the
+    /// local import context, which a reviewed preview is bound to; the automatic run does not
+    /// (the hash walks the planning tables and CNC polling changes the database all the time).
+    /// </summary>
+    private async Task<KitaronSyncPlan> PrepareAsync(KitaronMappingSettings mapping, bool withLocalRevision, CancellationToken cancellationToken)
+    {
+        if (mapping.Status != "ready_for_implementation")
+            throw new KitaronSyncBlockedException("Save the mapping as Ready before synchronization.");
+        var connection = await connectionRepository.GetAsync(cancellationToken);
+        if (!connection.Enabled)
+            throw new KitaronSyncBlockedException("Enable the Kitaron connector before synchronization.");
+        if (connection.LastTestStatus != "succeeded")
+            throw new KitaronSyncBlockedException("Run a successful read-only connection test first.");
+        if (string.IsNullOrWhiteSpace(connection.ProtectedPassword))
+            throw new KitaronSyncBlockedException("No Kitaron password is configured.");
+        if (!mapping.DetectedColumns.Any(column =>
+                StringComparer.OrdinalIgnoreCase.Equals(column.Name, "RecordID")))
+        {
+            throw new KitaronSyncBlockedException(
+                "The configured planning view must expose RecordID for canonical Kitaron order synchronization.");
+        }
+
+        string password;
+        try { password = passwordProtector.Unprotect(connection.ProtectedPassword); }
+        catch (Exception exception)
+        {
+            throw new KitaronSyncBlockedException(
+                "The stored password cannot be decrypted on this Server. Save it again.") { Source = exception.Source };
+        }
+
+        var active = mapping.Fields
+            .Where(field => field.Enabled
+                && field.ModelModes.Contains(mapping.ModelMode, StringComparer.Ordinal)
+                && field.TargetEntity is "cases" or "orders" or "case_operations" or "material_orders")
+            .ToArray();
+        var workFields = active.Where(field => field.TargetEntity != "material_orders").ToArray();
+        var materialFields = active.Where(field => field.TargetEntity == "material_orders").ToArray();
+        var columns = workFields
+            .Where(field => !field.ConnectorManaged
+                && field.SourceColumn is not null
+                && !StringComparer.OrdinalIgnoreCase.Equals(field.SourceColumn, "auto")
+                && field.Transform != "generated_working_folder")
+            .Select(field => field.SourceColumn!)
+            .Append("RecordID")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var materialColumns = materialFields
+            .Where(field => field.SourceColumn is not null)
+            .Select(field => field.SourceColumn!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var snapshot = await sourceReader.ReadAsync(
+            connection, password, columns, materialColumns, cancellationToken);
+        var localRevision = withLocalRevision && revisionReader is not null ? await revisionReader.ReadAsync(cancellationToken) : null;
+        var existingCasePartNumbers = await syncRepository.GetExistingCasePartNumbersAsync(cancellationToken);
+        var stations = (await stationRepository.ListAsync(cancellationToken))
+            .ToDictionary(station => station.KitaronStationId);
+        // A reviewed preview is strict about part quantities; the automatic run skips a bad row with a
+        // warning, as every import before 0.1.190 did (audit 2026-10-09: one fractional ERP quantity
+        // must not stop the factory's periodic import).
+        ValidateSourceIdentity(snapshot, strict: withLocalRevision);
+        var plan = BuildPlan(snapshot, active, existingCasePartNumbers, mapping.Version, stations);
+        foreach (var group in (plan.MaterialOrders ?? []).GroupBy(x => x.MaterialNumber, StringComparer.OrdinalIgnoreCase))
+            if (group.Select(x => x.Unit?.Trim().ToUpperInvariant() ?? "UNKNOWN").Distinct(StringComparer.Ordinal).Skip(1).Any())
+                throw new KitaronSyncBlockedException($"Material '{group.Key}' has incompatible units across source lines: " +
+                    string.Join(", ", group.Take(10).Select(x => $"{x.SourceKey} ({x.Unit ?? "unknown"})")) + ". Correct the source units before importing; no conversion is inferred.");
+        var currentMapping = await mappingService.GetAsync(cancellationToken);
+        var currentConnection = await connectionRepository.GetAsync(cancellationToken);
+        if (currentMapping.Version != mapping.Version || currentConnection.Version != connection.Version)
+            throw new KitaronSyncBlockedException("Mapping or connection changed during the source read; create a fresh preview.");
+        var endpoint = $"{connection.ServerHost.Trim().ToLowerInvariant()}:{connection.ServerPort}/{connection.DatabaseName.Trim().ToLowerInvariant()}/{connection.ViewSchema}.{connection.ViewName}";
+        var evidence = new KitaronImportEvidence(Guid.NewGuid().ToString("N"), "Kitaron", endpoint,
+            connection.Version, mapping.Version, KitaronImportFingerprint.Of(snapshot with { Consistency = null }), snapshot.Consistency);
+        return plan with { ExpectedLocalRevision = localRevision, Evidence = evidence };
     }
 
     internal KitaronSyncPlan BuildPlan(

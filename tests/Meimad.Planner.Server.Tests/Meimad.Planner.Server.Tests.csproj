@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Acceptance\acceptance-dataset.sql" />
+    <EmbeddedResource Include="ResourcePlanning\resource-scheduler-baseline.txt" />
   </ItemGroup>
 
   <ItemGroup>

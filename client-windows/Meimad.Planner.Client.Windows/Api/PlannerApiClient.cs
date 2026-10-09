@@ -11,6 +11,35 @@ namespace Meimad.Planner.Client.Windows.Api;
 
 internal interface IPlannerApiClient : IDisposable
 {
+    Task<HandoffView> GetPackageHandoffsAsync(string packageId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<ProductionPackageInfo> GetHistoricalPackageAsync(string packageId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<PackageHandoff> RecordPackageHandoffAsync(string packageId, HandoffRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<LocalAiRequestStatus> SubmitLocalAiAsync(ExplanationRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<LocalAiRequestStatus> GetLocalAiAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task CancelLocalAiAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<EvidenceInspection> InspectLocalAiEvidenceAsync(string id, string evidenceId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<LocalAiControl> GetLocalAiControlAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<LocalAiControl> UpdateLocalAiControlAsync(int version, bool suspended, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<LocalAiSettings> GetLocalAiSettingsAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<LocalAiSettings> UpdateLocalAiSettingsAsync(int version, bool enabled, string modelId, string modelDigest, string runtimeVersion, int cpuThreads, int keepAliveSeconds, int maxModelMemoryMb, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<LocalAiRuntimeProbe> ProbeLocalAiRuntimeAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<LocalAiFeedback> SaveLocalAiFeedbackAsync(string id, int version, bool useful, string correction, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CorpusSettings> GetLocalCorpusAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CorpusSettings> UpdateLocalCorpusAsync(int version, IReadOnlyList<string> folders, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CorpusIndexResult> IndexLocalCorpusAsync(int version, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<IReadOnlyList<CorpusMatch>> SearchLocalCorpusAsync(string query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<OperationalHealthPage> GetOperationalHealthAsync(string? cursor = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<OperationWorkbenchDetails> GetOperationWorkbenchAsync(string operationId, ProductionPackageContext? context, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<byte[]> ReadHistoricalPackageArtifactAsync(string packageId, string artifactId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<IReadOnlyList<ProductionPackageContext>> GetExecutionContextsAsync(string operationId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<TimelineSnapshot> GetTimelineReportAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<ArtifactHealthReport> GetArtifactHealthAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<ArtifactHealthReport> ScanArtifactsAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<ArtifactCollectionResult> CollectArtifactOrphansAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<KitaronImportPreview> PreviewKitaronImportAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<KitaronImportApplyResult> ApplyKitaronImportAsync(string previewId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<RecoverySetStatus> GetRecoveryStatusAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<RecoverySetReceipt> CreateRecoverySetAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<ServerHealth> GetHealthAsync(CancellationToken cancellationToken = default);
 
     Task<ClientInstallerManifest> GetClientInstallerManifestAsync(
@@ -1506,6 +1535,161 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             HttpMethod.Get, "api/v1/server-maintenance/database", clientId, userId);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<ServerMaintenanceCatalog>(response, cancellationToken);
+    }
+
+    public async Task<RecoverySetStatus> GetRecoveryStatusAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/server-maintenance/recovery-sets", cancellationToken);
+        return await ReadSuccessAsync<RecoverySetStatus>(response, cancellationToken);
+    }
+
+    public async Task<OperationalHealthPage> GetOperationalHealthAsync(string? cursor = null, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/operational-health?limit=100" +
+            (cursor is null ? "" : "&cursor=" + Uri.EscapeDataString(cursor)), cancellationToken);
+        return await ReadSuccessAsync<OperationalHealthPage>(response, cancellationToken);
+    }
+    public async Task<OperationWorkbenchDetails> GetOperationWorkbenchAsync(string operationId, ProductionPackageContext? context, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync($"api/v1/batch-operations/{Uri.EscapeDataString(operationId)}/workbench" + ContextQuery(context), cancellationToken);
+        return await ReadSuccessAsync<OperationWorkbenchDetails>(response, cancellationToken);
+    }
+    public async Task<byte[]> ReadHistoricalPackageArtifactAsync(string packageId, string artifactId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync($"api/v1/production-packages/{Uri.EscapeDataString(packageId)}/artifacts/{Uri.EscapeDataString(artifactId)}", cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+    }
+
+    public async Task<LocalAiRequestStatus> SubmitLocalAiAsync(ExplanationRequest request, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync("api/v1/local-ai/requests", request, JsonOptions, cancellationToken);
+        return await ReadSuccessAsync<LocalAiRequestStatus>(response, cancellationToken);
+    }
+
+    public async Task<HandoffView> GetPackageHandoffsAsync(string packageId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/production-packages/" + Uri.EscapeDataString(packageId) + "/handoffs", cancellationToken);
+        return await ReadSuccessAsync<HandoffView>(response, cancellationToken);
+    }
+    public async Task<ProductionPackageInfo> GetHistoricalPackageAsync(string packageId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/production-packages/" + Uri.EscapeDataString(packageId), cancellationToken);
+        return await ReadSuccessAsync<ProductionPackageInfo>(response, cancellationToken);
+    }
+    public async Task<PackageHandoff> RecordPackageHandoffAsync(string packageId, HandoffRequest request, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync("api/v1/production-packages/" + Uri.EscapeDataString(packageId) + "/handoffs", request, JsonOptions, cancellationToken);
+        return await ReadSuccessAsync<PackageHandoff>(response, cancellationToken);
+    }
+    public async Task<LocalAiRequestStatus> GetLocalAiAsync(string id, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/local-ai/requests/" + Uri.EscapeDataString(id), cancellationToken);
+        return await ReadSuccessAsync<LocalAiRequestStatus>(response, cancellationToken);
+    }
+    public async Task<LocalAiControl> GetLocalAiControlAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/local-ai/control", cancellationToken);
+        return await ReadSuccessAsync<LocalAiControl>(response, cancellationToken);
+    }
+    public async Task<EvidenceInspection> InspectLocalAiEvidenceAsync(string id, string evidenceId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync($"api/v1/local-ai/requests/{Uri.EscapeDataString(id)}/evidence/{Uri.EscapeDataString(evidenceId)}", cancellationToken);
+        return await ReadSuccessAsync<EvidenceInspection>(response, cancellationToken);
+    }
+    public async Task<LocalAiControl> UpdateLocalAiControlAsync(int version, bool suspended, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PutAsJsonAsync("api/v1/local-ai/control", new { expectedVersion = version, suspended }, cancellationToken);
+        return await ReadSuccessAsync<LocalAiControl>(response, cancellationToken);
+    }
+    public async Task<LocalAiSettings> GetLocalAiSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/local-ai/settings", cancellationToken);
+        return await ReadSuccessAsync<LocalAiSettings>(response, cancellationToken);
+    }
+    public async Task<LocalAiSettings> UpdateLocalAiSettingsAsync(int version, bool enabled, string modelId, string modelDigest, string runtimeVersion, int cpuThreads, int keepAliveSeconds, int maxModelMemoryMb, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PutAsJsonAsync("api/v1/local-ai/settings",
+            new { expectedVersion = version, enabled, modelId, modelDigest, runtimeVersion, cpuThreads, keepAliveSeconds, maxModelMemoryMb }, cancellationToken);
+        return await ReadSuccessAsync<LocalAiSettings>(response, cancellationToken);
+    }
+    public async Task<LocalAiRuntimeProbe> ProbeLocalAiRuntimeAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/local-ai/runtime", cancellationToken);
+        return await ReadSuccessAsync<LocalAiRuntimeProbe>(response, cancellationToken);
+    }
+    public async Task<LocalAiFeedback> SaveLocalAiFeedbackAsync(string id, int version, bool useful, string correction, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PutAsJsonAsync($"api/v1/local-ai/requests/{Uri.EscapeDataString(id)}/feedback", new { expectedVersion = version, useful, correction }, cancellationToken);
+        return await ReadSuccessAsync<LocalAiFeedback>(response, cancellationToken);
+    }
+    public async Task CancelLocalAiAsync(string id, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.DeleteAsync("api/v1/local-ai/requests/" + Uri.EscapeDataString(id), cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+    }
+    public async Task<CorpusSettings> GetLocalCorpusAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/local-ai/corpus", cancellationToken);
+        return await ReadSuccessAsync<CorpusSettings>(response, cancellationToken);
+    }
+    public async Task<CorpusSettings> UpdateLocalCorpusAsync(int version, IReadOnlyList<string> folders, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PutAsJsonAsync("api/v1/local-ai/corpus", new { expectedVersion = version, folders }, cancellationToken);
+        return await ReadSuccessAsync<CorpusSettings>(response, cancellationToken);
+    }
+    public async Task<CorpusIndexResult> IndexLocalCorpusAsync(int version, CancellationToken cancellationToken = default)
+    {
+        using var response = await importHttpClient.PostAsJsonAsync("api/v1/local-ai/corpus/reindex", new { expectedVersion = version }, cancellationToken);
+        return await ReadSuccessAsync<CorpusIndexResult>(response, cancellationToken);
+    }
+    public async Task<IReadOnlyList<CorpusMatch>> SearchLocalCorpusAsync(string query, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/local-ai/documents/search?query=" + Uri.EscapeDataString(query), cancellationToken);
+        return await ReadSuccessAsync<CorpusMatch[]>(response, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ProductionPackageContext>> GetExecutionContextsAsync(string operationId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync($"api/v1/batch-operations/{Uri.EscapeDataString(operationId)}/execution-contexts", cancellationToken);
+        return await ReadSuccessAsync<ProductionPackageContext[]>(response, cancellationToken);
+    }
+
+    public async Task<KitaronImportPreview> PreviewKitaronImportAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await importHttpClient.PostAsync("api/v1/kitaron/sync/preview", null, cancellationToken);
+        return await ReadSuccessAsync<KitaronImportPreview>(response, cancellationToken);
+    }
+
+    public async Task<ArtifactHealthReport> GetArtifactHealthAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/server-maintenance/artifacts", cancellationToken);
+        return await ReadSuccessAsync<ArtifactHealthReport>(response, cancellationToken);
+    }
+
+    public async Task<ArtifactHealthReport> ScanArtifactsAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await importHttpClient.PostAsync("api/v1/server-maintenance/artifacts/scan", null, cancellationToken);
+        return await ReadSuccessAsync<ArtifactHealthReport>(response, cancellationToken);
+    }
+
+    public async Task<ArtifactCollectionResult> CollectArtifactOrphansAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await importHttpClient.PostAsync("api/v1/server-maintenance/artifacts/cleanup", null, cancellationToken);
+        return await ReadSuccessAsync<ArtifactCollectionResult>(response, cancellationToken);
+    }
+
+    public async Task<KitaronImportApplyResult> ApplyKitaronImportAsync(string previewId, CancellationToken cancellationToken = default)
+    {
+        using var response = await importHttpClient.PostAsJsonAsync("api/v1/kitaron/sync/apply", new { previewId }, JsonOptions, cancellationToken);
+        return await ReadSuccessAsync<KitaronImportApplyResult>(response, cancellationToken);
+    }
+
+    public async Task<RecoverySetReceipt> CreateRecoverySetAsync(CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/server-maintenance/recovery-sets");
+        using var response = await importHttpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<RecoverySetReceipt>(response, cancellationToken);
     }
 
     public async Task<CollectedDataPreview> PreviewCollectedDataAsync(
@@ -3565,6 +3749,14 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         CancellationToken cancellationToken = default)
         => await GetTimelineAsync(
             from, to, asOf: null, cancellationToken: cancellationToken);
+
+    public async Task<TimelineSnapshot> GetTimelineReportAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken = default)
+    {
+        var fromValue = Uri.EscapeDataString(from.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
+        var toValue = Uri.EscapeDataString(to.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
+        using var response = await importHttpClient.GetAsync($"api/v1/timeline/report?from={fromValue}&to={toValue}", cancellationToken);
+        return await ReadSuccessAsync<TimelineSnapshot>(response, cancellationToken);
+    }
 
     public async Task<TimelineSnapshot> GetTimelineAsync(
         DateTimeOffset from,

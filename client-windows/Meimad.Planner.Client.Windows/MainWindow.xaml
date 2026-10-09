@@ -3,14 +3,14 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:views="clr-namespace:Meimad.Planner.Client.Windows.Views"
         Title="Meimad Production Planner" Icon="Assets/MeimadPlanner.ico"
-        Width="1540" Height="940" MinWidth="1100" MinHeight="720"
+        Width="1540" Height="940" MinWidth="880" MinHeight="480"
         Style="{DynamicResource {x:Type Window}}"
         Background="{DynamicResource CanvasBrush}"
         Foreground="{DynamicResource PrimaryTextBrush}"
         FontFamily="Segoe UI">
     <Window.InputBindings>
         <KeyBinding Key="Z" Modifiers="Control" Command="{Binding UndoCommand}" />
-        <KeyBinding Key="X" Modifiers="Control" Command="{Binding RedoCommand}" />
+        <KeyBinding Key="Y" Modifiers="Control" Command="{Binding RedoCommand}" />
     </Window.InputBindings>
     <Grid>
         <Grid.RowDefinitions>
@@ -22,7 +22,7 @@
 
         <Border Grid.Row="0" Background="{DynamicResource PanelBrush}" Padding="16,9">
             <DockPanel LastChildFill="True">
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <WrapPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" MaxWidth="690">
                     <Button x:Name="ThemeToggle" Content="Light workshop" Click="ThemeToggle_Click" ToolTip="Switch color theme" AutomationProperties.Name="Switch color theme" />
                     <ComboBox x:Name="LanguageSelector" Width="118" Height="30" Margin="0,0,10,0"
                               SelectedValuePath="Tag" SelectionChanged="LanguageSelector_SelectionChanged"
@@ -59,7 +59,7 @@
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
                                 AutomationProperties.Name="Signed-in user">
                         <TextBlock x:Name="SignedInUserText" Text="{Binding ModeHeadline}" Foreground="{DynamicResource PrimaryTextBrush}"
-                                   VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold">
+                                   VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold" MaxWidth="170" TextTrimming="CharacterEllipsis">
                             <TextBlock.ToolTip>
                                 <TextBlock Text="{Binding ModeDetail}" TextWrapping="Wrap" MaxWidth="320" />
                             </TextBlock.ToolTip>
@@ -74,13 +74,13 @@
                                 Visibility="{Binding IsSignedIn, Converter={StaticResource BooleanToVisibilityConverter}}"
                                 ToolTip="End your session on this computer" />
                     </StackPanel>
-                </StackPanel>
+                </WrapPanel>
 
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="MEIMAD" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="17" FontWeight="Bold" />
                     <TextBlock Text="  PRODUCTION WORKBENCH" Foreground="{DynamicResource PrimaryTextBrush}" Opacity="0.72"
-                               FontSize="13" VerticalAlignment="Center" />
-                </StackPanel>
+                               FontSize="13" VerticalAlignment="Center" TextWrapping="Wrap" />
+                </WrapPanel>
             </DockPanel>
         </Border>
 
@@ -88,24 +88,27 @@
             <DockPanel>
                 <TextBlock Text="Factory workspace" Foreground="{DynamicResource MutedTextBrush}" Width="174" VerticalAlignment="Center" />
                 <WrapPanel>
-                    <Button Content="Shop" Tag="1" Click="Workspace_Click" ToolTip="Open the Machine Planning Board and unassigned operation Pool" />
-                    <Button Content="Preparation" Tag="6" Click="Workspace_Click" ToolTip="View assigned operations waiting for a valid current NC release" />
-                    <Button Content="Operation" Tag="0" Click="Workspace_Click" ToolTip="Open Case" />
-                    <Button Content="Integrations" Tag="4" Click="Workspace_Click" ToolTip="Open application and production setup" />
+                    <Button Content="Shop" Tag="Shop" Click="Workspace_Click" ToolTip="Open the Machine Planning Board and unassigned operation Pool" />
+                    <Button Content="Preparation" Tag="Preparation" Click="Workspace_Click" ToolTip="View NC, Tool Room, Setup and QC queues" />
+                    <Button Content="Operation" Tag="Operation" Click="Workspace_Click" ToolTip="Inspect the selected operation and exact package" />
+                    <Button Content="Integrations" Tag="Integrations" Click="Workspace_Click" ToolTip="Inspect integration health and configuration" />
+                    <Button Content="Back" Click="WorkbenchBack_Click" IsEnabled="{Binding Navigation.CanGoBack}" />
+                    <CheckBox x:Name="LegacyNavigation" Content="Classic operation navigation" Click="LegacyNavigation_Click" VerticalAlignment="Center" Margin="10,0" />
                 </WrapPanel>
             </DockPanel>
         </Border>
         <TabControl x:Name="WorkspaceTabs" Grid.Row="2" Margin="0" Style="{StaticResource WorkbenchNavigation}">
+            <!-- Existing tab positions are retained for established navigation commands. -->
             <TabItem>
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Cases}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Cases" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Cases}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Cases" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:CaseWorkspaceView DataContext="{Binding CaseWorkspace}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="Open the Machine Planning Board and unassigned operation Pool">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.PlanningBoard}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Planning Board" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.PlanningBoard}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Planning Board" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:MachinePlanningBoardView x:Name="PlanningBoardView" DataContext="{Binding MachinePlanningBoard}" Margin="5" />
             </TabItem>
             <TabItem x:Name="TimelineTab" ToolTip="Open the calculated Machine Timeline">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Timeline}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Timeline" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Timeline}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Timeline" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <Grid Margin="5">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -127,62 +130,89 @@
                 </Grid>
             </TabItem>
             <TabItem ToolTip="Decide which 12h shift each employee on a shift rotation works, week by week">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.ShiftRoster}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Shift Roster" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.ShiftRoster}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Shift Roster" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:ShiftRosterView DataContext="{Binding ShiftRoster}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="Open application and production setup">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Settings}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Administration" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Settings}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Administration" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:SetupView x:Name="AdministrationView" DataContext="{Binding Setup}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="Monitor and configure E-Ink tablets">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.UserTerminals}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="User Terminals" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.UserTerminals}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="User Terminals" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:UserTerminalsView DataContext="{Binding UserTerminals}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="View assigned operations waiting for a valid current NC release">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.NcCreator}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="NC Creator" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.NcCreator}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="NC Creator" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:PreparationQueueView DataContext="{Binding NcCreatorQueue}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="View NC-ready operations waiting for tool preparation">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.ToolRoom}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Tool Room" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.ToolRoom}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Tool Room" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:PreparationQueueView DataContext="{Binding ToolRoomQueue}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="Search and describe the factory's tools: internal id, type, hand, dimensions and external ids">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.ToolCatalog}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Tool Catalog" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.ToolCatalog}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Tool Catalog" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:ToolCatalogView DataContext="{Binding ToolCatalog}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="The tools the planned operations of a period need, by material, type, size and name, with the copies and their moves between machines">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.ToolRequirements}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Tool Requirements" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.ToolRequirements}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Tool Requirements" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:ToolRequirementsView DataContext="{Binding ToolRequirements}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="View operations whose NC and Tool Room gates are complete">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.SetupQueue}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Setup Queue" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.SetupQueue}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Setup Queue" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:PreparationQueueView DataContext="{Binding SetupQueue}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="Inspect Production Runs sent to Quality Control">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.QcQueue}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="QC Queue" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.QcQueue}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="QC Queue" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:QcQueueView DataContext="{Binding QcQueue}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="Kitaron material purchase-order lines with their reported delivery status">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.MaterialOrders}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Material Orders" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.MaterialOrders}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Material Orders" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:MaterialOrdersView DataContext="{Binding MaterialOrders}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="Machine usage per machine and overall, and each machine's DPRNT log">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Reports}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Reports" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Reports}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Reports" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <TabControl Margin="5">
                     <TabItem ToolTip="Machine usage per machine and overall, in hours and percent, with the daily history">
-                        <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.MachineUsage}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Machine Usage" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                        <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.MachineUsage}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Machine Usage" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                         <views:MachineUsageView DataContext="{Binding MachineUsage}" />
                     </TabItem>
                     <TabItem ToolTip="Every line a machine's DPRNT output sent">
-                        <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.DprntLog}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="DPRNT Log" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                        <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.DprntLog}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="DPRNT Log" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                         <views:DprntLogView DataContext="{Binding DprntLog}" />
                     </TabItem>
                 </TabControl>
             </TabItem>
             <TabItem ToolTip="Administrators: manage user accounts, user types and permissions"
                      Visibility="{Binding CanManageUsers, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Users}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Users" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{DynamicResource Icon.Users}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Users" VerticalAlignment="Center" MaxWidth="130" TextWrapping="Wrap" /></StackPanel></TabItem.Header>
                 <views:UserAdministrationView DataContext="{Binding UserAdministration}" Margin="5" />
+            </TabItem>
+            <TabItem x:Name="PreparationWorkspaceTab" Header="Preparation">
+                <TabControl Margin="5">
+                    <TabItem Header="NC"><views:PreparationQueueView DataContext="{Binding NcCreatorQueue}" /></TabItem>
+                    <TabItem Header="Tool Room"><views:PreparationQueueView DataContext="{Binding ToolRoomQueue}" /></TabItem>
+                    <TabItem Header="Setup"><views:PreparationQueueView DataContext="{Binding SetupQueue}" /></TabItem>
+                    <TabItem Header="QC"><views:QcQueueView DataContext="{Binding QcQueue}" /></TabItem>
+                </TabControl>
+            </TabItem>
+            <TabItem x:Name="IntegrationsWorkspaceTab" Header="Integrations">
+                <DockPanel>
+                    <Button DockPanel.Dock="Top" Content="Integration administration" HorizontalAlignment="Left" Tag="4" Click="Workspace_Click" Margin="12,5" />
+                    <TabControl>
+                        <TabItem Header="Health"><views:OperationalHealthView DataContext="{Binding OperationalHealth}" /></TabItem>
+                        <TabItem Header="AI assistance"><views:LocalAiPanel DataContext="{Binding LocalAi}" /></TabItem>
+                        <TabItem Header="Approved documents"><views:LocalCorpusView DataContext="{Binding LocalCorpus}" /></TabItem>
+                    </TabControl>
+                </DockPanel>
+            </TabItem>
+            <TabItem x:Name="OperationWorkspaceTab" Header="Operation">
+                <DockPanel>
+                    <Button DockPanel.Dock="Top" Content="Open reusable recipe in Cases" Click="OpenWorkbenchRecipe_Click" HorizontalAlignment="Left" Margin="12,5" />
+                    <views:OperationWorkbenchView DataContext="{Binding OperationWorkbench}" />
+                </DockPanel>
+            </TabItem>
+            <TabItem x:Name="ShopWorkspaceTab" Header="Shop">
+                <DockPanel><Button DockPanel.Dock="Top" Content="Planning Board" Tag="1" Click="Workspace_Click" HorizontalAlignment="Left" Margin="12,5" /><views:ShopOverviewView DataContext="{Binding Shop}" /></DockPanel>
             </TabItem>
         </TabControl>
 

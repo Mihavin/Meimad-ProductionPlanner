@@ -14,6 +14,28 @@ internal static class KitaronConnectionEndpoints
         endpoints.MapPut("/api/v1/kitaron/mapping", UpdateMappingAsync);
         endpoints.MapGet("/api/v1/kitaron/sync", GetSyncAsync);
         endpoints.MapPost("/api/v1/kitaron/sync", RunSyncAsync);
+        endpoints.MapPost("/api/v1/kitaron/sync/preview", PreviewImportAsync);
+        endpoints.MapPost("/api/v1/kitaron/sync/apply", ApplyImportAsync);
+    }
+
+    private static async Task<IResult> PreviewImportAsync(HttpContext context, KitaronSyncService service, CancellationToken token)
+    {
+        if (!PlanningHttpSupport.TryAuthorize(context, Application.Accounts.Permissions.ManageSetup, out var user, out var error)) return error!;
+        if (!IsLocalRequest(context)) return PlanningHttpSupport.Error(403, "kitaron_setup_local_only", "Import preview is managed from the Server computer.", context);
+        context.Response.Headers.CacheControl = "no-store";
+        try { return Results.Ok(await service.PreviewAsync(user!.UserName, token)); }
+        catch (KitaronSyncBlockedException exception) { return PlanningHttpSupport.Error(409, "kitaron_import_conflict", exception.Message, context); }
+        catch (KitaronSyncDataException exception) { return PlanningHttpSupport.Error(422, "kitaron_import_invalid", exception.Message, context); }
+    }
+
+    private static async Task<IResult> ApplyImportAsync(KitaronImportApplyRequest request, HttpContext context, KitaronSyncService service, CancellationToken token)
+    {
+        if (!PlanningHttpSupport.TryAuthorize(context, Application.Accounts.Permissions.ManageSetup, out var user, out var error)) return error!;
+        if (!IsLocalRequest(context)) return PlanningHttpSupport.Error(403, "kitaron_setup_local_only", "Import apply is managed from the Server computer.", context);
+        context.Response.Headers.CacheControl = "no-store";
+        try { return Results.Ok(await service.ApplyPreviewAsync(user!.UserName, request.PreviewId, token)); }
+        catch (KitaronSyncBlockedException exception) { return PlanningHttpSupport.Error(409, "kitaron_import_conflict", exception.Message, context); }
+        catch (KitaronSyncDataException exception) { return PlanningHttpSupport.Error(422, "kitaron_import_invalid", exception.Message, context); }
     }
 
     private static async Task<IResult> GetSyncAsync(

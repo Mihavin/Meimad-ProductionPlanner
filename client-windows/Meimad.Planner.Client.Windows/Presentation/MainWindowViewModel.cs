@@ -12,6 +12,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly IClientSettingsStore settingsStore;
     private readonly IPlannerApiClientFactory apiClientFactory;
     private IPlannerApiClient? apiClient;
+    private IPlannerApiClient? workbenchSessionClient;
+    private string? workbenchSessionKey;
     private ClientSettings? activeSettings;
     private SignedInAccount? account;
     private string clientId = string.Empty;
@@ -141,6 +143,13 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public MachinePlanningBoardViewModel MachinePlanningBoard { get; }
 
     public TimelineViewModel Timeline { get; }
+
+    public OperationalHealthViewModel OperationalHealth { get; } = new();
+    public OperationWorkbenchViewModel OperationWorkbench { get; } = new();
+    public WorkbenchNavigation Navigation { get; } = new();
+    public ShopOverviewViewModel Shop { get; } = new();
+    public LocalAiPanelViewModel LocalAi { get; } = new();
+    public LocalCorpusViewModel LocalCorpus { get; } = new();
 
     public SetupViewModel Setup { get; }
 
@@ -597,6 +606,21 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 1, null, null, DateTimeOffset.UtcNow, 0);
 
         var userId = signedIn?.UserName ?? string.Empty;
+        var workbenchClient = signedIn is null ? null : apiClient;
+        var sessionKey = signedIn is null ? null : System.Text.Json.JsonSerializer.Serialize(new
+        { signedIn.UserId, signedIn.IsAdministrator, Permissions = signedIn.Permissions.Order(StringComparer.Ordinal).ToArray() });
+        // Periodic account/connection checks must not discard the operator's exact context.
+        // A sign-out, Server change or permission change still clears every sampled answer.
+        if (!ReferenceEquals(workbenchSessionClient, workbenchClient) || workbenchSessionKey != sessionKey)
+        {
+            workbenchSessionClient = workbenchClient; workbenchSessionKey = sessionKey;
+            OperationalHealth.AttachSession(workbenchClient);
+            Shop.AttachSession(workbenchClient);
+            OperationWorkbench.AttachSession(workbenchClient, signedIn?.Has(PlannerPermissions.PrepareTools) == true, ClientId, userId);
+            LocalAi.AttachSession(workbenchClient);
+            LocalCorpus.AttachSession(workbenchClient, signedIn?.Has(PlannerPermissions.ManageSetup) == true);
+            Navigation.Clear();
+        }
         CaseWorkspace.AttachSession(apiClient, ClientId, For(
             PlannerPermissions.EditCases, PlannerPermissions.ManageWorkOrders,
             PlannerPermissions.ReleaseNc, PlannerPermissions.VerifyMaterials));

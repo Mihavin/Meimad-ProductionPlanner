@@ -14,13 +14,39 @@ internal static class ServerMaintenanceEndpoints
         group.MapPost("/collected-data/preview", PreviewAsync);
         group.MapPost("/collected-data/purge", PurgeAsync);
         group.MapPost("/backups/download", DownloadBackupAsync);
-        group.MapGet("/recovery-sets", async (RecoverySetService service, CancellationToken token) => Results.Ok(await service.StatusAsync(token)));
+        group.MapGet("/artifacts", (HttpContext context, ArtifactReconciliationService service) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out _, out var error)) return error!;
+            context.Response.Headers.CacheControl = "no-store";
+            return Results.Ok(service.Status);
+        });
+        group.MapPost("/artifacts/scan", async (HttpContext context, ArtifactReconciliationService service, CancellationToken token) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out _, out var error)) return error!;
+            context.Response.Headers.CacheControl = "no-store";
+            return Results.Ok(await service.ScanAsync(token));
+        });
+        group.MapPost("/artifacts/cleanup", async (HttpContext context, ArtifactReconciliationService service, CancellationToken token) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out _, out var error)) return error!;
+            context.Response.Headers.CacheControl = "no-store";
+            try { return Results.Ok(await service.CollectAsync(token)); }
+            catch (InvalidOperationException exception)
+            { return PlanningHttpSupport.Error(409, "artifact_cleanup_unavailable", exception.Message, context); }
+        });
+        group.MapGet("/recovery-sets", async (HttpContext context, RecoverySetService service, CancellationToken token) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            return Results.Ok(await service.StatusAsync(token));
+        });
         group.MapPost("/recovery-sets", async (HttpContext context, RecoverySetService service, CancellationToken token) =>
         {
             if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out var user, out var error)) return error!;
+            context.Response.Headers.CacheControl = "no-store";
             try { return Results.Ok(await service.CreateAsync(user!.UserName, token)); }
             catch (InvalidOperationException exception) { return PlanningHttpSupport.Error(409, "recovery_not_configured", exception.Message, context); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+            catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException
+                or System.Security.Cryptography.CryptographicException or Microsoft.Data.Sqlite.SqliteException)
             { return PlanningHttpSupport.Error(409, "recovery_set_failed", "Recovery set could not be completed. Check storage access, the recovery password file, keys and referenced artifacts.", context); }
         });
     }

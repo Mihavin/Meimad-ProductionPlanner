@@ -74,11 +74,12 @@ internal sealed class SqliteKitaronConnectionRepository(SqliteDatabase database)
             SET last_test_status = $status,
                 last_test_at = $testedAt,
                 last_test_message = $message,
-                last_test_column_count = $columnCount,
-                version = version + 1,
-                updated_at = $testedAt
+                last_test_column_count = $columnCount
             WHERE id = 1;
             """;
+        // The version counts configuration changes only: the periodic check runs every few minutes,
+        // and a version that moved with it made every import preview stale and blocked the
+        // automatic import as "connection changed" (0.1.190, fixed 2026-10-09).
         command.Parameters.AddWithValue("$status", succeeded ? "succeeded" : "failed");
         command.Parameters.AddWithValue("$testedAt", testedAt.UtcDateTime.ToString("O"));
         command.Parameters.AddWithValue("$message", message);

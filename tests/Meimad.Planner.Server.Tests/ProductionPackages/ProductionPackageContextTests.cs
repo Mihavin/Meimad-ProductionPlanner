@@ -66,7 +66,7 @@ public sealed class ProductionPackageContextTests
             PRAGMA user_version=98;
             """);
         await fixture.App.Services.GetRequiredService<DatabaseMigrator>().MigrateAsync();
-        Assert.Equal(101L, await fixture.ScalarAsync("PRAGMA user_version;"));
+        Assert.Equal((long)DatabaseMigrator.LatestVersion, await fixture.ScalarAsync("PRAGMA user_version;"));
         Assert.Equal(0L, await fixture.ScalarAsync("SELECT COUNT(*) FROM production_package_contexts;"));
         Assert.Null(await service.ReadCurrentAsync("operation-package"));
         var history = await service.ReadHistoricalAsync(package.ProductionPackageId, default);
@@ -228,13 +228,14 @@ public sealed class ProductionPackageContextTests
         internal SqliteDatabase Database => app.Services.GetRequiredService<SqliteDatabase>();
         internal HttpClient Client { get; } = app.GetTestClient();
         internal static StringContent Body() => new("{}", Encoding.UTF8, "application/json");
-        internal static async Task<Fixture> CreateAsync()
+        internal static Task<Fixture> CreateAsync(params string[] configuration) => CreateAsync(false, configuration);
+        internal static async Task<Fixture> CreateAsync(bool includeToolRows, params string[] configuration)
         {
             var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "Meimad.C03", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
-            var app = ServerApplication.Build([$"--Database:Path={root}/test.db", $"--GCode:ReleaseRoot={root}/releases", $"--ProductionPackages:PackageRoot={root}/packages"], host => host.UseSignedInTestServer());
+            var app = ServerApplication.Build([$"--Database:Path={root}/test.db", $"--GCode:ReleaseRoot={root}/releases", $"--ProductionPackages:PackageRoot={root}/packages", .. configuration], host => host.UseSignedInTestServer());
             await app.StartAsync();
-            await ProductionPackageApiTests.SeedAsync(app.Services, root + "/releases", true);
+            await ProductionPackageApiTests.SeedAsync(app.Services, root + "/releases", true, includeToolRows);
             var fixture = new Fixture(app, root);
             fixture.Client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "test-client");
             fixture.Client.DefaultRequestHeaders.Add("X-Meimad-User-Id", "test-user");

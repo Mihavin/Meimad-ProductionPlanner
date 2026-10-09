@@ -8,6 +8,28 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 
 public sealed class PreparationQueueViewModelTests
 {
+    [Fact]
+    public async Task Export_refuses_a_package_replaced_after_review_before_downloading_or_creating_files()
+    {
+        var reviewed = new ProductionPackageInfo("reviewed", 1, "operation-1", "run-1", "assignment-1", "machine-1",
+            "gcode-1", "tools-1", null, "CNC_GCODE", false, null, null, new string('a', 64),
+            DateTimeOffset.UtcNow, "user", null, true, false, false, []);
+        var api = new FakeApiClient([Item()]) { CurrentPackage = reviewed with { ProductionPackageId = "replacement", PackageNumber = 2 } };
+        var model = new PreparationQueueViewModel("SETUP_PENDING", "Setup", "Ready"); model.AttachSession(api);
+        var parent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "MeimadPlanner.PackageExport.Tests"));
+        var target = Path.Combine(parent, Guid.NewGuid().ToString("N"));
+        try
+        {
+            var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => model.ExportCurrentProductionPackageAsync(reviewed, target));
+            Assert.Contains("changed", failure.Message);
+            Assert.Null(api.RequestedArtifactId); Assert.False(Directory.Exists(target));
+        }
+        finally
+        {
+            Assert.StartsWith(parent + Path.DirectorySeparatorChar, Path.GetFullPath(target));
+            if (Directory.Exists(target)) Directory.Delete(target, true);
+        }
+    }
     [Theory]
     [InlineData(0, true)]
     [InlineData(503, true)]

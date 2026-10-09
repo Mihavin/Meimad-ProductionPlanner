@@ -109,7 +109,8 @@ internal sealed record ProductionReadinessResponse(
     string? EffectiveGCodeReleaseId,
     bool RequiresExplicitGCodeSelection,
     IReadOnlyList<ReadinessReleaseResponse> CompatibleGCodeReleases,
-    IReadOnlyList<ProductionActionDecision>? Actions = null)
+    IReadOnlyList<ProductionActionDecision>? Actions = null,
+    Domain.Projections.ProjectionFreshness? Freshness = null)
 {
     internal static ProductionReadinessResponse FromDomain(
         ProductionReadinessResult value) => new(
@@ -120,7 +121,7 @@ internal sealed record ProductionReadinessResponse(
             value.Components.Select(ReadinessComponentResponse.FromDomain).ToArray(),
             value.EffectiveGCodeReleaseId,
             value.RequiresExplicitGCodeSelection,
-            value.CompatibleGCodeReleases.Select(ReadinessReleaseResponse.FromDomain).ToArray(), value.Actions);
+            value.CompatibleGCodeReleases.Select(ReadinessReleaseResponse.FromDomain).ToArray(), value.Actions, value.Freshness);
 }
 
 internal sealed record ReadinessComponentResponse(

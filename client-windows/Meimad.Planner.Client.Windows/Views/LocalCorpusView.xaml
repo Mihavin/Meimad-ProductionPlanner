@@ -1,0 +1,43 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.LocalCorpusView"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel Margin="16">
+  <TextBlock Text="Local AI" FontSize="20" FontWeight="SemiBold" />
+  <TextBlock Text="Administrators: enable the explanations model that runs on the Server PC. Check the local runtime, pick an installed model (its ID and digest are filled in) and save. The setting is held by the Server and applies at once; the runtime address stays in the Server configuration file. Nothing is downloaded, and without the model the deterministic evidence is still shown." TextWrapping="Wrap" Margin="0,8" />
+  <WrapPanel Margin="0,4"><Button Content="Load AI settings" Command="{Binding LoadAiSettingsCommand}" /><Button Content="Check local runtime" Command="{Binding ProbeRuntimeCommand}" /></WrapPanel>
+  <CheckBox Content="Enable local AI" IsChecked="{Binding AiEnabled}" Margin="0,8,0,4" />
+  <TextBlock Text="Installed models" Margin="0,4,0,2" />
+  <ComboBox ItemsSource="{Binding InstalledModels}" SelectedItem="{Binding SelectedModel}" MinWidth="320" HorizontalAlignment="Left" AutomationProperties.Name="Installed models" />
+  <TextBlock Text="Model ID" Margin="0,8,0,2" />
+  <TextBox Text="{Binding ModelId, UpdateSourceTrigger=PropertyChanged}" MaxLength="128" FontFamily="Consolas" FlowDirection="LeftToRight" MinWidth="320" HorizontalAlignment="Left" AutomationProperties.Name="Model ID" />
+  <TextBlock Text="Model digest (SHA-256)" Margin="0,8,0,2" />
+  <TextBox Text="{Binding ModelDigest, UpdateSourceTrigger=PropertyChanged}" MaxLength="71" FontFamily="Consolas" FlowDirection="LeftToRight" MinWidth="520" HorizontalAlignment="Left" AutomationProperties.Name="Model digest" />
+  <TextBlock Text="Runtime version" Margin="0,8,0,2" />
+  <TextBox Text="{Binding RuntimeVersion, UpdateSourceTrigger=PropertyChanged}" MaxLength="64" FontFamily="Consolas" FlowDirection="LeftToRight" MinWidth="160" HorizontalAlignment="Left" AutomationProperties.Name="Runtime version" />
+  <TextBlock Text="Resource limits on the Server PC" FontWeight="SemiBold" Margin="0,12,0,2" />
+  <TextBlock Text="Keep the model from slowing the Server: cap the CPU threads a request may use (leave cores to the Server; 0 = runtime default), unload the model from memory after an idle period, and refuse models larger than a memory budget (0 = no limit)." TextWrapping="Wrap" Margin="0,0,0,4" />
+  <TextBlock Text="CPU threads" Margin="0,6,0,2" />
+  <TextBox Text="{Binding CpuThreads, UpdateSourceTrigger=PropertyChanged}" MaxLength="3" MinWidth="80" HorizontalAlignment="Left" FlowDirection="LeftToRight" AutomationProperties.Name="CPU threads" />
+  <TextBlock Text="Unload the model after (seconds)" Margin="0,6,0,2" />
+  <TextBox Text="{Binding KeepAliveSeconds, UpdateSourceTrigger=PropertyChanged}" MaxLength="5" MinWidth="80" HorizontalAlignment="Left" FlowDirection="LeftToRight" AutomationProperties.Name="Unload the model after seconds" />
+  <TextBlock Text="Model memory budget (MB)" Margin="0,6,0,2" />
+  <TextBox Text="{Binding MaxModelMemoryMb, UpdateSourceTrigger=PropertyChanged}" MaxLength="7" MinWidth="80" HorizontalAlignment="Left" FlowDirection="LeftToRight" AutomationProperties.Name="Model memory budget in MB" />
+  <Button Content="Save AI settings" Command="{Binding SaveAiSettingsCommand}" HorizontalAlignment="Left" Margin="0,8" />
+  <TextBlock Text="{Binding AiSettingsStatus}" TextWrapping="Wrap" Margin="0,0,0,16" />
+  <TextBlock Text="Local inference control" FontSize="20" FontWeight="SemiBold" />
+  <WrapPanel Margin="0,8"><Button Content="Load inference control" Command="{Binding LoadInferenceCommand}" /><Button Content="Suspend inference" Command="{Binding SuspendInferenceCommand}" /><Button Content="Resume commissioned inference" Command="{Binding ResumeInferenceCommand}" /></WrapPanel>
+  <TextBlock Text="{Binding InferenceStatus}" TextWrapping="Wrap" Margin="0,0,0,12" />
+  <TextBlock Text="Approved document folders" FontSize="20" FontWeight="SemiBold" />
+  <TextBlock Text="Administrators: one absolute Server or factory-share folder per line. Approval makes UTF-8 .txt and .md documents available to all signed-in Windows users. Subfolders need separate approval. Originals are read-only." TextWrapping="Wrap" Margin="0,8" />
+  <TextBox Text="{Binding Folders, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" MinHeight="100" MaxHeight="240" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FlowDirection="LeftToRight" AutomationProperties.Name="Approved retrieval folders, one per line" />
+  <WrapPanel Margin="0,8"><Button Content="Load approved folders" Command="{Binding LoadCommand}" /><Button Content="Approve folder list" Command="{Binding SaveCommand}" /><Button Content="Rebuild document index" Command="{Binding IndexCommand}" /></WrapPanel>
+  <TextBlock Text="Search approved documents" FontWeight="SemiBold" Margin="0,12,0,4" />
+  <TextBox Text="{Binding Query, UpdateSourceTrigger=PropertyChanged}" MaxLength="128" AutomationProperties.Name="Literal document phrase or exact identifier" />
+  <Button Content="Search" Command="{Binding SearchCommand}" HorizontalAlignment="Left" Margin="0,8" />
+  <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
+  <ItemsControl ItemsSource="{Binding Matches}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Margin="0,10">
+   <TextBlock Text="{Binding Title}" FontWeight="SemiBold" /><TextBlock Text="{Binding Excerpt}" TextWrapping="Wrap" />
+   <TextBlock Text="{Binding MatchReason}" TextWrapping="Wrap" /><TextBlock Text="{Binding ContentHash}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+   <TextBlock Text="{Binding IndexedAt, StringFormat=u}" />
+  </StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+ </StackPanel></ScrollViewer>
+</UserControl>

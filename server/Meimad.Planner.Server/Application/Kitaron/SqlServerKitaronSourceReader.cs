@@ -1,3 +1,4 @@
+using System.Data;
 using System.Globalization;
 using Microsoft.Data.SqlClient;
 
@@ -74,21 +75,129 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         };
         await using var connection = new SqlConnection(builder.ConnectionString);
         await connection.OpenAsync(cancellationToken);
-        var workRows = await ReadWorkRowsAsync(connection, settings, workColumns, cancellationToken);
-        var orders = await ReadOrdersAsync(connection, settings, cancellationToken);
-        var components = await ReadComponentsAsync(connection, cancellationToken);
+        // The ERP database decides whether a SNAPSHOT read is possible; Planner never changes ERP
+        // settings (owner decision 2026-10-09: the import must run on the factory database as it
+        // is). Without snapshot isolation the queries share one READ COMMITTED transaction, as
+        // every import before 0.1.190 did, and the recorded read mode says so.
+        var (isolation, mode, caveat) = await ChooseIsolationAsync(connection, cancellationToken);
+        var startedAt = DateTimeOffset.UtcNow;
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(isolation, cancellationToken);
+        if (isolation == IsolationLevel.Snapshot)
+            caveat = await InspectViewAsync(connection, transaction, settings, cancellationToken);
+
+        var workRows = await ReadWorkRowsAsync(connection, transaction, settings, workColumns, cancellationToken);
+        var orders = await ReadOrdersAsync(connection, transaction, settings, cancellationToken);
+        var components = await ReadComponentsAsync(connection, transaction, cancellationToken);
         var materialRows = materialColumns.Count == 0
             ? []
-            : await ReadMaterialRowsAsync(connection, materialColumns, cancellationToken);
-        var routeSteps = await ReadRouteStepsAsync(connection, cancellationToken);
-        var stations = await ReadStationsAsync(connection, cancellationToken);
-        var workOrders = await ReadWorkOrdersAsync(connection, cancellationToken);
-        var workOrderLinks = await ReadWorkOrderLinksAsync(connection, cancellationToken);
-        var workOrderMaterials = await ReadWorkOrderMaterialsAsync(connection, cancellationToken);
+            : await ReadMaterialRowsAsync(connection, transaction, materialColumns, cancellationToken);
+        var routeSteps = await ReadRouteStepsAsync(connection, transaction, cancellationToken);
+        var stations = await ReadStationsAsync(connection, transaction, cancellationToken);
+        var workOrders = await ReadWorkOrdersAsync(connection, transaction, cancellationToken);
+        var workOrderLinks = await ReadWorkOrderLinksAsync(connection, transaction, cancellationToken);
+        var workOrderMaterials = await ReadWorkOrderMaterialsAsync(connection, transaction, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return new KitaronSourceSnapshot(
             workRows, orders, components, materialRows, routeSteps, stations,
-            workOrders, workOrderLinks, workOrderMaterials);
+            workOrders, workOrderLinks, workOrderMaterials,
+            new KitaronSourceConsistency(mode, startedAt, DateTimeOffset.UtcNow, caveat));
     }
+
+    internal const string SnapshotMode = "SQL_SERVER_SNAPSHOT";
+    internal const string ReadCommittedMode = "SQL_SERVER_READ_COMMITTED";
+
+    private static async Task<(IsolationLevel Isolation, string Mode, string? Caveat)> ChooseIsolationAsync(
+        SqlConnection connection, CancellationToken token)
+    {
+        object? state;
+        try
+        {
+            await using var check = connection.CreateCommand();
+            check.CommandText = "SELECT snapshot_isolation_state FROM sys.databases WHERE database_id=DB_ID()";
+            state = await check.ExecuteScalarAsync(token);
+        }
+        catch (SqlException exception)
+        {
+            return (IsolationLevel.ReadCommitted, ReadCommittedMode,
+                "The snapshot isolation state of the Kitaron database could not be read: " + exception.Message);
+        }
+        return ChooseIsolation(state);
+    }
+
+    /// <summary>
+    /// <c>sys.databases.snapshot_isolation_state</c> 1 means ON; 0 (OFF), 2/3 (in transition) and
+    /// an unreadable value mean the read runs READ COMMITTED.
+    /// </summary>
+    internal static (IsolationLevel Isolation, string Mode, string? Caveat) ChooseIsolation(object? snapshotIsolationState)
+    {
+        var enabled = snapshotIsolationState is not null and not DBNull
+            && Convert.ToInt32(snapshotIsolationState, CultureInfo.InvariantCulture) == 1;
+        return enabled
+            ? (IsolationLevel.Snapshot, SnapshotMode, null)
+            : (IsolationLevel.ReadCommitted, ReadCommittedMode,
+                "The Kitaron database has no SNAPSHOT isolation; the source tables were read in one READ COMMITTED transaction. Planner does not change ERP database settings.");
+    }
+
+    /// <summary>
+    /// A caveat about the configured view under a SNAPSHOT read, or null when it is a plain local
+    /// view. Dirty-read hints inside a view override the session isolation, and an invisible
+    /// definition cannot be inspected; the finding is recorded with the read, never a reason to
+    /// refuse the import.
+    /// </summary>
+    private static async Task<string?> InspectViewAsync(SqlConnection connection, SqlTransaction transaction,
+        StoredKitaronConnectionSettings settings, CancellationToken token)
+    {
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = ViewInspectionQuery;
+            command.Parameters.AddWithValue("@schema", settings.ViewSchema);
+            command.Parameters.AddWithValue("@view", settings.ViewName);
+            await using var reader = await command.ExecuteReaderAsync(token);
+            var found = false;
+            while (await reader.ReadAsync(token))
+            {
+                found = true;
+                var caveat = DefinitionCaveat(reader.IsDBNull(1) ? null : reader.GetString(1), reader.GetInt32(2), reader.GetInt32(3));
+                if (caveat is not null) return caveat;
+            }
+            return found ? null : "The configured Kitaron planning view is not an inspectable local SQL view.";
+        }
+        catch (SqlException exception)
+        {
+            return "The Kitaron source view could not be inspected: " + exception.Message;
+        }
+    }
+
+    internal static string? DefinitionCaveat(string? definition, int depth, int externalReferences)
+    {
+        if (depth >= 32 || externalReferences > 0)
+            return "The Kitaron source view has external or deeply nested dependencies; the SNAPSHOT read does not cover them.";
+        if (definition is null)
+            return "The Kitaron source view definition is not visible to the Planner login (VIEW DEFINITION), so dirty-read hints inside it cannot be excluded.";
+        return System.Text.RegularExpressions.Regex.IsMatch(definition,
+            @"\b(NOLOCK|READUNCOMMITTED|OPENQUERY|OPENROWSET)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            ? "The Kitaron source view contains a dirty-read hint or an external query that overrides the SNAPSHOT read."
+            : null;
+    }
+
+    // The configured view and its locally referenced SQL modules.
+    private const string ViewInspectionQuery = """
+            WITH dependencies AS (
+                SELECT OBJECT_ID(QUOTENAME(@schema)+'.'+QUOTENAME(@view)) AS object_id, 0 AS depth
+                UNION ALL
+                SELECT d.referenced_id, p.depth+1 FROM dependencies p
+                JOIN sys.sql_expression_dependencies d ON d.referencing_id=p.object_id
+                WHERE d.referenced_id IS NOT NULL AND p.depth<32
+            )
+            SELECT DISTINCT o.type,m.definition,d.depth,
+                (SELECT COUNT(*) FROM sys.sql_expression_dependencies x WHERE x.referencing_id=o.object_id
+                 AND (x.referenced_server_name IS NOT NULL OR x.referenced_database_name IS NOT NULL)) AS external_references
+            FROM dependencies d JOIN sys.objects o ON o.object_id=d.object_id
+            LEFT JOIN sys.sql_modules m ON m.object_id=o.object_id
+            WHERE o.type IN ('V','FN','IF','TF','SN') OPTION (MAXRECURSION 33);
+            """;
 
     /// <summary>
     /// Open Kitaron work orders (`TRootCard`): route not closed, the sales-order line still open,
@@ -96,9 +205,11 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
     /// </summary>
     private static async Task<IReadOnlyList<KitaronSourceWorkOrder>> ReadWorkOrdersAsync(
         SqlConnection connection,
+        SqlTransaction transaction,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = WorkOrderQuery;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<KitaronSourceWorkOrder>();
@@ -128,9 +239,11 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 
     private static async Task<IReadOnlyList<KitaronSourceWorkOrderLink>> ReadWorkOrderLinksAsync(
         SqlConnection connection,
+        SqlTransaction transaction,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = WorkOrderLinkQuery;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<KitaronSourceWorkOrderLink>();
@@ -148,9 +261,11 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 
     private static async Task<IReadOnlyList<KitaronSourceWorkOrderMaterial>> ReadWorkOrderMaterialsAsync(
         SqlConnection connection,
+        SqlTransaction transaction,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = WorkOrderMaterialQuery;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<KitaronSourceWorkOrderMaterial>();
@@ -214,9 +329,11 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
     /// </summary>
     private static async Task<IReadOnlyList<KitaronSourceRouteStep>> ReadRouteStepsAsync(
         SqlConnection connection,
+        SqlTransaction transaction,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = RouteStepQuery;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<KitaronSourceRouteStep>();
@@ -247,9 +364,11 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 
     private static async Task<IReadOnlyList<KitaronDiscoveredStation>> ReadStationsAsync(
         SqlConnection connection,
+        SqlTransaction transaction,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = StationQuery;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<KitaronDiscoveredStation>();
@@ -296,11 +415,13 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 
     private static async Task<IReadOnlyList<KitaronSourceRow>> ReadWorkRowsAsync(
         SqlConnection connection,
+        SqlTransaction transaction,
         StoredKitaronConnectionSettings settings,
         IReadOnlyList<string> columns,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = BuildQuery(settings.ViewSchema, settings.ViewName, columns);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<KitaronSourceRow>();
@@ -321,34 +442,36 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 
     private static async Task<IReadOnlyList<KitaronSourceOrder>> ReadOrdersAsync(
         SqlConnection connection,
+        SqlTransaction transaction,
         StoredKitaronConnectionSettings settings,
         CancellationToken cancellationToken)
     {
         var priceColumn = await FindFirstColumnAsync(
-            connection,
+            connection, transaction,
             "dbo",
             "TSubOrder",
             OrderPriceColumnCandidates,
             cancellationToken);
         var suppliedColumn = await FindFirstColumnAsync(
-            connection,
+            connection, transaction,
             "dbo",
             "TSubOrder",
             OrderSuppliedColumnCandidates,
             cancellationToken);
         var rowClosedColumns = await FindColumnsAsync(
-            connection,
+            connection, transaction,
             "dbo",
             "TSubOrder",
             OrderRowClosedColumnCandidates,
             cancellationToken);
         var headerClosedColumns = await FindColumnsAsync(
-            connection,
+            connection, transaction,
             "dbo",
             "TOrder",
             OrderHeaderClosedColumnCandidates,
             cancellationToken);
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = BuildOrderQuery(
             settings.ViewSchema,
             settings.ViewName,
@@ -380,10 +503,12 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 
     private static async Task<IReadOnlyList<KitaronSourceRow>> ReadMaterialRowsAsync(
         SqlConnection connection,
+        SqlTransaction transaction,
         IReadOnlyList<string> columns,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = BuildMaterialQuery(columns);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<KitaronSourceRow>();
@@ -404,9 +529,11 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 
     private static async Task<IReadOnlyList<KitaronSourceComponent>> ReadComponentsAsync(
         SqlConnection connection,
+        SqlTransaction transaction,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = ComponentQuery;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<KitaronSourceComponent>();
@@ -499,12 +626,14 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 
     private static async Task<string?> FindFirstColumnAsync(
         SqlConnection connection,
+        SqlTransaction transaction,
         string schema,
         string table,
         IReadOnlyList<string> candidates,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT c.name
             FROM sys.columns c
@@ -522,12 +651,14 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 
     private static async Task<IReadOnlyList<string>> FindColumnsAsync(
         SqlConnection connection,
+        SqlTransaction transaction,
         string schema,
         string table,
         IReadOnlyList<string> candidates,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT c.name
             FROM sys.columns c
@@ -570,12 +701,12 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
                    purchase_row.CustOrderRow,
                    CONVERT(bit, CASE WHEN purchase_row.RowClosed = 1 OR purchase_main.OrderClosed = 1
                                     OR purchase_main.Closed = 1 THEN 1 ELSE 0 END) AS Closed
-            FROM dbo.TBuyRow purchase_row WITH (NOLOCK)
-            JOIN dbo.TBuyMain purchase_main WITH (NOLOCK)
+            FROM dbo.TBuyRow purchase_row
+            JOIN dbo.TBuyMain purchase_main
               ON purchase_main.BuyMainID = purchase_row.BuyMainID
             OUTER APPLY (
                 SELECT TOP (1) candidate.AppDate, candidate.Amount, candidate.Remark
-                FROM dbo.TAppCostOfferBySupplier candidate WITH (NOLOCK)
+                FROM dbo.TAppCostOfferBySupplier candidate
                 WHERE candidate.BuyMainID = purchase_row.BuyMainID
                   AND candidate.BuyID = purchase_row.BuyRowID
                   AND candidate.SupplierName = purchase_main.SupplyerName
@@ -583,7 +714,7 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
             ) approval
             LEFT JOIN (
                 SELECT BuyMainID, BuyID, SUM(COALESCE(BuyRecieved, 0)) AS ReceivedAmount
-                FROM dbo.TBuyReceptionHeader WITH (NOLOCK)
+                FROM dbo.TBuyReceptionHeader
                 GROUP BY BuyMainID, BuyID
             ) receipts ON receipts.BuyMainID = purchase_row.BuyMainID
                       AND receipts.BuyID = purchase_row.BuyRowID

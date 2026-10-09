@@ -21,12 +21,19 @@ internal static class RecoveryCommand
                 RecoveryPaths.RejectLinks(path);
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 var plain = Encoding.UTF8.GetBytes(password);
+                var created = false;
                 try
                 {
                     using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                    created = true;
                     RecoveryPaths.ProtectFile(path);
                     file.Write(RecoveryKeys.Protect(plain));
                     file.Flush(true);
+                }
+                catch
+                {
+                    if (created) File.Delete(path);
+                    throw;
                 }
                 finally { CryptographicOperations.ZeroMemory(plain); }
                 Console.WriteLine("Machine-protected recovery password file created. Keep the recovery passphrase separately for a replacement PC.");

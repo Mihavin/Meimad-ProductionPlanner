@@ -1197,7 +1197,7 @@ public sealed class GCodeReleaseApiTests
     }
 
     [Fact]
-    public async Task Startup_recovery_removes_only_incomplete_or_marker_owned_orphans()
+    public async Task Startup_recovery_retains_incomplete_and_marker_owned_orphans_for_review()
     {
         var root = Path.Combine(
             Path.GetTempPath(), "MeimadPlanner.GCode.Recovery.Tests", Guid.NewGuid().ToString("N"));
@@ -1236,8 +1236,8 @@ public sealed class GCodeReleaseApiTests
             await using (var recoveredApplication = BuildApplication(root, releaseRoot))
             {
                 await recoveredApplication.StartAsync();
-                Assert.False(Directory.Exists(staging));
-                Assert.False(Directory.Exists(orphan));
+                Assert.True(Directory.Exists(staging));
+                Assert.True(Directory.Exists(orphan));
                 Assert.True(File.Exists(Path.Combine(unknown, "keep.txt")));
                 Assert.All(knownMarkers, marker => Assert.True(File.Exists(marker)));
                 await recoveredApplication.StopAsync();

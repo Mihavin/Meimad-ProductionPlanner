@@ -9,6 +9,41 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 public sealed class TimelineViewModelTests
 {
     [Fact]
+    public async Task Long_report_is_not_repeated_by_the_automatic_forecast_timer()
+    {
+        var start = DateTimeOffset.Parse("2026-10-08T00:00:00Z");
+        var api = new FakeApiClient(ForecastSnapshot(start, start.AddDays(180), start.AddHours(1)));
+        var model = new TimelineViewModel(() => start) { FromDate = start.UtcDateTime, ToDate = start.AddDays(180).UtcDateTime };
+        model.AttachSession(api);
+        await model.LoadReportAsync();
+        await model.RequestAutomaticForecastRefreshAsync(start.AddHours(1));
+        Assert.Equal(1, api.RequestCount);
+        Assert.Equal(1, api.ReportRequests);
+    }
+
+    [Fact]
+    public async Task Explicit_long_report_can_be_cancelled_and_keeps_the_previous_projection()
+    {
+        var start = DateTimeOffset.Parse("2026-10-08T00:00:00Z");
+        var api = new FakeApiClient(Snapshot("Original Machine", start, start.AddDays(30)));
+        var model = new TimelineViewModel { FromDate = start.UtcDateTime, ToDate = start.AddDays(30).UtcDateTime };
+        model.AttachSession(api);
+        await model.RefreshAsync();
+        var original = model.Machines.ToArray();
+        api.PauseRequestNumber = 2;
+        var report = model.LoadReportAsync();
+        await api.FirstRequestStarted.Task;
+        Assert.True(model.CancelCommand.CanExecute(null));
+        model.CancelCommand.Execute(null);
+        await report;
+        Assert.Equal(1, api.ReportRequests);
+        Assert.False(model.IsBusy);
+        Assert.Equal(original, model.Machines);
+        Assert.Contains("cancelled", model.StatusMessage);
+        Assert.False(model.CancelCommand.CanExecute(null));
+    }
+
+    [Fact]
     public void Planned_not_ready_interval_keeps_its_forecast_and_explains_readiness()
     {
         var interval = new TimelineInterval(
@@ -836,6 +871,13 @@ public sealed class TimelineViewModelTests
         internal DateTimeOffset RequestedTo { get; private set; }
 
         internal int RequestCount { get; private set; }
+        internal int ReportRequests { get; private set; }
+
+        public Task<TimelineSnapshot> GetTimelineReportAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken token = default)
+        {
+            ReportRequests++;
+            return GetTimelineAsync(from, to, token);
+        }
 
         internal int MutationRequestCount { get; private set; }
 

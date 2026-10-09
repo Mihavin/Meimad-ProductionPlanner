@@ -9,6 +9,7 @@ using Meimad.Planner.Server.Application.EventLogging;
 using Meimad.Planner.Server.Application.Readiness;
 using Meimad.Planner.Server.Domain.Readiness;
 using Meimad.Planner.Server.Application.PlanningBoard;
+using Meimad.Planner.Server.Application.Projections;
 
 namespace Meimad.Planner.Server.Application.Timeline;
 
@@ -25,6 +26,7 @@ internal sealed class TimelineProjectionService
     private readonly ILogger<TimelineProjectionService> logger;
     private readonly IProductionRunPlanningProjectionRepository? productionRuns;
     private readonly AutomaticResourceScheduler auxiliaryScheduler;
+    private readonly ProjectionConsistency? consistency;
 
     public TimelineProjectionService(
         ITimelineSourceRepository repository,
@@ -34,7 +36,8 @@ internal sealed class TimelineProjectionService
         ILogger<TimelineProjectionService> logger,
         IProductionReadinessRepository? readinessRepository = null,
         IProductionRunPlanningProjectionRepository? productionRuns = null,
-        AutomaticResourceScheduler? auxiliaryScheduler = null)
+        AutomaticResourceScheduler? auxiliaryScheduler = null,
+        ProjectionConsistency? consistency = null)
     {
         this.repository = repository;
         this.engine = engine;
@@ -44,6 +47,7 @@ internal sealed class TimelineProjectionService
         this.logger = logger;
         this.productionRuns = productionRuns;
         this.auxiliaryScheduler = auxiliaryScheduler ?? new AutomaticResourceScheduler();
+        this.consistency = consistency;
     }
 
     internal async Task<TimelineProjection> CalculateAsync(
@@ -57,7 +61,17 @@ internal sealed class TimelineProjectionService
         DateTimeOffset horizonEnd,
         DateTimeOffset? asOf,
         CancellationToken cancellationToken = default,
-        bool recordDiagnostics = false)
+        bool recordDiagnostics = false,
+        IReadOnlyList<ProductionRunPlanningCard>? suppliedRuns = null)
+        => consistency is null
+            ? await CalculateCoreAsync(horizonStart, horizonEnd, asOf, cancellationToken, recordDiagnostics, suppliedRuns)
+            : await consistency.ReadAsync(token => CalculateCoreAsync(horizonStart, horizonEnd,
+                asOf ?? ProjectionConsistency.EvaluationAt, token, recordDiagnostics, suppliedRuns),
+                (result, freshness) => result with { Freshness = freshness }, cancellationToken, asOf);
+
+    private async Task<TimelineProjection> CalculateCoreAsync(DateTimeOffset horizonStart, DateTimeOffset horizonEnd,
+        DateTimeOffset? asOf, CancellationToken cancellationToken, bool recordDiagnostics,
+        IReadOnlyList<ProductionRunPlanningCard>? suppliedRuns)
     {
         var total = Stopwatch.StartNew();
         horizonStart = horizonStart.ToUniversalTime();
@@ -65,6 +79,8 @@ internal sealed class TimelineProjectionService
         var sourceRead = Stopwatch.StartNew();
         var source = await repository.ReadAsync(horizonStart, horizonEnd, cancellationToken);
         sourceRead.Stop();
+        PlannerPerformanceMetrics.TimelineSource.Record(sourceRead.Elapsed.TotalMilliseconds);
+        var mappingStarted = Stopwatch.GetTimestamp();
         var requestedForecastCursor = (asOf ?? source.ReadAt).ToUniversalTime();
         var forecastCursor = requestedForecastCursor < horizonStart
             ? horizonStart
@@ -395,6 +411,7 @@ internal sealed class TimelineProjectionService
             .Select(operation => operation.OperationId)
             .ToHashSet(StringComparer.Ordinal);
         var baselineStopwatch = Stopwatch.StartNew();
+        PlannerPerformanceMetrics.TimelineMapping.Record(Stopwatch.GetElapsedTime(mappingStarted).TotalMilliseconds);
         var baselineStarts = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
         TimelineCalculationResult? baselineCalculation = null;
         if (requiresMissedStartBaseline || backwardOperationIds.Count > 0)
@@ -409,13 +426,14 @@ internal sealed class TimelineProjectionService
                 }).ToArray()
             }).ToArray();
             baselineCalculation = engine.Calculate(
-                requestedCalculationInput with { MachineBacklogs = baselineBacklogs });
+                requestedCalculationInput with { MachineBacklogs = baselineBacklogs }, cancellationToken);
             baselineStarts = baselineCalculation.Operations.ToDictionary(
                     operation => operation.OperationId,
                     operation => operation.StartsAt,
                     StringComparer.Ordinal);
         }
         baselineStopwatch.Stop();
+        PlannerPerformanceMetrics.TimelineBaseline.Record(baselineStopwatch.Elapsed.TotalMilliseconds);
 
         var backwardMissedStartOperationIds = backwardOperationIds
             .Where(operationId => baselineStarts.TryGetValue(operationId, out var baselineStart)
@@ -446,7 +464,7 @@ internal sealed class TimelineProjectionService
             && backwardFallbackOperationIds.Count == 0
             && baselineCalculation is not null
                 ? baselineCalculation
-                : engine.Calculate(calculationInput);
+                : engine.Calculate(calculationInput, cancellationToken);
 
         // A missed backward predecessor may make a later backward node infeasible only
         // after the predecessor is reclassified. Re-run deterministically until every
@@ -479,9 +497,11 @@ internal sealed class TimelineProjectionService
             backlogs = ApplyBackwardFallback(
                 requestedBacklogs, backwardFallbackOperationIds);
             calculationInput = requestedCalculationInput with { MachineBacklogs = backlogs };
-            calculation = engine.Calculate(calculationInput);
+            calculation = engine.Calculate(calculationInput, cancellationToken);
         }
         calculationStopwatch.Stop();
+        PlannerPerformanceMetrics.TimelineEngine.Record(calculationStopwatch.Elapsed.TotalMilliseconds);
+        var presentationStarted = Stopwatch.GetTimestamp();
         if (backwardFallbackOperationIds.Count > 0)
         {
             logger.LogWarning(
@@ -643,10 +663,13 @@ internal sealed class TimelineProjectionService
             .SelectMany(machine => machine.Intervals)
             .Where(IsResourceWait)
             .ToArray();
+        var identityStarted = Stopwatch.GetTimestamp();
         projectedMachines = NormalizeGlobalAssignmentIdentity(
             projectedMachines,
             source.Operations,
             allConflicts);
+        PlannerPerformanceMetrics.TimelineIdentity.Record(Stopwatch.GetElapsedTime(identityStarted).TotalMilliseconds);
+        var readinessStarted = Stopwatch.GetTimestamp();
         var readinessByOperation = new Dictionary<string, ProductionReadinessResult>(
             StringComparer.Ordinal);
         var notStartedOperationIds = projectedMachines
@@ -677,10 +700,12 @@ internal sealed class TimelineProjectionService
                     }
                     : interval).ToArray()
         }).ToArray();
+        PlannerPerformanceMetrics.TimelineReadiness.Record(Stopwatch.GetElapsedTime(readinessStarted).TotalMilliseconds);
         // Auxiliary steps (Workstations, Employees by Skill, External Resources) are placed around
         // the calculated Machine anchors by the deterministic allocator; the placement is a
         // projection and never changes assignments or backlog order.
         var auxiliaryStopwatch = Stopwatch.StartNew();
+        PlannerPerformanceMetrics.TimelinePresentation.Record(Stopwatch.GetElapsedTime(presentationStarted).TotalMilliseconds);
         var auxiliary = TimelineAuxiliaryProjector.Project(new TimelineAuxiliaryProjector.Input(
             horizonStart,
             horizonEnd,
@@ -697,8 +722,10 @@ internal sealed class TimelineProjectionService
                 var windows = ReadAvailability(json, timeZoneId, horizonStart, horizonEnd, label, allConflicts, [], source.Holidays);
                 return masterAvailability is null ? windows : IntersectAvailability(windows, masterAvailability);
             },
-            options.TimeZoneId), auxiliaryScheduler);
+            options.TimeZoneId), auxiliaryScheduler, cancellationToken);
         auxiliaryStopwatch.Stop();
+        PlannerPerformanceMetrics.TimelineAuxiliary.Record(auxiliaryStopwatch.Elapsed.TotalMilliseconds);
+        var finalizationStarted = Stopwatch.GetTimestamp();
         foreach (var conflict in auxiliary.Conflicts)
         {
             if (allConflicts.All(existing => !string.Equals(existing.ConflictId, conflict.ConflictId, StringComparison.Ordinal)))
@@ -726,7 +753,7 @@ internal sealed class TimelineProjectionService
             .OrderBy(batch => batch.PartNumber, StringComparer.OrdinalIgnoreCase)
             .ThenBy(batch => batch.BatchNumber, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var runCards = productionRuns is null ? [] : await productionRuns.ReadAsync(cancellationToken);
+        var runCards = suppliedRuns ?? (productionRuns is null ? [] : await productionRuns.ReadAsync(cancellationToken));
         var runIntervals = new List<TimelineProductionRunProjection>();
         foreach (var machineGroup in runCards.Where(value => value.MachineId is not null)
                      .GroupBy(value => value.MachineId!, StringComparer.Ordinal))
@@ -758,6 +785,8 @@ internal sealed class TimelineProjectionService
             auxiliary.Lanes,
             EmployeeBookings(calculation, auxiliary.Lanes, resourceCalendars, source, operationsById));
         total.Stop();
+        PlannerPerformanceMetrics.TimelineFinalization.Record(Stopwatch.GetElapsedTime(finalizationStarted).TotalMilliseconds);
+        PlannerPerformanceMetrics.TimelineProjection.Record(total.Elapsed.TotalMilliseconds);
         logger.LogInformation(
             "Timeline performance: total {TotalMilliseconds} ms; source read {SourceReadMilliseconds} ms; engine {EngineMilliseconds} ms; baseline engine {BaselineMilliseconds} ms; backward fallbacks {BackwardFallbackCount}; scheduled {ScheduledOperationCount}; projected intervals {IntervalCount}; conflicts {ConflictCount}.",
             total.ElapsedMilliseconds, sourceRead.ElapsedMilliseconds, calculationStopwatch.ElapsedMilliseconds,
@@ -783,7 +812,7 @@ internal sealed class TimelineProjectionService
         }
         if (recordDiagnostics)
         {
-            await LogProjectionEventsAsync(projection, resourceWaitIntervals, cancellationToken);
+            await ProjectionConsistency.AfterValidationAsync(() => LogProjectionEventsAsync(projection, resourceWaitIntervals, cancellationToken));
         }
         return projection;
     }
@@ -793,6 +822,7 @@ internal sealed class TimelineProjectionService
         IReadOnlyList<TimelineProjectionInterval> resourceWaitIntervals,
         CancellationToken token)
     {
+        var started = Stopwatch.GetTimestamp();
         var day = projection.ReadAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var events = new List<StructuredEventWrite>();
         foreach (var conflict in projection.Conflicts)
@@ -815,6 +845,7 @@ internal sealed class TimelineProjectionService
                 $"resource-wait:{day}:{interval.OperationId}:{interval.MachineId}:{interval.Detail}"));
 
         await eventLog.AppendMissingAsync(events, token);
+        PlannerPerformanceMetrics.TimelineDiagnostics.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
     }
 
     private static bool IsResourceWait(TimelineProjectionInterval interval) =>
@@ -2053,18 +2084,17 @@ internal sealed class TimelineProjectionService
 
         normalized = ReconcileMachineOperationOverlaps(normalized, operations, conflicts);
 
+        var publicAssignmentCounts = normalized.SelectMany(machine => machine.Intervals)
+            .Where(interval => !string.IsNullOrWhiteSpace(interval.MachineAssignmentId))
+            .GroupBy(interval => interval.MachineAssignmentId!, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
         foreach (var operation in operations.Where(operation =>
                      operation.Status != "completed"
                      && operation.MachineId is not null
                      && !string.IsNullOrWhiteSpace(operation.MachineAssignmentId)))
         {
-            var publicAssignmentBlocks = normalized.SelectMany(machine => machine.Intervals)
-                .Where(interval => string.Equals(
-                    interval.MachineAssignmentId,
-                    operation.MachineAssignmentId,
-                    StringComparison.Ordinal))
-                .ToArray();
-            if (publicAssignmentBlocks.Length > 1)
+            var publicAssignmentCount = publicAssignmentCounts.GetValueOrDefault(operation.MachineAssignmentId!);
+            if (publicAssignmentCount > 1)
             {
                 logger.LogError(
                     DuplicateTimelineBlockLogTemplate,
@@ -2072,7 +2102,7 @@ internal sealed class TimelineProjectionService
                     operation.OperationId,
                     operation.MachineId);
             }
-            else if (publicAssignmentBlocks.Length == 0)
+            else if (publicAssignmentCount == 0)
             {
                 logger.LogError(
                     "TIMELINE_OPERATION_IDENTITY_INVARIANT operationId={OperationId}, assignmentId={MachineAssignmentId}; expected one public assignment block but produced none.",

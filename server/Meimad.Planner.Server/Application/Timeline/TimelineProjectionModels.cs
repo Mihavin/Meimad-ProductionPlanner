@@ -17,7 +17,8 @@ internal sealed record TimelineProjection(
     IReadOnlyList<TimelineProductionRunProjection>? ProductionRuns = null,
     IReadOnlyList<TimelineProjectionResourceLane>? Resources = null,
     // Each Employee's working time and bookings, for the workload calculation; not sent with the Timeline.
-    [property: JsonIgnore] IReadOnlyList<TimelineProjectionEmployee>? Employees = null);
+    [property: JsonIgnore] IReadOnlyList<TimelineProjectionEmployee>? Employees = null,
+    Domain.Projections.ProjectionFreshness? Freshness = null);
 
 /// <summary>
 /// An Employee in the calculated Timeline: the working time the calculation used (their calendar,

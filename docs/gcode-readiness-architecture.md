@@ -98,7 +98,7 @@ Layout:
 
 Publication uses a sibling `.staging-<stable-id>` directory, allow-listed extensions, configured size limits, write-through streaming, SHA-256 calculation from stored bytes, a `.meimad-release-id` ownership marker, and an atomic directory move. Existing staging/final targets are rejected. A failed database transaction compensates by deleting only the publication it created.
 
-`GCodeStorageRecoveryService` runs after database initialization. It removes recognisable `.staging-*` directories and marker-owned final directories whose stable IDs are absent from release metadata. It never deletes unknown files or unmarked directories. Downloads resolve beneath the configured root and verify both byte length and SHA-256 before serving historical content.
+D04 `ArtifactReconciliationStartup` runs after database initialization. It reports and retains `.staging-*` directories and marker-owned final directories whose stable IDs are absent from release metadata. A release marker alone does not prove complete contents safe to collect. Referenced releases are hash-checked; unknown files are never deleted. The separate owner-approved seven-day manual collection policy applies only to complete verified unreferenced production-package journals, not NC release orphans. Downloads resolve beneath the configured root and verify both byte length and SHA-256 before serving historical content.
 
 Backups must include both SQLite and `GCode:ReleaseRoot`; a database-only backup cannot restore released production bytes.
 

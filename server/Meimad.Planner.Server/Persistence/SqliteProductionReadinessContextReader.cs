@@ -3,58 +3,52 @@ using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
 
-internal static class SqliteProductionReadinessContextReader
+internal static partial class SqliteProductionReadinessContextReader
 {
     internal static async Task<ProductionReadinessContext> ReadForPackageAsync(
         SqliteConnection connection, SqliteTransaction? transaction,
-        Application.ProductionPackages.ProductionPackageContext context, CancellationToken token, bool useProgramRevision = false)
+        Application.ProductionPackages.ProductionPackageContext context, CancellationToken token, bool useProgramRevision = false,
+        ProductionReadinessContext? preloadedBasis = null,
+        IReadOnlySet<(string BatchOperationId, string MachineId)>? verifiedPackages = null,
+        ReferenceFacts? references = null)
     {
-        var basis = (await ReadManyAsync(connection, transaction, [context.BatchOperationId], token, context.MachineAssignmentId)).GetValueOrDefault(context.BatchOperationId)
+        references?.ValidateScope(connection, transaction);
+        var basis = preloadedBasis ?? (await ReadManyAsync(connection, transaction, [context.BatchOperationId], token, context.MachineAssignmentId, verifiedPackages)).GetValueOrDefault(context.BatchOperationId)
             ?? throw new Application.ProductionPackages.ProductionPackageBuildException("production_package_context_changed", "The Operation no longer exists.");
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
-            SELECT machine.execution_mode,machine.usable_tool_positions,
-                process.id,process.tool_table_release_id,tools.required_tool_count,process.case_operation_id,
-                COALESCE(program.production_gcode_release_id,program.selected_gcode_release_id),
-                program.production_gcode_release_id IS NOT NULL,
-                run.legacy_batch_operation_id=output.batch_operation_id
-                    AND (SELECT COUNT(*) FROM production_run_programs p WHERE p.production_run_id=run.id)=1
-                    AND (SELECT COUNT(*) FROM production_run_outputs o WHERE o.production_run_program_id=program.id)=1
-            FROM production_run_outputs output
-            JOIN production_run_programs program ON program.id=output.production_run_program_id
-            JOIN production_runs run ON run.id=program.production_run_id
-            JOIN machines machine ON machine.id=$machine
-            LEFT JOIN process_revisions process ON process.id=COALESCE(program.production_process_revision_id,program.process_revision_id)
-            LEFT JOIN tool_table_releases tools ON tools.id=process.tool_table_release_id
-            WHERE output.id=$output;
-            """;
+        command.CommandText = "SELECT " + PackageRecipeColumns + "\n" + PackageRecipeRowsSql(batch: false);
         command.Parameters.AddWithValue("$machine", context.MachineId);
         command.Parameters.AddWithValue("$output", context.ProductionRunOutputId);
         await using var reader = await command.ExecuteReaderAsync(token);
         if (!await reader.ReadAsync(token)) throw new Application.ProductionPackages.ProductionPackageBuildException("production_package_context_changed", "The selected output no longer exists.");
-        if (!useProgramRevision && !reader.IsDBNull(8) && reader.GetBoolean(8) && basis.MachineAssignmentId == context.MachineAssignmentId)
+        var recipe = ReadPackageRecipe(reader, 0);
+        if (!useProgramRevision && recipe.SingleLegacyOutput && basis.MachineAssignmentId == context.MachineAssignmentId)
             return basis;
-        var mode=reader.GetString(0);
-        int? capacity=reader.IsDBNull(1)?null:reader.GetInt32(1);
-        string? process=reader.IsDBNull(2)?null:reader.GetString(2);
-        string? tools=reader.IsDBNull(3)?null:reader.GetString(3);
-        int? count=reader.IsDBNull(4)?null:reader.GetInt32(4);
-        string? recipeOperation=reader.IsDBNull(5)?null:reader.GetString(5);
-        string? release=reader.IsDBNull(6)?null:reader.GetString(6);
-        var pinned=reader.GetBoolean(7);
         await reader.DisposeAsync();
-        var supported=await ReadSupportedPostprocessorsAsync(connection,transaction,[context.MachineId],token);
-        var releases=recipeOperation is null ? [] : await ReadReleasesAsync(connection,transaction,[recipeOperation],token);
-        var preparations=await ReadToolPreparationFactsAsync(connection,transaction,[context.BatchOperationId],token);
-        var result = basis with { MachineAssignmentId=context.MachineAssignmentId, MachineId=context.MachineId,
-            ExecutionMode=mode, UsableToolPositions=capacity, ActiveProcessRevisionId=process,
-            ActiveToolTableReleaseId=tools, RequiredToolCount=count,
+        var result = await ApplyPackageRecipeAsync(connection, transaction, context, basis, recipe, token, references);
+        return await WithOffsetModeAsync(connection, transaction, result, token, context.ProductionRunOutputId, verifiedPackages);
+    }
+
+    private static async Task<ProductionReadinessContext> ApplyPackageRecipeAsync(SqliteConnection connection,
+        SqliteTransaction? transaction, Application.ProductionPackages.ProductionPackageContext context,
+        ProductionReadinessContext basis, PackageRecipe recipe, CancellationToken token, ReferenceFacts? references)
+    {
+        var recipeOperation = recipe.CaseOperationId;
+        var supported = references is not null && references.Machines.Contains(context.MachineId)
+            ? references.Supported : await ReadSupportedPostprocessorsAsync(connection,transaction,[context.MachineId],token);
+        var releases = recipeOperation is null ? null
+            : references is not null && references.CaseOperations.Contains(recipeOperation)
+                ? references.Releases : await ReadReleasesAsync(connection,transaction,[recipeOperation],token);
+        var preparations = references is not null && references.Operations.Contains(context.BatchOperationId)
+            ? references.Preparations : await ReadToolPreparationFactsAsync(connection,transaction,[context.BatchOperationId],token);
+        return basis with { MachineAssignmentId=context.MachineAssignmentId, MachineId=context.MachineId,
+            ExecutionMode=recipe.Mode, UsableToolPositions=recipe.Capacity, ActiveProcessRevisionId=recipe.ProcessId,
+            ActiveToolTableReleaseId=recipe.ToolTableId, RequiredToolCount=recipe.ToolCount,
             SupportedPostprocessorIds=supported.GetValueOrDefault(context.MachineId) ?? [],
-            Releases=recipeOperation is null ? [] : releases.GetValueOrDefault(recipeOperation) ?? [],
-            SelectedGCodeReleaseId=release, ProductionPinned=pinned, ReplacedGCodeReleaseId=null,
+            Releases=recipeOperation is null ? [] : releases!.GetValueOrDefault(recipeOperation) ?? [],
+            SelectedGCodeReleaseId=recipe.ReleaseId, ProductionPinned=recipe.Pinned, ReplacedGCodeReleaseId=null,
             ToolOffsetMode="MEASURED", ToolPreparation=preparations.GetValueOrDefault((context.BatchOperationId,context.MachineId)) };
-        return await WithOffsetModeAsync(connection, transaction, result, token, context.ProductionRunOutputId);
     }
 
     private const int ChunkSize = 500;
@@ -63,9 +57,10 @@ internal static class SqliteProductionReadinessContextReader
         SqliteConnection connection,
         SqliteTransaction? transaction,
         string batchOperationId,
-        CancellationToken token)
+        CancellationToken token,
+        IReadOnlySet<(string BatchOperationId, string MachineId)>? verifiedPackages = null)
     {
-        var contexts = await ReadManyAsync(connection, transaction, [batchOperationId], token);
+        var contexts = await ReadManyAsync(connection, transaction, [batchOperationId], token, verifiedPackages: verifiedPackages);
         return contexts.GetValueOrDefault(batchOperationId);
     }
 
@@ -73,7 +68,8 @@ internal static class SqliteProductionReadinessContextReader
         SqliteConnection connection,
         SqliteTransaction? transaction,
         IReadOnlyCollection<string> batchOperationIds,
-        CancellationToken token, string? assignmentId = null)
+        CancellationToken token, string? assignmentId = null,
+        IReadOnlySet<(string BatchOperationId, string MachineId)>? verifiedPackages = null)
     {
         var ids = batchOperationIds.Distinct(StringComparer.Ordinal).ToArray();
         var result = new Dictionary<string, ProductionReadinessContext>(StringComparer.Ordinal);
@@ -121,48 +117,40 @@ internal static class SqliteProductionReadinessContextReader
                 row.ProductionPinned, ExecutionContextVersion: row.ExecutionContextVersion);
         }
 
+        // Reuse only facts observed in this caller-owned snapshot. Untransactional reads
+        // retain their existing per-context lookup; nothing survives the transaction.
+        if (transaction is not null && rows.Any(row => row.AssignmentId is not null))
+            verifiedPackages ??= await SqliteMachineWorkflowReporting.ReadVerifiedPackagesAsync(connection, transaction, token);
+        var ambiguous = rows.GroupBy(row => row.BatchOperationId, StringComparer.Ordinal)
+            .Where(group => group.Skip(1).Any()).Select(group => group.Key).ToHashSet(StringComparer.Ordinal);
+        foreach (var id in result.Keys.ToArray())
+            result[id] = result[id] with { AmbiguousExecutionContext = ambiguous.Contains(id) };
+        if (transaction is not null && result.Count > 1)
+        {
+            foreach (var enriched in await WithOffsetModesAsync(connection, transaction, result.Values.ToArray(), token, verifiedPackages))
+                result[enriched.BatchOperationId] = enriched;
+            return result;
+        }
         foreach (var id in result.Keys.ToArray())
             result[id] = await WithOffsetModeAsync(connection, transaction,
-                result[id] with { AmbiguousExecutionContext = rows.Count(row => row.BatchOperationId == id) > 1 }, token);
+                result[id], token, verifiedPackages: verifiedPackages);
         return result;
     }
 
     private static async Task<ProductionReadinessContext> WithOffsetModeAsync(SqliteConnection connection,
-        SqliteTransaction? transaction, ProductionReadinessContext context, CancellationToken token, string? outputId = null)
+        SqliteTransaction? transaction, ProductionReadinessContext context, CancellationToken token, string? outputId = null,
+        IReadOnlySet<(string BatchOperationId, string MachineId)>? verifiedPackages = null)
     {
         if (context.MachineAssignmentId is null) return context;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var release = ProductionReadinessEvaluator.Evaluate(context).EffectiveGCodeReleaseId;
-        context = await WithExecutionEvidenceAsync(connection, transaction, context, release, token);
+        context = await WithExecutionEvidenceAsync(connection, transaction, context, release, token, verifiedPackages);
         await using var query = connection.CreateCommand();
         query.Transaction = transaction;
         query.CommandText = """
             SELECT COUNT(*), COALESCE(MIN(package.tool_offset_mode='MANUAL_DUMMY'),0),
                 (SELECT COUNT(*) FROM tool_table_release_tools WHERE tool_table_release_id=$tools AND is_active=1)
-            FROM production_package_context_current current
-            JOIN production_packages package ON package.id=current.production_package_id
-            JOIN production_package_contexts binding ON binding.production_package_id=package.id
-            JOIN production_run_outputs output ON output.id=current.production_run_output_id
-            JOIN production_run_programs program ON program.id=output.production_run_program_id
-            JOIN machine_assignments assignment ON assignment.id=current.machine_assignment_id
-                AND assignment.production_run_id=program.production_run_id AND assignment.released_at IS NULL
-            JOIN machine_package_capabilities capability ON capability.machine_id=assignment.machine_id
-            LEFT JOIN cnc_verification_settings settings ON settings.machine_id=assignment.machine_id
-            WHERE current.machine_assignment_id=$assignment AND output.batch_operation_id=$operation
-                AND ($output IS NULL OR output.id=$output)
-                AND package.production_run_id=program.production_run_id
-                AND package.machine_assignment_id=assignment.id
-                AND json_extract(binding.context_json,'$.TargetQuantity')=output.target_quantity
-                AND json_extract(binding.context_json,'$.OutputAllocationStamp')=(
-                    SELECT group_concat(evidence, '|') FROM
-                        (SELECT sibling.id || ':' || sibling.target_quantity || ':' || sibling.quantity_per_cycle
-                            || ':' || COALESCE(sibling.revision_output_id,'') AS evidence
-                         FROM production_run_outputs sibling WHERE sibling.production_run_program_id=program.id ORDER BY sibling.id))
-                AND package.machine_id=$machine AND json_extract(binding.context_json,'$.ProcessRevisionId') IS $process
-                AND package.gcode_release_id IS $release AND package.tool_table_release_id IS $tools
-                AND capability.allow_manual_dummy_tool_offsets=1
-                AND (package.execution_mode='MANUAL' OR (package.verification_enabled=1 AND settings.enabled=1
-                    AND package.verification_configuration_version=settings.version))
-            """;
+            """ + "\n" + OffsetModeMatchingRowsSql(batch: false);
         query.Parameters.AddWithValue("$assignment", context.MachineAssignmentId);
         query.Parameters.AddWithValue("$operation", context.BatchOperationId);
         query.Parameters.AddWithValue("$output", (object?)outputId ?? DBNull.Value);
@@ -172,47 +160,95 @@ internal static class SqliteProductionReadinessContextReader
         query.Parameters.AddWithValue("$tools", (object?)context.ActiveToolTableReleaseId ?? DBNull.Value);
         await using var reader = await query.ExecuteReaderAsync(token);
         if (!await reader.ReadAsync(token)) return context;
+        Application.Projections.PlannerPerformanceMetrics.ReadinessEnrichment.Record(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         return context with { ReleasedToolCount = reader.GetInt32(2),
             ToolOffsetMode = reader.GetInt32(0) == 1 && reader.GetBoolean(1) ? "MANUAL_DUMMY" : "MEASURED" };
     }
 
+    // Both scalar and batch readers use these exact package/offset matching predicates.
+    private static string OffsetModeMatchingRowsSql(bool batch)
+    {
+        var source = batch ? "requested request CROSS JOIN " : "";
+        var value = batch ? "request." : "$";
+        return $"""
+            FROM {source}production_package_context_current current
+            JOIN production_packages package ON package.id=current.production_package_id
+            JOIN production_package_contexts binding ON binding.production_package_id=package.id
+            JOIN production_run_outputs output ON output.id=current.production_run_output_id
+            JOIN production_run_programs program ON program.id=output.production_run_program_id
+            JOIN machine_assignments assignment ON assignment.id=current.machine_assignment_id
+                AND assignment.production_run_id=program.production_run_id AND assignment.released_at IS NULL
+            JOIN machine_package_capabilities capability ON capability.machine_id=assignment.machine_id
+            LEFT JOIN cnc_verification_settings settings ON settings.machine_id=assignment.machine_id
+            WHERE current.machine_assignment_id={value}assignment AND output.batch_operation_id={value}operation
+                AND ({value}output IS NULL OR output.id={value}output)
+                AND package.production_run_id=program.production_run_id
+                AND package.machine_assignment_id=assignment.id
+                AND json_extract(binding.context_json,'$.TargetQuantity')=output.target_quantity
+                AND json_extract(binding.context_json,'$.OutputAllocationStamp')=(
+                    SELECT group_concat(evidence, '|') FROM
+                        (SELECT sibling.id || ':' || sibling.target_quantity || ':' || sibling.quantity_per_cycle
+                            || ':' || COALESCE(sibling.revision_output_id,'') AS evidence
+                         FROM production_run_outputs sibling WHERE sibling.production_run_program_id=program.id ORDER BY sibling.id))
+                AND package.machine_id={value}machine AND json_extract(binding.context_json,'$.ProcessRevisionId') IS {value}process
+                AND package.gcode_release_id IS {value}release AND package.tool_table_release_id IS {value}tools
+                AND capability.allow_manual_dummy_tool_offsets=1
+                AND (package.execution_mode='MANUAL' OR (package.verification_enabled=1 AND settings.enabled=1
+                    AND package.verification_configuration_version=settings.version))
+            """;
+    }
+
     private static async Task<ProductionReadinessContext> WithExecutionEvidenceAsync(SqliteConnection connection,
-        SqliteTransaction? transaction, ProductionReadinessContext context, string? release, CancellationToken token)
+        SqliteTransaction? transaction, ProductionReadinessContext context, string? release, CancellationToken token,
+        IReadOnlySet<(string BatchOperationId, string MachineId)>? verifiedPackages)
     {
         await using var query = connection.CreateCommand();
         query.Transaction = transaction;
-        query.CommandText = """
-            SELECT COALESCE(settings.enabled,0), COALESCE(settings.version,0),
+        query.CommandText = "SELECT " + ExecutionEvidenceColumns + "\n" + ExecutionEvidenceRowsSql(batch: false);
+        query.Parameters.AddWithValue("$assignment", context.MachineAssignmentId!);
+        query.Parameters.AddWithValue("$release", (object?)release ?? DBNull.Value);
+        await using var reader = await query.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)) return context;
+        var values = new object[reader.FieldCount]; reader.GetValues(values);
+        await reader.DisposeAsync();
+        return ApplyExecutionEvidence(context, values,
+            verifiedPackages ?? await SqliteMachineWorkflowReporting.ReadVerifiedPackagesAsync(connection, transaction, token));
+    }
+
+    private const string ExecutionEvidenceColumns = """
+        COALESCE(settings.enabled,0), COALESCE(settings.version,0),
                 current.offset_loader_release_id, current.version, session.id, session.state,
                 COALESCE(connection.enabled,0), connection.configuration_json
-            FROM machine_assignments assignment
+        """;
+
+    private static string ExecutionEvidenceRowsSql(bool batch)
+    {
+        var source = batch ? "requested request CROSS JOIN " : "";
+        var value = batch ? "request." : "$";
+        return $"""
+            FROM {source}machine_assignments assignment
             LEFT JOIN cnc_verification_settings settings ON settings.machine_id=assignment.machine_id
             LEFT JOIN machine_connections connection ON connection.machine_id=assignment.machine_id
             LEFT JOIN production_run_current_offset_loaders current ON current.production_run_id=assignment.production_run_id
                 AND current.machine_id=assignment.machine_id
             LEFT JOIN cnc_setup_verification_sessions session ON session.production_run_id=assignment.production_run_id
-                AND session.machine_id=assignment.machine_id AND session.nc_release_id=$release
+                AND session.machine_id=assignment.machine_id AND session.nc_release_id={value}release
                 AND session.offset_loader_release_id=current.offset_loader_release_id AND session.state IN ('ARMED','PENDING','SUCCEEDED')
-            WHERE assignment.id=$assignment AND assignment.released_at IS NULL;
+            WHERE assignment.id={value}assignment AND assignment.released_at IS NULL
             """;
-        query.Parameters.AddWithValue("$assignment", context.MachineAssignmentId!);
-        query.Parameters.AddWithValue("$release", (object?)release ?? DBNull.Value);
-        await using var reader = await query.ExecuteReaderAsync(token);
-        if (!await reader.ReadAsync(token)) return context;
-        var source = SqliteProductionPackageRepository.DprntSource(reader.IsDBNull(7) ? null : reader.GetString(7));
-        var required = reader.GetBoolean(0) && context.ExecutionMode == "CNC_GCODE" && reader.GetBoolean(6)
+    }
+
+    private static ProductionReadinessContext ApplyExecutionEvidence(ProductionReadinessContext context,
+        object[] values, IReadOnlySet<(string BatchOperationId, string MachineId)> verifiedPackages)
+    {
+        var source = SqliteProductionPackageRepository.DprntSource(values[7] is DBNull ? null : (string)values[7]);
+        var dprnt = context.ExecutionMode == "CNC_GCODE" && Convert.ToBoolean(values[6])
             && source is not null && source != Domain.Cnc.CncDprntSources.None;
-        var dprnt = context.ExecutionMode == "CNC_GCODE" && reader.GetBoolean(6)
-            && source is not null && source != Domain.Cnc.CncDprntSources.None;
-        var succeeded = !reader.IsDBNull(5) && reader.GetString(5) == "SUCCEEDED";
-        var loaderObserved = !reader.IsDBNull(4);
-        var values = new object[reader.FieldCount]; reader.GetValues(values);
-        await reader.DisposeAsync();
+        var required = Convert.ToBoolean(values[0]) && dprnt;
         var reporting = SqliteMachineWorkflowReporting.Mode(context.MachineId!, context.BatchOperationId,
-            dprnt ? new HashSet<string>([context.MachineId!]) : new HashSet<string>(),
-            await SqliteMachineWorkflowReporting.ReadVerifiedPackagesAsync(connection, transaction, token));
-        return context with { VerificationRequired = required, VerificationSucceeded = succeeded,
-            ManualSetupReportingSupported = reporting != WorkflowReportingMode.Machine, LoaderExecutionObserved = loaderObserved,
+            dprnt ? new HashSet<string>([context.MachineId!]) : new HashSet<string>(), verifiedPackages);
+        return context with { VerificationRequired = required, VerificationSucceeded = values[5] is string state && state == "SUCCEEDED",
+            ManualSetupReportingSupported = reporting != WorkflowReportingMode.Machine, LoaderExecutionObserved = values[4] is not DBNull,
             ExecutionEvidenceStamp = ProductionActionPolicy.Stamp(new { required, values = values.Select(x => x is DBNull ? null : x).ToArray() }) };
     }
 
@@ -365,6 +401,7 @@ internal static class SqliteProductionReadinessContextReader
         IReadOnlyList<string> machineIds,
         CancellationToken token)
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var result = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var chunk in machineIds.Chunk(ChunkSize))
         {
@@ -384,6 +421,7 @@ internal static class SqliteProductionReadinessContextReader
             }
         }
 
+        Application.Projections.PlannerPerformanceMetrics.ReadinessReferences.Record(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         return result;
     }
 
@@ -393,6 +431,7 @@ internal static class SqliteProductionReadinessContextReader
         IReadOnlyList<string> caseOperationIds,
         CancellationToken token)
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var result = new Dictionary<string, List<ReadinessRelease>>(StringComparer.Ordinal);
         foreach (var chunk in caseOperationIds.Chunk(ChunkSize))
         {
@@ -423,6 +462,7 @@ internal static class SqliteProductionReadinessContextReader
             }
         }
 
+        Application.Projections.PlannerPerformanceMetrics.ReadinessReferences.Record(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         return result;
     }
 
@@ -470,6 +510,7 @@ internal static class SqliteProductionReadinessContextReader
         IReadOnlyList<string> batchOperationIds,
         CancellationToken token)
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var result = new Dictionary<(string, string), ToolPreparationReadinessFact>();
         foreach (var chunk in batchOperationIds.Chunk(ChunkSize))
         {
@@ -507,6 +548,7 @@ internal static class SqliteProductionReadinessContextReader
             }
         }
 
+        Application.Projections.PlannerPerformanceMetrics.ReadinessReferences.Record(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         return result;
     }
 

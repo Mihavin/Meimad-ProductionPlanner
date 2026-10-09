@@ -19,9 +19,14 @@ internal sealed class SqliteProductionRunReadinessRepository(SqliteDatabase data
     }
 
     internal static async Task<ProductionRunReadiness> ReadAsync(SqliteConnection connection,
-        SqliteTransaction transaction, string runId, CancellationToken token)
+        SqliteTransaction transaction, string runId, CancellationToken token,
+        ProductionRun? preloadedRun = null,
+        IReadOnlyDictionary<string, ProductionReadinessContext>? preloadedBases = null,
+        IReadOnlySet<(string BatchOperationId, string MachineId)>? verifiedPackages = null,
+        SqliteProductionReadinessContextReader.ReferenceFacts? references = null,
+        SqliteProductionReadinessContextReader.OutputFacts? outputFacts = null)
     {
-        var run = await SqliteProductionRunRepository.ReadAsync(connection, transaction, runId, token)
+        var run = preloadedRun ?? await SqliteProductionRunRepository.ReadAsync(connection, transaction, runId, token)
             ?? throw new ProductionRunNotFoundException(runId);
         var programs = new List<ProductionRunProgramReadiness>();
         var stamps = new List<string>();
@@ -34,6 +39,7 @@ internal sealed class SqliteProductionRunReadinessRepository(SqliteDatabase data
             var outputs = new List<ProductionRunOutputReadiness>();
             foreach (var output in program.Outputs)
             {
+                var basis = preloadedBases?.GetValueOrDefault(output.BatchOperationId);
                 ProductionReadinessContext? context;
                 if (run.Assignment is { } assignment)
                 {
@@ -46,9 +52,13 @@ internal sealed class SqliteProductionRunReadinessRepository(SqliteDatabase data
                         catch (ProductionPackageBuildException invalid)
                         { components.Add(Block("allocation", "Program output allocation", invalid.Message)); }
                     }
-                    context = await SqliteProductionReadinessContextReader.ReadForPackageAsync(connection, transaction, exact, token, useProgramRevision: true);
+                    // An ambiguous/split operation must resolve the exact assignment independently.
+                    if (basis?.MachineAssignmentId != assignment.MachineAssignmentId || basis.AmbiguousExecutionContext) basis = null;
+                    context = outputFacts?.Find(connection, transaction, exact)
+                        ?? await SqliteProductionReadinessContextReader.ReadForPackageAsync(connection, transaction, exact, token,
+                        useProgramRevision: true, preloadedBasis: basis, verifiedPackages: verifiedPackages, references: references);
                 }
-                else context = await SqliteProductionReadinessContextReader.ReadAsync(connection, transaction, output.BatchOperationId, token);
+                else context = basis ?? await SqliteProductionReadinessContextReader.ReadAsync(connection, transaction, output.BatchOperationId, token, verifiedPackages);
                 if (context is null) throw new ProductionRunStateException("output_missing", "The Run output no longer exists.");
                 var readiness = ProductionReadinessEvaluator.Evaluate(context);
                 var decision = ProductionActionPolicy.Evaluate(context, readiness, ProductionAction.RecordProduction);

@@ -47,6 +47,8 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     {
         this.clientNowProvider = clientNowProvider ?? throw new ArgumentNullException(nameof(clientNowProvider));
         RefreshCommand = new AsyncCommand(RefreshAsync, CanRefresh);
+        ReportCommand = new AsyncCommand(LoadReportAsync, CanRefresh);
+        CancelCommand = new AsyncCommand(() => { activeRead?.Cancel(); return Task.CompletedTask; }, () => activeRead is not null && IsBusy);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -68,6 +70,10 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     public ObservableCollection<TimelineDependency> SelectedDependencies { get; } = [];
 
     public AsyncCommand RefreshCommand { get; }
+    public AsyncCommand ReportCommand { get; }
+    public AsyncCommand CancelCommand { get; }
+    private CancellationTokenSource? activeRead;
+    private bool showingReport;
 
     public DateTime? FromDate
     {
@@ -77,6 +83,8 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
             if (SetField(ref fromDate, value))
             {
                 RefreshCommand.RaiseCanExecuteChanged();
+                ReportCommand.RaiseCanExecuteChanged();
+                CancelCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -89,6 +97,8 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
             if (SetField(ref toDate, value))
             {
                 RefreshCommand.RaiseCanExecuteChanged();
+                ReportCommand.RaiseCanExecuteChanged();
+                CancelCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -149,6 +159,8 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
             if (SetField(ref isBusy, value))
             {
                 RefreshCommand.RaiseCanExecuteChanged();
+                ReportCommand.RaiseCanExecuteChanged();
+                CancelCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -215,6 +227,8 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         lastAutomaticForecastRefreshAt = null;
         ClearProjection();
         RefreshCommand.RaiseCanExecuteChanged();
+        ReportCommand.RaiseCanExecuteChanged();
+        CancelCommand.RaiseCanExecuteChanged();
     }
 
     internal async Task EnsureLoadedAsync()
@@ -241,7 +255,7 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     internal async Task RequestAutomaticForecastRefreshAsync(DateTimeOffset now)
     {
         var serverNow = EstimatedServerNow(now);
-        if (!hasLoaded
+        if (showingReport || !hasLoaded
             || apiClient is null
             || IsBusy
             || HorizonEnd <= HorizonStart
@@ -279,7 +293,10 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
             && string.Equals(interval.OperationStatus, "not_started", StringComparison.OrdinalIgnoreCase)
             && (interval.IsForecast || interval.IsBlocked));
 
-    internal async Task RefreshAsync()
+    internal Task RefreshAsync() => RefreshCoreAsync(report: false);
+    internal Task LoadReportAsync() => RefreshCoreAsync(report: true);
+
+    private async Task RefreshCoreAsync(bool report)
     {
         if (apiClient is null || !FromDate.HasValue || !ToDate.HasValue
             || ToDate.Value.Date <= FromDate.Value.Date)
@@ -298,11 +315,15 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         while (apiClient is not null)
         {
             var requestedVersion = invalidationVersion;
+            using var requestCancellation = new CancellationTokenSource();
+            activeRead = requestCancellation;
             IsBusy = true;
             try
             {
                 var requestStopwatch = Stopwatch.StartNew();
-                var snapshot = await apiClient.GetTimelineAsync(from, to);
+                var snapshot = report
+                    ? await apiClient.GetTimelineReportAsync(from, to, requestCancellation.Token)
+                    : await apiClient.GetTimelineAsync(from, to, requestCancellation.Token);
                 requestStopwatch.Stop();
                 if (requestedVersion != invalidationVersion)
                 {
@@ -321,6 +342,7 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
                     $"{snapshot.Machines.Sum(machine => machine.Intervals.Count)} intervals, " +
                     $"{snapshot.Conflicts.Count} conflicts).");
                 hasLoaded = true;
+                showingReport = report;
                 var hasInsufficientHorizon = snapshot.Conflicts.Any(conflict =>
                     string.Equals(conflict.Code, "insufficient_availability", StringComparison.Ordinal));
                 var planningWarningCount = snapshot.Conflicts.Count(conflict =>
@@ -331,6 +353,11 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
                         ? "Some operations do not fit in the selected date range. Extend the To date to see their sequential forecast."
                         : $"Server calculation loaded at {snapshot.ReadAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}. Planning modes are applied per operation assignment.";
             }
+            catch (OperationCanceledException) when (requestCancellation.IsCancellationRequested)
+            {
+                StatusMessage = "Timeline request cancelled. The previous projection is retained.";
+                return;
+            }
             catch (Exception exception) when (IsExpected(exception))
             {
                 StatusMessage = FriendlyMessage(exception);
@@ -338,6 +365,7 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
             }
             finally
             {
+                activeRead = null;
                 IsBusy = false;
             }
 

@@ -10,7 +10,8 @@ internal sealed record PlanningBoardResponse(
     IReadOnlyList<PlanningBoardConflictResponse> Conflicts,
     IReadOnlyList<PlanningBoardOperationResponse> Pool,
     IReadOnlyList<PlanningBoardMachineResponse> Machines,
-    IReadOnlyList<ProductionRunPlanningCard>? ProductionRuns)
+    IReadOnlyList<ProductionRunPlanningCard>? ProductionRuns,
+    Domain.Projections.ProjectionFreshness? Freshness = null)
 {
     internal static PlanningBoardResponse FromApplication(PlanningBoardSnapshot snapshot) => new(
         snapshot.ReadAt,
@@ -19,7 +20,7 @@ internal sealed record PlanningBoardResponse(
         (snapshot.Conflicts ?? []).Select(PlanningBoardConflictResponse.FromApplication).ToArray(),
         snapshot.Pool.Select(PlanningBoardOperationResponse.FromApplication).ToArray(),
         snapshot.Machines.Select(PlanningBoardMachineResponse.FromApplication).ToArray(),
-        snapshot.ProductionRuns ?? []);
+        snapshot.ProductionRuns ?? [], snapshot.Freshness);
 }
 
 internal sealed record PlanningBoardConflictResponse(

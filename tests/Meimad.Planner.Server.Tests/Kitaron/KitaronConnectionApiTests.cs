@@ -16,6 +16,253 @@ namespace Meimad.Planner.Server.Tests.Kitaron;
 
 public sealed class KitaronConnectionApiTests
 {
+    private static async Task<HttpResponseMessage> ReviewedImportAsync(HttpClient client)
+    {
+        using var preview = await client.PostAsync("/api/v1/kitaron/sync/preview", null);
+        preview.EnsureSuccessStatusCode();
+        var value = (await preview.Content.ReadFromJsonAsync<KitaronImportPreview>())!;
+        return await client.PostAsJsonAsync("/api/v1/kitaron/sync/apply", new { value.PreviewId });
+    }
+
+    // The D03 review gate, switched on for the tests that cover it (off by default, functional spec).
+    private static void ReviewedApplyRequired(IServiceCollection services)
+    {
+        services.RemoveAll<KitaronImportPolicy>();
+        services.AddSingleton(new KitaronImportPolicy(ReviewedApplyRequired: true));
+    }
+
+    [Fact]
+    public async Task Under_the_default_policy_an_automatic_sync_applies_a_status_change_and_its_receipt_has_no_local_revision()
+    {
+        // 0.1.190 refused every automatic import on the installed database ("no durable approval
+        // evidence", then every ERP status change); the policy in force keeps the automatic sync
+        // running and still records a receipt, so the gate can be turned on later.
+        var reader = new CapturingSourceReader();
+        await RunAsync(new CompleteTester(), async (app, client) =>
+        {
+            await ConfigureReadySyncAsync(client);
+            using var first = await client.PostAsync("/api/v1/kitaron/sync", null);
+            Assert.Contains("succeeded", await first.Content.ReadAsStringAsync());
+            reader.StopProduction = true;
+            using var second = await client.PostAsync("/api/v1/kitaron/sync", null);
+            using var secondJson = JsonDocument.Parse(await second.Content.ReadAsStringAsync());
+            Assert.Equal("succeeded", secondJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal(1, secondJson.RootElement.GetProperty("ordersUpdated").GetInt32());
+            await using var connection = await app.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT COUNT(*), SUM(json_extract(after_data_json,'$.LocalRevision') IS NULL),
+                       SUM(json_extract(after_data_json,'$.Evidence.ReviewedPreview') = 0),
+                       (SELECT status FROM orders)
+                FROM structured_event_log WHERE event_type='kitaron_import_applied';
+                """;
+            await using var row = await command.ExecuteReaderAsync();
+            Assert.True(await row.ReadAsync());
+            Assert.Equal(2, row.GetInt32(0));
+            Assert.Equal(2, row.GetInt32(1));
+            Assert.Equal(2, row.GetInt32(2));
+            Assert.Equal("cancelled", row.GetString(3));
+        }, reader);
+        Assert.Equal(2, reader.ReadCount); // No local-context hash and no second read for the automatic run.
+    }
+
+    [Fact]
+    public async Task A_connection_check_between_preview_and_apply_moves_no_version_and_keeps_the_preview_valid()
+    {
+        // The periodic read-only connection check (every few minutes) used to bump the connection
+        // and mapping versions, which made every preview stale and blocked the automatic import.
+        await RunAsync(new CompleteTester(), async (app, client) =>
+        {
+            await ConfigureReadySyncAsync(client);
+            var (connectionBefore, mappingBefore) = await VersionsAsync(client);
+            using var preview = await client.PostAsync("/api/v1/kitaron/sync/preview", null);
+            preview.EnsureSuccessStatusCode();
+            var value = (await preview.Content.ReadFromJsonAsync<KitaronImportPreview>())!;
+            using var check = await client.PostAsync("/api/v1/kitaron/connection/test", null);
+            Assert.Equal(HttpStatusCode.OK, check.StatusCode);
+            Assert.Equal((connectionBefore, mappingBefore), await VersionsAsync(client));
+            using var apply = await client.PostAsJsonAsync("/api/v1/kitaron/sync/apply", new { value.PreviewId });
+            Assert.Equal(HttpStatusCode.OK, apply.StatusCode);
+            Assert.Contains("succeeded", await apply.Content.ReadAsStringAsync());
+        }, new CapturingSourceReader());
+
+        static async Task<(int Connection, int Mapping)> VersionsAsync(HttpClient client)
+        {
+            using var connection = await client.GetAsync("/api/v1/kitaron/connection");
+            using var mapping = await client.GetAsync("/api/v1/kitaron/mapping");
+            using var connectionJson = JsonDocument.Parse(await connection.Content.ReadAsStringAsync());
+            using var mappingJson = JsonDocument.Parse(await mapping.Content.ReadAsStringAsync());
+            return (connectionJson.RootElement.GetProperty("version").GetInt32(), mappingJson.RootElement.GetProperty("version").GetInt32());
+        }
+    }
+
+    [Fact]
+    public async Task Changed_mapping_blocks_automatic_import_until_reviewed_apply()
+    {
+        await RunAsync(new CompleteTester(), async (app, client) =>
+        {
+            await ConfigureReadySyncAsync(client);
+            using var first = await ReviewedImportAsync(client);
+            first.EnsureSuccessStatusCode();
+            await using (var connection = await app.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "UPDATE kitaron_mapping_settings SET version=version+1";
+                await command.ExecuteNonQueryAsync();
+            }
+            using var blocked = await client.PostAsync("/api/v1/kitaron/sync", null);
+            Assert.Contains("Mapping changed", await blocked.Content.ReadAsStringAsync());
+            using var reviewed = await ReviewedImportAsync(client);
+            reviewed.EnsureSuccessStatusCode();
+            using var automatic = await client.PostAsync("/api/v1/kitaron/sync", null);
+            Assert.Contains("succeeded", await automatic.Content.ReadAsStringAsync());
+        }, new CapturingSourceReader(), ReviewedApplyRequired);
+    }
+
+    [Theory]
+    [InlineData("duplicate")]
+    [InlineData("fractional")]
+    public async Task Ambiguous_source_identity_or_fractional_parts_refuse_preview(string variant)
+    {
+        await RunAsync(new CompleteTester(), async (app, client) =>
+        {
+            await ConfigureReadySyncAsync(client);
+            var revisions = app.Services.GetRequiredService<IKitaronImportContextReader>();
+            var before = await revisions.ReadAsync(default);
+            using var response = await client.PostAsync("/api/v1/kitaron/sync/preview", null);
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Contains(variant == "duplicate" ? "Ambiguous" : "whole count", await response.Content.ReadAsStringAsync());
+            Assert.Equal(before, await revisions.ReadAsync(default));
+        }, new InvalidSourceReader(variant));
+    }
+
+    [Fact]
+    public async Task The_automatic_run_skips_a_fractional_part_quantity_instead_of_refusing_the_whole_import()
+    {
+        // Verified audit finding 2026-10-09: the reviewed preview refuses it (above), the periodic import
+        // must keep running on the rest of the source, as it did before 0.1.190.
+        await RunAsync(new CompleteTester(), async (app, client) =>
+        {
+            await ConfigureReadySyncAsync(client);
+            using var sync = await client.PostAsync("/api/v1/kitaron/sync", null);
+            using var json = JsonDocument.Parse(await sync.Content.ReadAsStringAsync());
+            Assert.Equal("succeeded", json.RootElement.GetProperty("status").GetString());
+            Assert.Equal(0, json.RootElement.GetProperty("ordersCreated").GetInt32());
+            Assert.True(json.RootElement.GetProperty("casesCreated").GetInt32() > 0);
+        }, new InvalidSourceReader("fractional"));
+    }
+
+    private sealed class InvalidSourceReader(string variant) : IKitaronSourceReader
+    {
+        public async Task<KitaronSourceSnapshot> ReadAsync(StoredKitaronConnectionSettings settings,
+            string password, IReadOnlyList<string> columns, IReadOnlyList<string> materialColumns, CancellationToken token)
+        {
+            var source = await new CapturingSourceReader().ReadAsync(settings, password, columns, materialColumns, token);
+            var order = source.Orders[0];
+            return source with { Orders = variant == "duplicate" ? [order, order with { Quantity = 13 }]
+                : [order with { Quantity = 1.5 }] };
+        }
+    }
+
+    [Fact]
+    public async Task Import_preview_rolls_back_and_reviewed_apply_has_an_atomic_retry_receipt()
+    {
+        var source = new CapturingSourceReader();
+        await RunAsync(new CompleteTester(), async (app, client) =>
+        {
+            await ConfigureReadySyncAsync(client);
+            var revisions = new SqliteProjectionRevisionReader(app.Services.GetRequiredService<SqliteDatabase>());
+            var before = await revisions.ReadAsync(default);
+            using var preview = await client.PostAsync("/api/v1/kitaron/sync/preview", null);
+            preview.EnsureSuccessStatusCode();
+            var result = await preview.Content.ReadFromJsonAsync<KitaronImportPreview>();
+            Assert.NotNull(result);
+            Assert.True(result.Local.TotalChanges > 0);
+            Assert.Contains(result.Local.Changes, x => x.Action == "create" && x.Entity == "cases");
+            Assert.Equal(before, await revisions.ReadAsync(default));
+            using var apply = await client.PostAsJsonAsync("/api/v1/kitaron/sync/apply", new { result.PreviewId });
+            apply.EnsureSuccessStatusCode();
+            var first = await apply.Content.ReadAsStringAsync();
+            var after = await revisions.ReadAsync(default);
+            Assert.NotEqual(before, after);
+            using var retry = await client.PostAsJsonAsync("/api/v1/kitaron/sync/apply", new { result.PreviewId });
+            retry.EnsureSuccessStatusCode();
+            Assert.Equal(first, await retry.Content.ReadAsStringAsync());
+            Assert.Equal(after, await revisions.ReadAsync(default));
+            Assert.Equal(2, source.ReadCount); // preview + apply verification; receipt retry does not read ERP.
+        }, source);
+    }
+
+    [Theory]
+    [InlineData("source")]
+    [InlineData("local")]
+    [InlineData("mapping")]
+    public async Task Changed_import_context_refuses_the_entire_apply(string changed)
+    {
+        var source = new CapturingSourceReader();
+        await RunAsync(new CompleteTester(), async (app, client) =>
+        {
+            await ConfigureReadySyncAsync(client);
+            using var preview = await client.PostAsync("/api/v1/kitaron/sync/preview", null);
+            preview.EnsureSuccessStatusCode();
+            var result = (await preview.Content.ReadFromJsonAsync<KitaronImportPreview>())!;
+            if (changed == "source") source.StopProduction = true;
+            else
+            {
+                await using var sql = await app.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync();
+                await using var command = sql.CreateCommand();
+                command.CommandText = changed == "local"
+                    ? "INSERT INTO application_settings(key,value) VALUES('concurrent-change','1')"
+                    : "UPDATE kitaron_mapping_settings SET version=version+1";
+                await command.ExecuteNonQueryAsync();
+            }
+            using var apply = await client.PostAsJsonAsync("/api/v1/kitaron/sync/apply", new { result.PreviewId });
+            Assert.Equal(HttpStatusCode.Conflict, apply.StatusCode);
+            Assert.Contains("kitaron_import_conflict", await apply.Content.ReadAsStringAsync());
+            await using var connection = await app.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync();
+            await using var count = connection.CreateCommand();
+            count.CommandText = "SELECT count(*) FROM cases";
+            Assert.Equal(0L, (long)(await count.ExecuteScalarAsync())!);
+        }, source);
+    }
+
+    [Fact]
+    public async Task Import_preview_requires_setup_permission()
+    {
+        await RunAsync(new CompleteTester(), async (_, client) =>
+        {
+            using (client.SignedInWithOnly(Application.Accounts.Permissions.PlanMachines))
+            {
+                using var response = await client.PostAsync("/api/v1/kitaron/sync/preview", null);
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Import_failure_after_partial_local_work_rolls_back_domain_rows_and_receipt()
+    {
+        await RunAsync(new CompleteTester(), async (app, client) =>
+        {
+            await ConfigureReadySyncAsync(client);
+            using var preview = await client.PostAsync("/api/v1/kitaron/sync/preview", null);
+            preview.EnsureSuccessStatusCode();
+            var value = (await preview.Content.ReadFromJsonAsync<KitaronImportPreview>())!;
+            await using (var sql = await app.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync())
+            await using (var command = sql.CreateCommand())
+            {
+                command.CommandText = "CREATE TRIGGER injected_import_failure BEFORE INSERT ON orders BEGIN SELECT RAISE(ABORT,'test failure after cases'); END;";
+                await command.ExecuteNonQueryAsync();
+            }
+            Assert.NotNull(await Record.ExceptionAsync(() => app.Services.GetRequiredService<KitaronSyncService>()
+                .ApplyPreviewAsync(value.Evidence.RequestedBy, value.PreviewId, default)));
+            await using var connection = await app.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync();
+            await using var count = connection.CreateCommand();
+            count.CommandText = "SELECT count(*) FROM cases";
+            Assert.Equal(0L, (long)(await count.ExecuteScalarAsync())!);
+            Assert.Null(await app.Services.GetRequiredService<IKitaronSyncRepository>().FindReceiptAsync(value.PreviewId, default));
+        }, new CapturingSourceReader());
+    }
     [Fact]
     public async Task Local_server_page_saves_encrypted_secret_and_tests_read_only_view_metadata()
     {
@@ -1166,13 +1413,15 @@ public sealed class KitaronConnectionApiTests
             Assert.Equal(1, secondJson.RootElement.GetProperty("componentsMatched").GetInt32());
 
             reader.StopProduction = true;
-            using var cancelled = await client.PostAsync("/api/v1/kitaron/sync", null);
+            using var blocked = await client.PostAsync("/api/v1/kitaron/sync", null);
+            Assert.Contains("blocked", await blocked.Content.ReadAsStringAsync());
+            using var cancelled = await ReviewedImportAsync(client);
             using var cancelledJson = JsonDocument.Parse(await cancelled.Content.ReadAsStringAsync());
             Assert.Equal("succeeded", cancelledJson.RootElement.GetProperty("status").GetString());
             Assert.Equal(1, cancelledJson.RootElement.GetProperty("ordersUpdated").GetInt32());
 
             reader.IncludeComponent = false;
-            using var removedComponent = await client.PostAsync("/api/v1/kitaron/sync", null);
+            using var removedComponent = await ReviewedImportAsync(client);
             using var removedComponentJson = JsonDocument.Parse(await removedComponent.Content.ReadAsStringAsync());
             Assert.Equal(1, removedComponentJson.RootElement.GetProperty("componentsUpdated").GetInt32());
 
@@ -1195,8 +1444,8 @@ public sealed class KitaronConnectionApiTests
             Assert.Equal(0, counts.GetInt32(4)); Assert.Equal(6, counts.GetInt32(5));
             Assert.Equal(0, counts.GetInt32(6)); Assert.Equal("cancelled", counts.GetString(7));
             Assert.Equal(1, counts.GetInt32(8)); Assert.Equal("2026-08-28", counts.GetString(9));
-        }, reader);
-        Assert.Equal(4, reader.ReadCount);
+        }, reader, ReviewedApplyRequired);
+        Assert.Equal(7, reader.ReadCount); // Three automatic attempts plus preview/revalidation for two reviewed changes.
     }
 
     [Fact]
@@ -1501,7 +1750,8 @@ public sealed class KitaronConnectionApiTests
     private static async Task RunAsync(
         IKitaronConnectionTester tester,
         Func<WebApplication, HttpClient, Task> test,
-        IKitaronSourceReader? sourceReader = null)
+        IKitaronSourceReader? sourceReader = null,
+        Action<IServiceCollection>? configure = null)
     {
         var directory = Path.Combine(
             Path.GetTempPath(), "MeimadPlanner.Kitaron.Tests", Guid.NewGuid().ToString("N"));
@@ -1527,6 +1777,7 @@ public sealed class KitaronConnectionApiTests
                     services.RemoveAll<IDataProtectionProvider>();
                     services.AddSingleton<IDataProtectionProvider>(
                         new EphemeralDataProtectionProvider());
+                    configure?.Invoke(services);
                 });
             });
         try

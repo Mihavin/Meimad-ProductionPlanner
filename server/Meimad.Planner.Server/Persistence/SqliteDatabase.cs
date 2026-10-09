@@ -1,5 +1,7 @@
 using Meimad.Planner.Server.Configuration;
 using Microsoft.Data.Sqlite;
+using System.Diagnostics;
+using Meimad.Planner.Server.Application.Projections;
 
 namespace Meimad.Planner.Server.Persistence;
 
@@ -34,6 +36,7 @@ internal sealed class SqliteDatabase
         Directory.CreateDirectory(parentDirectory);
 
         var connection = new SqliteConnection(connectionString);
+        var started = Stopwatch.GetTimestamp();
         try
         {
             await connection.OpenAsync(cancellationToken);
@@ -53,10 +56,12 @@ internal sealed class SqliteDatabase
 
             return connection;
         }
-        catch
+        catch (Exception exception)
         {
+            if (exception is SqliteException { SqliteErrorCode: 5 or 6 }) PlannerPerformanceMetrics.DatabaseBusy.Add(1);
             await connection.DisposeAsync();
             throw;
         }
+        finally { PlannerPerformanceMetrics.DatabaseOpen.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds); }
     }
 }

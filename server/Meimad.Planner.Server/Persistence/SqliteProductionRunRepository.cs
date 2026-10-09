@@ -24,19 +24,9 @@ internal sealed class SqliteProductionRunRepository : IProductionRunRepository
     public async Task<IReadOnlyList<ProductionRun>> ListAsync(CancellationToken token)
     {
         await using var connection = await database.OpenConnectionAsync(token);
-        var ids = new List<string>();
-        await using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "SELECT id FROM production_runs ORDER BY created_at, id;";
-            await using var reader = await command.ExecuteReaderAsync(token);
-            while (await reader.ReadAsync(token)) ids.Add(reader.GetString(0));
-        }
-        var result = new List<ProductionRun>(ids.Count);
-        foreach (var id in ids)
-        {
-            var value = await ReadAsync(connection, null, id, token);
-            if (value is not null) result.Add(value);
-        }
+        await using var transaction = connection.BeginTransaction(deferred: true);
+        var result = await SqliteProductionRunGraphReader.ReadAllAsync(connection, transaction, token);
+        await transaction.CommitAsync(token);
         return result;
     }
 

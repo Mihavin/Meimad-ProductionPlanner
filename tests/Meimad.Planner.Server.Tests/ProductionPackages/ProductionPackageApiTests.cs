@@ -577,7 +577,7 @@ public sealed class ProductionPackageApiTests
             .Select(value => value.GetProperty("batchOperationId").GetString()!).ToArray();
     }
 
-    internal static async Task SeedAsync(IServiceProvider services, string releaseRoot, bool verificationEnabled)
+    internal static async Task SeedAsync(IServiceProvider services, string releaseRoot, bool verificationEnabled, bool includeToolRows = false)
     {
         var gcodeRelative = "operations/case-operation-package/gcode/gcode-1/main.nc";
         var toolRelative = "operations/case-operation-package/tool-tables/tools-1/tools.csv";
@@ -617,7 +617,13 @@ public sealed class ProductionPackageApiTests
             INSERT INTO tool_table_releases(
                 id,case_operation_id,revision_number,original_file_name,stored_relative_path,file_size,file_hash,
                 released_at,released_by,release_comment,created_at,updated_at,required_tool_count)
-            VALUES('tools-1','case-operation-package',1,'tools.csv',$toolPath,20,$toolHash,$at,'tool-user','Initial',$at,$at,0);
+            VALUES('tools-1','case-operation-package',1,'tools.csv',$toolPath,$toolSize,$toolHash,$at,'tool-user','Initial',$at,$at,0);
+            INSERT INTO tool_table_release_tools(id,tool_table_release_id,row_number,tool_identifier,description,
+                is_required,requires_magazine_position,is_active,created_at,updated_at)
+            SELECT 'active-tool','tools-1',1,'T1','Active optional tool',0,0,1,$at,$at WHERE $includeTools=1;
+            INSERT INTO tool_table_release_tools(id,tool_table_release_id,row_number,tool_identifier,description,
+                is_required,requires_magazine_position,is_active,created_at,updated_at)
+            SELECT 'inactive-tool','tools-1',2,'T2','Inactive tool',0,0,0,$at,$at WHERE $includeTools=1;
             INSERT INTO process_revisions(
                 id,case_operation_id,revision_number,is_active,tool_table_release_id,created_at,created_by,
                 change_description,version,updated_at,manufacturing_program_id)
@@ -634,7 +640,7 @@ public sealed class ProductionPackageApiTests
                 id,case_operation_id,process_revision_id,postprocessor_id,post_specific_revision,
                 original_file_name,stored_relative_path,file_size,file_hash,released_at,released_by,
                 change_scope,release_comment,tool_table_release_id,created_at,updated_at)
-            VALUES('gcode-1','case-operation-package','process-1','post-1',1,'main.nc',$gcodePath,200,$gcodeHash,
+            VALUES('gcode-1','case-operation-package','process-1','post-1',1,'main.nc',$gcodePath,$gcodeSize,$gcodeHash,
                    $at,'nc-user','NEW_PROCESS_REVISION','Initial','tools-1',$at,$at);
             INSERT INTO gcode_release_verification_hooks(
                 gcode_release_id,hook_version,invocation_kind,invocation_number,nc_identity_token,line_number,created_at,updated_at)
@@ -651,9 +657,12 @@ public sealed class ProductionPackageApiTests
             WHERE id='assignment-package';
             """;
         command.Parameters.AddWithValue("$workingFolder", Path.Combine(releaseRoot, "working"));
+        command.Parameters.AddWithValue("$includeTools", includeToolRows);
         command.Parameters.AddWithValue("$toolPath", toolRelative);
         command.Parameters.AddWithValue("$gcodePath", gcodeRelative);
         command.Parameters.AddWithValue("$toolHash", Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(toolBytes)));
+        command.Parameters.AddWithValue("$toolSize", toolBytes.Length);
+        command.Parameters.AddWithValue("$gcodeSize", gcodeBytes.Length);
         command.Parameters.AddWithValue("$gcodeHash", Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(gcodeBytes)));
         command.Parameters.AddWithValue("$at", now);
         await command.ExecuteNonQueryAsync();

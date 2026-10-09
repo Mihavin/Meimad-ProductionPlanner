@@ -132,6 +132,7 @@ public sealed class ViewStartupTests
                 }
                 LocalizationInteractionPerformanceAudit.RunAndAssert(plannerWindow);
                 LocalizationBehaviorAudit.RunAndAssert(plannerWindow);
+                WorkbenchVisualAudit.Run(plannerWindow);
 
                 var plannerViewModel = Assert.IsType<MainWindowViewModel>(plannerWindow.DataContext);
                 var serverIndicator = Assert.IsType<Ellipse>(plannerWindow.FindName("ServerStatusIndicator"));
@@ -590,7 +591,7 @@ public sealed class ViewStartupTests
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
 
-        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "The WPF startup check timed out.");
+        Assert.True(thread.Join(TimeSpan.FromSeconds(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MEIMAD_WORKBENCH_PREVIEW")) ? 30 : 300)), "The WPF startup check timed out.");
         Assert.Null(startupException);
         Assert.DoesNotContain("Preview available", renderedText);
         Assert.True(timelineSharesViewModel);

@@ -84,6 +84,7 @@ internal static class SqliteMachineWorkflowReporting
     internal static async Task<IReadOnlySet<(string BatchOperationId, string MachineId)>> ReadVerifiedPackagesAsync(
         SqliteConnection connection, SqliteTransaction? transaction, CancellationToken token)
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var operations = new HashSet<(string, string)>();
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -115,6 +116,7 @@ internal static class SqliteMachineWorkflowReporting
             """;
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token)) operations.Add((reader.GetString(0), reader.GetString(1)));
+        Application.Projections.PlannerPerformanceMetrics.WorkflowPackages.Record(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         return operations;
     }
 

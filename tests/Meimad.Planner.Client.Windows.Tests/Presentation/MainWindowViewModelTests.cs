@@ -7,6 +7,22 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 
 public sealed class MainWindowViewModelTests
 {
+    [Fact]
+    public async Task Periodic_account_refresh_preserves_context_but_permission_change_clears_it()
+    {
+        var api = new FakeApiClient { Health = Healthy(), Account = Planner() };
+        using var model = new MainWindowViewModel(new FakeSettingsStore(Settings), new FakeApiClientFactory(api));
+        await model.InitializeAsync();
+        Assert.Null(await model.SignInAsync("dana", "secret-1"));
+        await model.CompleteSignInAsync();
+        var context = new WorkbenchContext("case", "op", "batch", "operation", "machine");
+        model.Navigation.Open("Operation", context);
+        await model.RefreshAsync();
+        Assert.Same(context, model.Navigation.Context);
+        api.Account = api.Account! with { Permissions = [] };
+        await model.RefreshAsync();
+        Assert.Null(model.Navigation.Context);
+    }
     private static readonly ClientSettings Settings = ClientSettings.Create(
         "http://planner-server:5080/",
         "Miriam",

@@ -24,6 +24,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        try { LegacyNavigation.IsChecked = System.IO.File.Exists(NavigationPreference) && System.IO.File.ReadAllText(NavigationPreference) == "classic"; }
+        catch (Exception exception) when (exception is System.IO.IOException or UnauthorizedAccessException) { }
         ThemeToggle.Content = Themes.WorkbenchTheme.Current == "graphite" ? "Light workshop" : "Graphite control room";
         LanguageSelector.SelectedValue = LocalizationService.Current.CurrentLanguage;
         viewModel = new MainWindowViewModel(
@@ -34,6 +36,13 @@ public partial class MainWindow : Window
         viewModel.NcCreatorQueue.ActionRequested += PreparationActionRequested;
         viewModel.ToolRoomQueue.ActionRequested += PreparationActionRequested;
         viewModel.SetupQueue.ActionRequested += PreparationActionRequested;
+        viewModel.Shop.OpenRequested += async (_, context) => await OpenWorkbenchAsync(context);
+        viewModel.OperationWorkbench.NcRequested += (_, request) => NcViewerWindow.Open(request);
+        viewModel.OperationWorkbench.ExportRequested += async (_, package) =>
+        {
+            try { await ExportReviewedPackageAsync(package); }
+            catch (Exception exception) { LocalizedMessageBox.Show(this, exception.Message, "Package export", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        };
         viewModel.ClientUpdateAvailable += (_, update) =>
             Dispatcher.BeginInvoke(new Action(() => ClientUpdateWindow.Show(this, update)));
         viewModel.SignInRequired += (_, _) =>
@@ -59,6 +68,18 @@ public partial class MainWindow : Window
 
     private void Workspace_Click(object sender, RoutedEventArgs e)
     {
+        if (sender is System.Windows.Controls.Button { Tag: "Shop" })
+        { WorkspaceTabs.SelectedItem = ShopWorkspaceTab; _ = viewModel.Shop.RefreshAsync(); return; }
+        if (sender is System.Windows.Controls.Button { Tag: "Operation" })
+        { WorkspaceTabs.SelectedItem = OperationWorkspaceTab; return; }
+        if (sender is System.Windows.Controls.Button { Tag: "Preparation" })
+        { WorkspaceTabs.SelectedItem = PreparationWorkspaceTab; return; }
+        if (sender is System.Windows.Controls.Button { Tag: "Integrations" })
+        {
+            WorkspaceTabs.SelectedItem = IntegrationsWorkspaceTab;
+            _ = viewModel.OperationalHealth.ReadAsync(false);
+            return;
+        }
         if (sender is System.Windows.Controls.Button { Tag: string value } && int.TryParse(value, out var index))
         {
             WorkspaceTabs.SelectedIndex = index;
@@ -68,8 +89,53 @@ public partial class MainWindow : Window
 
     private async void PlanningBoardOpenOperationRequested(object? sender, PlanningOperationViewModel operation)
     {
+        if (LegacyNavigation.IsChecked != true)
+        {
+            await OpenWorkbenchAsync(new(operation.CaseId, operation.CaseOperationId, operation.BatchId,
+                operation.BatchOperationId, operation.MachineId));
+            return;
+        }
         WorkspaceTabs.SelectedIndex = 0;
         await viewModel.CaseWorkspace.NavigateToOperationAsync(operation.CaseId, operation.CaseOperationId);
+    }
+
+    private static string NavigationPreference => System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Meimad Planner", "workbench-navigation.txt");
+
+    private void LegacyNavigation_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(NavigationPreference)!);
+            System.IO.File.WriteAllText(NavigationPreference, LegacyNavigation.IsChecked == true ? "classic" : "workbench");
+        }
+        catch (Exception exception) when (exception is System.IO.IOException or UnauthorizedAccessException)
+        { Trace.WriteLine("Navigation preference could not be saved."); }
+    }
+
+    private async Task OpenWorkbenchAsync(WorkbenchContext context)
+    {
+        viewModel.Navigation.Open(WorkspaceTabs.SelectedIndex.ToString(System.Globalization.CultureInfo.InvariantCulture), viewModel.Navigation.Context);
+        viewModel.Navigation.Open("Operation", context);
+        WorkspaceTabs.SelectedItem = OperationWorkspaceTab;
+        await viewModel.OperationWorkbench.OpenAsync(context);
+    }
+
+    private async void WorkbenchBack_Click(object sender, RoutedEventArgs e)
+    {
+        if (!viewModel.Navigation.Back()) return;
+        if (int.TryParse(viewModel.Navigation.Workspace, out var index)) WorkspaceTabs.SelectedIndex = index;
+        else if (viewModel.Navigation.Context is { } context)
+        { WorkspaceTabs.SelectedItem = OperationWorkspaceTab; await viewModel.OperationWorkbench.OpenAsync(context); }
+        else WorkspaceTabs.SelectedIndex = 1;
+    }
+
+    private async void OpenWorkbenchRecipe_Click(object sender, RoutedEventArgs e)
+    {
+        var details = viewModel.OperationWorkbench.Details;
+        if (details is null) return;
+        try { WorkspaceTabs.SelectedIndex = 0; await viewModel.CaseWorkspace.NavigateToOperationAsync(details.RecipeCaseId, details.RecipeOperationId); }
+        catch (Exception exception) { LocalizedMessageBox.Show(this, exception.Message, "Open operation", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
 
     private async void TimelineOperationActionRequested(object? sender, TimelineOperationActionRequest request)
@@ -247,6 +313,10 @@ public partial class MainWindow : Window
         {
             switch (request.Action)
             {
+                case "OPEN_OPERATION" when LegacyNavigation.IsChecked != true:
+                    await OpenWorkbenchAsync(new(request.Item.CaseId, request.Item.CaseOperationId, null,
+                        request.Item.BatchOperationId, request.Item.MachineId, request.Item.Context));
+                    break;
                 case "OPEN_CASE":
                 case "OPEN_OPERATION":
                 case "UPLOAD_GCODE":
@@ -264,22 +334,27 @@ public partial class MainWindow : Window
                     NcViewerWindow.Open(ncViewer);
                     break;
                 case "OPEN_PRODUCTION_PACKAGE" when request.Payload is ProductionPackageInfo package:
-                    var picker = new OpenFolderDialog
-                    {
-                        Title = $"Export Production Package {package.ProductionPackageId}",
-                        Multiselect = false
-                    }.Localized();
-                    if (picker.ShowDialog(this) == true)
-                    {
-                        await viewModel.SetupQueue.ExportCurrentProductionPackageAsync(package, picker.FolderName);
-                        Process.Start(new ProcessStartInfo(picker.FolderName) { UseShellExecute = true });
-                    }
+                    await ExportReviewedPackageAsync(package);
                     break;
             }
         }
         catch (Exception exception)
         {
             LocalizedMessageBox.Show(this, exception.Message, "Preparation action", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async Task ExportReviewedPackageAsync(ProductionPackageInfo package)
+    {
+        var picker = new OpenFolderDialog
+        {
+            Title = $"Export reviewed package #{package.PackageNumber}: {package.ProductionPackageId}",
+            Multiselect = false
+        }.Localized();
+        if (picker.ShowDialog(this) == true)
+        {
+            await viewModel.SetupQueue.ExportCurrentProductionPackageAsync(package, picker.FolderName);
+            Process.Start(new ProcessStartInfo(picker.FolderName) { UseShellExecute = true });
         }
     }
 

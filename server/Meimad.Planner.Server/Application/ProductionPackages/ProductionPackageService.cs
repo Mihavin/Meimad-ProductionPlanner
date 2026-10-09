@@ -33,6 +33,9 @@ internal sealed class ProductionPackageService(
         var request = ProductionPackageRequest.Create(actor, requestId, operationId, offsetMode, selection);
         if (request is not null && await repository.ReadRequestAsync(request, cancellationToken) is { } replay)
             return replay;
+        var root = Path.GetFullPath(options.ResolvedPackageRoot);
+        using var activity = await PackageStorageActivity.BuildAsync(root, cancellationToken, options.MaximumConcurrentBuilds);
+        var budget = new PackageBuildBudget(options.MaximumPackageBytes);
         var context = await repository.ReadBuildContextAsync(operationId, selection, cancellationToken)
             ?? throw new ProductionPackageBuildException(
                 "production_package_operation_not_found",
@@ -56,7 +59,6 @@ internal sealed class ProductionPackageService(
             ? (int?)null
             : RandomNumberGenerator.GetInt32(100000, 1_000_000);
         var createdAt = timeProvider.GetUtcNow();
-        var root = Path.GetFullPath(options.ResolvedPackageRoot);
         Directory.CreateDirectory(root);
         var staging = ResolveChild(root, $".staging-{packageId}");
         var final = ResolveChild(root, packageId);
@@ -65,6 +67,9 @@ internal sealed class ProductionPackageService(
         var guardedFiles = new List<Stream>();
         try
         {
+            var journal = new PackagePublicationJournal(1, packageId, createdAt,
+                ProductionPackagePublication.Fingerprint(context, offsetMode), "STAGING", []);
+            await journal.SaveAsync(staging, cancellationToken);
             var artifacts = new List<ProductionPackageArtifact>();
             int? placeholderProtocolVersion = null;
             if (context.ExecutionMode == "CNC_GCODE")
@@ -74,7 +79,7 @@ internal sealed class ProductionPackageService(
                     throw new ProductionPackageBuildException(
                         "production_package_source_missing",
                         "The immutable NC source artifact is missing; no package was activated.");
-                var sourceBytes = await ReadVerifiedSourceAsync(
+                var sourceBytes = await ReadVerifiedSourceAsync(budget,
                     sourcePath, context.GCodeHash!, "NC", cancellationToken);
                 var sourceLines = Encoding.UTF8.GetString(sourceBytes).Split(
                     ["\r\n", "\n", "\r"], StringSplitOptions.None);
@@ -125,7 +130,7 @@ internal sealed class ProductionPackageService(
                     placeholderProtocolVersion = 1;
                 }
                 var runnablePath = $"nc/{SafeFileName(context.GCodeOriginalFileName!)}";
-                artifacts.Add(await WriteAsync(
+                artifacts.Add(await WriteAsync(budget,
                     staging, packageId, ProductionPackageArtifactTypes.RunnableNc,
                     runnablePath, transformed,
                     context.GCodeReleaseId, cancellationToken));
@@ -143,9 +148,9 @@ internal sealed class ProductionPackageService(
                         throw new ProductionPackageBuildException(
                             "production_package_source_missing",
                             $"The immutable subprogram '{subprogram.OriginalFileName}' is missing; no package was activated.");
-                    artifacts.Add(await WriteAsync(
+                    artifacts.Add(await WriteAsync(budget,
                         staging, packageId, ProductionPackageArtifactTypes.NcSubprogram, subprogramPath,
-                        await ReadVerifiedSourceAsync(
+                        await ReadVerifiedSourceAsync(budget,
                             subprogramSource, subprogram.FileHash, $"subprogram '{subprogram.OriginalFileName}'",
                             cancellationToken),
                         context.GCodeReleaseId, cancellationToken));
@@ -173,7 +178,7 @@ internal sealed class ProductionPackageService(
                         $"MEIMAD/V/2/CONTEXT/PACKAGE/{packageNumber}/RUN/{context.RunNumber ?? 0}/MACHINE/{NcSafe(context.MachineNumber)}/NCRELEASE/{ncId}/OFFSETRELEASE/{releaseToken!.Value}/MACROVERSION/{context.Verification.ExpectedMacroVersion}/PROGRAM/{ncId}"));
                     var loader = Encoding.ASCII.GetBytes(string.Join("\r\n", dialect.OffsetLoader(
                         body, context.Verification.ChallengeProgramNumber, releaseToken!.Value, ncId, loaderContext)));
-                    artifacts.Add(await WriteAsync(
+                    artifacts.Add(await WriteAsync(budget,
                         staging, packageId, ProductionPackageArtifactTypes.OffsetLoader,
                         dialect.OffsetLoaderLogicalPath, loader, offsetLoaderId, cancellationToken));
                 }
@@ -182,7 +187,7 @@ internal sealed class ProductionPackageService(
                     var body = new List<string>(identityComments);
                     body.AddRange(offsetComments);
                     var program = Encoding.ASCII.GetBytes(string.Join("\r\n", dialect.ToolOffsetProgram(body, offsetLines)));
-                    artifacts.Add(await WriteAsync(
+                    artifacts.Add(await WriteAsync(budget,
                         staging, packageId, ProductionPackageArtifactTypes.ToolOffsetProgram,
                         dialect.ToolOffsetProgramLogicalPath, program,
                         context.ToolPreparation?.ToolPreparationId, cancellationToken));
@@ -196,15 +201,15 @@ internal sealed class ProductionPackageService(
                     throw new ProductionPackageBuildException(
                         "production_package_source_missing",
                         "The immutable Tool Table source artifact is missing; no package was activated.");
-                var toolBytes = await ReadVerifiedSourceAsync(
+                var toolBytes = await ReadVerifiedSourceAsync(budget,
                     toolPath, context.ToolTableHash, "Tool Table", cancellationToken);
-                artifacts.Add(await WriteAsync(
+                artifacts.Add(await WriteAsync(budget,
                     staging, packageId, ProductionPackageArtifactTypes.ToolTable,
                     $"tool-table/{SafeFileName(context.ToolTableOriginalFileName)}", toolBytes,
                     context.ToolTableReleaseId, cancellationToken));
                 if (context.ToolPreparation is not null)
                 {
-                    artifacts.Add(await WriteAsync(
+                    artifacts.Add(await WriteAsync(budget,
                         staging, packageId, ProductionPackageArtifactTypes.ToolOffsets,
                         "tool-offsets/tool-offsets.json",
                         ToolOffsetsArtifact(context, toolOffsets!, offsetLines is not null),
@@ -280,10 +285,14 @@ internal sealed class ProductionPackageService(
                     value.SourceReleaseId
                 })
             }, JsonOptions);
-            var manifest = await WriteAsync(
+            var manifest = await WriteAsync(budget,
                 staging, packageId, ProductionPackageArtifactTypes.Manifest,
                 "manifest.json", manifestBytes, null, cancellationToken);
             artifacts.Add(manifest);
+
+            journal = journal with { State = "READY", Files = artifacts.Select(a =>
+                new PackageJournalFile(a.LogicalPath, a.FileSize, a.FileHash)).ToArray() };
+            await journal.SaveAsync(staging, cancellationToken);
 
             files.Move(staging, final);
             moved = true;
@@ -359,9 +368,9 @@ internal sealed class ProductionPackageService(
             throw new ProductionPackageBuildException(
                 "production_package_artifact_missing",
                 "The immutable Production Package artifact is missing from Server storage.");
-        var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
-        var actual = Convert.ToHexStringLower(SHA256.HashData(bytes));
-        if (!string.Equals(actual, artifact.FileHash, StringComparison.Ordinal))
+        await using var content = files.OpenForPublication(path);
+        var actual = Convert.ToHexStringLower(await SHA256.HashDataAsync(content, cancellationToken));
+        if (content.Length != artifact.FileSize || !string.Equals(actual, artifact.FileHash, StringComparison.Ordinal))
             throw new ProductionPackageBuildException(
                 "production_package_artifact_corrupt",
                 "The immutable Production Package artifact failed its checksum verification.");
@@ -534,7 +543,7 @@ internal sealed class ProductionPackageService(
                 "toolOffsetMode must be MEASURED or MANUAL_DUMMY.");
     }
 
-    private async Task<ProductionPackageArtifact> WriteAsync(
+    private async Task<ProductionPackageArtifact> WriteAsync(PackageBuildBudget budget,
         string staging, string packageId, string type, string logicalPath, byte[] bytes,
         string? sourceReleaseId, CancellationToken token)
     {
@@ -542,11 +551,13 @@ internal sealed class ProductionPackageService(
             throw new ProductionPackageBuildException(
                 "production_package_artifact_size_invalid",
                 $"Artifact '{logicalPath}' is empty or exceeds the configured limit.");
+        budget.AddOutput(bytes.LongLength);
         var path = ResolveChild(staging, logicalPath.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await files.WriteAsync(path, bytes, token);
         var hash = Convert.ToHexStringLower(SHA256.HashData(bytes));
-        var actual = Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(path, token)));
+        await using var written = files.OpenForPublication(path);
+        var actual = Convert.ToHexStringLower(await SHA256.HashDataAsync(written, token));
         if (actual != hash)
             throw new ProductionPackageBuildException(
                 "production_package_artifact_write_failed", $"Artifact '{logicalPath}' failed write verification.");
@@ -554,13 +565,18 @@ internal sealed class ProductionPackageService(
             $"{packageId}/{logicalPath}", bytes.LongLength, hash, sourceReleaseId);
     }
 
-    private static async Task<byte[]> ReadVerifiedSourceAsync(
+    private async Task<byte[]> ReadVerifiedSourceAsync(PackageBuildBudget budget,
         string path,
         string expectedHash,
         string label,
         CancellationToken token)
     {
-        var bytes = await File.ReadAllBytesAsync(path, token);
+        await using var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous);
+        if (source.Length > options.MaximumArtifactBytes)
+            throw new ProductionPackageBuildException("production_package_artifact_size_invalid", "A source artifact exceeds the configured byte limit.");
+        budget.AddInput(source.Length);
+        var bytes = new byte[checked((int)source.Length)];
+        await source.ReadExactlyAsync(bytes, token);
         var actualHash = Convert.ToHexStringLower(SHA256.HashData(bytes));
         if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
             throw new ProductionPackageBuildException(

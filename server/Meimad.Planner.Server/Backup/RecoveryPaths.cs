@@ -9,13 +9,21 @@ internal static class RecoveryPaths
     {
         var parts = relative.Replace('\\', '/').Split('/');
         if (Path.IsPathRooted(relative) || parts.Any(p => string.IsNullOrWhiteSpace(p) || p is "." or ".."
-            || p.Contains(':') || p.EndsWith('.') || p.EndsWith(' ') || p.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
+            || p.Contains(':') || p.EndsWith('.') || p.EndsWith(' ') || IsDeviceName(p) || p.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
             throw new InvalidDataException("Unsafe recovery file path.");
         var path = Path.GetFullPath(Path.Combine(root, Path.Combine(parts)));
         if (!path.StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
             StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Recovery path escaped its root.");
         RejectLinks(path);
         return path;
+    }
+
+    private static bool IsDeviceName(string part)
+    {
+        var stem = part.Split('.')[0].TrimEnd(' ').ToUpperInvariant();
+        return stem is "CON" or "PRN" or "AUX" or "NUL" or "CONIN$" or "CONOUT$"
+            || (stem.Length == 4 && (stem.StartsWith("COM") || stem.StartsWith("LPT"))
+                && "123456789\u00b9\u00b2\u00b3".Contains(stem[3]));
     }
 
     internal static void RejectLinks(string path)

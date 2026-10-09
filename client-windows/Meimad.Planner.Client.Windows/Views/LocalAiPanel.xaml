@@ -1,0 +1,42 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.LocalAiPanel"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <UserControl.Resources><BooleanToVisibilityConverter x:Key="VisibleWhenTrue" /></UserControl.Resources>
+ <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+  <StackPanel Margin="12">
+   <TextBlock Text="AI assistance / Server evidence" FontSize="20" FontWeight="SemiBold" />
+   <StackPanel Visibility="{Binding ShowRunControls, Converter={StaticResource VisibleWhenTrue}}"><TextBlock Text="Production Run ID" Margin="0,8,0,0" /><TextBox Text="{Binding RunId, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" FlowDirection="LeftToRight" /></StackPanel>
+   <TextBlock Text="Machine ID (optional)" /><TextBox Text="{Binding MachineId, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" FlowDirection="LeftToRight" />
+   <TextBlock Text="Shift interval: ISO instants with Z or UTC offset" Margin="0,8,0,0" />
+   <TextBox Text="{Binding FromUtc, UpdateSourceTrigger=PropertyChanged}" FlowDirection="LeftToRight" AutomationProperties.Name="Shift start with UTC offset" />
+   <TextBox Text="{Binding ToUtc, UpdateSourceTrigger=PropertyChanged}" FlowDirection="LeftToRight" AutomationProperties.Name="Shift end with UTC offset" />
+   <WrapPanel Margin="0,8"><Button Content="Explain blockers" Command="{Binding ExplainCommand}" Visibility="{Binding ShowRunControls, Converter={StaticResource VisibleWhenTrue}}" /><Button Content="Summarize shift" Command="{Binding SummarizeCommand}" /><Button Content="Cancel" Command="{Binding CancelCommand}" /></WrapPanel>
+   <TextBox Text="{Binding SearchTerm, UpdateSourceTrigger=PropertyChanged}" MaxLength="128" AutomationProperties.Name="Historical incident code or document phrase" />
+   <Button Content="Find similar incidents" Command="{Binding SimilarCommand}" HorizontalAlignment="Left" Margin="0,5" />
+   <Button Content="Recheck answer sources" Command="{Binding RecheckCommand}" HorizontalAlignment="Left" Margin="0,5" />
+   <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
+   <TextBox Text="{Binding Correction, UpdateSourceTrigger=PropertyChanged}" MaxLength="500" TextWrapping="Wrap" AutomationProperties.Name="Optional feedback correction" Margin="0,8,0,0" />
+   <WrapPanel><Button Content="Useful answer" Command="{Binding UsefulCommand}" /><Button Content="Not useful" Command="{Binding NotUsefulCommand}" /></WrapPanel>
+   <TextBlock Text="{Binding FeedbackStatus}" TextWrapping="Wrap" />
+   <ItemsControl ItemsSource="{Binding Answer.Claims}"><ItemsControl.ItemTemplate><DataTemplate>
+    <StackPanel Margin="0,7"><TextBlock Text="{Binding Text}" TextWrapping="Wrap" /><TextBlock Text="{Binding Citations}" FontFamily="Consolas" FlowDirection="LeftToRight" /></StackPanel>
+   </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+   <ItemsControl ItemsSource="{Binding Answer.Evidence.KnownLimitations}"><ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,5" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+   <TextBlock Text="Cited evidence — expand to inspect exact source IDs and versions" FontWeight="SemiBold" Margin="0,10,0,4" />
+   <ItemsControl ItemsSource="{Binding Answer.Evidence.Facts}"><ItemsControl.ItemTemplate><DataTemplate>
+    <Expander Header="{Binding EvidenceId}" Margin="0,3"><StackPanel Margin="12,3">
+     <TextBlock Text="{Binding Description}" TextWrapping="Wrap" /><TextBlock Text="{Binding Validity}" />
+     <TextBlock Text="{Binding Source.EntityType}" /><TextBox Text="{Binding Source.EntityId, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" FlowDirection="LeftToRight" />
+     <TextBlock Text="{Binding SourceVersion}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+     <TextBlock Text="{Binding ObservedAt, StringFormat=u}" /><TextBlock Text="{Binding Value}" TextWrapping="Wrap" />
+     <Button Content="Inspect authorized source" Command="{Binding DataContext.InspectEvidenceCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" HorizontalAlignment="Left" />
+    </StackPanel></Expander>
+   </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+   <GroupBox Header="Source inspection" Margin="0,12,0,0"><StackPanel Margin="8" DataContext="{Binding InspectedEvidence}">
+    <TextBlock Text="{Binding Currency}" FontWeight="Bold" /><TextBlock Text="{Binding SampledAt, StringFormat=u}" /><TextBlock Text="{Binding CheckedAt, StringFormat=u}" />
+    <TextBlock Text="{Binding Fact.Description}" TextWrapping="Wrap" /><TextBlock Text="{Binding Fact.Source.EntityType}" />
+    <TextBox Text="{Binding Fact.Source.EntityId, Mode=OneWay}" IsReadOnly="True" FlowDirection="LeftToRight" /><TextBlock Text="{Binding Fact.SourceVersion}" TextWrapping="Wrap" FlowDirection="LeftToRight" />
+    <TextBlock Text="{Binding Fact.Value}" TextWrapping="Wrap" />
+   </StackPanel></GroupBox>
+  </StackPanel>
+ </ScrollViewer>
+</UserControl>

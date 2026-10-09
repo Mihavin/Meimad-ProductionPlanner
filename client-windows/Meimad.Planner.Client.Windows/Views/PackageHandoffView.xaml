@@ -1,0 +1,15 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.PackageHandoffView"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <StackPanel Margin="0,12">
+  <TextBlock Text="Physical handoff — tracking only" FontSize="18" FontWeight="SemiBold" />
+  <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Margin="0,5" />
+  <ComboBox ItemsSource="{Binding View.QualifiedWorkers}" SelectedItem="{Binding SelectedWorker}" DisplayMemberPath="Name" IsEnabled="{Binding CanChooseWorker}" AutomationProperties.Name="Qualified setup operator receiving the package" />
+  <WrapPanel Margin="0,6"><Button Content="Record physical handoff" Command="{Binding RecordCommand}" /><Button Content="Refresh handoff evidence" Command="{Binding RefreshCommand}" /></WrapPanel>
+  <TextBlock Text="Handoff history for this execution context (latest 100)" FontWeight="SemiBold" Margin="0,5" />
+  <ItemsControl ItemsSource="{Binding View.History}"><ItemsControl.ItemTemplate><DataTemplate>
+   <StackPanel Margin="0,5"><TextBlock Text="{Binding RecordedAt, StringFormat=u}" /><TextBlock Text="{Binding EmployeeName}" /><TextBlock Text="{Binding Actor}" />
+    <TextBlock Text="{Binding PackageId}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+   </StackPanel>
+  </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+ </StackPanel>
+</UserControl>

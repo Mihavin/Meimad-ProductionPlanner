@@ -26,6 +26,9 @@
                             ToolTip="Calculate and refresh the Server Timeline" AutomationProperties.Name="Calculate and refresh Timeline" Margin="0">
                         <Image Source="{DynamicResource Icon.Refresh}" Width="24" Height="24" />
                     </Button>
+                    <Button Content="Long-range report" Command="{Binding ReportCommand}" Margin="8,0,0,0"
+                            ToolTip="Calculate the selected range as an explicit report; reports do not refresh automatically" />
+                    <Button Content="Cancel" Command="{Binding CancelCommand}" Margin="8,0,0,0" />
                 </StackPanel>
                 <StackPanel Margin="0,0,16,0">
                     <TextBlock Text="TIMELINE" FontSize="17" FontWeight="Bold" />

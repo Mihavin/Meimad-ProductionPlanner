@@ -106,7 +106,8 @@ internal sealed record ProductionReadinessResult(
     string? EffectiveGCodeReleaseId,
     bool RequiresExplicitGCodeSelection,
     IReadOnlyList<ReadinessRelease> CompatibleGCodeReleases,
-    IReadOnlyList<ProductionActionDecision>? Actions = null)
+    IReadOnlyList<ProductionActionDecision>? Actions = null,
+    Projections.ProjectionFreshness? Freshness = null)
 {
     internal string Summary => IsReadyForProduction && Actions?.Any(x => x.Action == "RecordProduction"
         && x.Reasons.Any(reason => reason.Code == "controller_verification" && reason.Classification == "BLOCKING")) == true

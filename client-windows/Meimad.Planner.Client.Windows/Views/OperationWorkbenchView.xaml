@@ -1,0 +1,58 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.OperationWorkbenchView"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:views="clr-namespace:Meimad.Planner.Client.Windows.Views">
+ <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+  <StackPanel Margin="16">
+   <TextBlock Text="Operation / Production Package" FontSize="22" FontWeight="SemiBold" />
+   <TextBlock Text="{Binding Details.Breadcrumb}" TextWrapping="Wrap" Margin="0,8" FontWeight="SemiBold" />
+   <ComboBox ItemsSource="{Binding Contexts}" SelectedItem="{Binding SelectedContext}" HorizontalAlignment="Stretch" AutomationProperties.Name="Exact Run program and output">
+    <ComboBox.ItemTemplate><DataTemplate><StackPanel FlowDirection="LeftToRight">
+     <TextBlock Text="{Binding ProductionRunId}" FontFamily="Consolas" /><TextBlock Text="{Binding ProductionRunProgramId}" FontFamily="Consolas" />
+     <TextBlock Text="{Binding ProductionRunOutputId}" FontFamily="Consolas" /><TextBlock Text="{Binding MachineId}" FontFamily="Consolas" />
+    </StackPanel></DataTemplate></ComboBox.ItemTemplate>
+   </ComboBox>
+   <Button Content="Refresh context" Command="{Binding RefreshCommand}" HorizontalAlignment="Left" Margin="0,8" />
+   <WrapPanel><Button Content="Build measured package" Command="{Binding BuildMeasuredCommand}" /><Button Content="Build manual-offset package" Command="{Binding BuildManualCommand}" /></WrapPanel>
+   <TextBlock Text="The Server checks exact context, readiness and Machine offset capability on every build." TextWrapping="Wrap" />
+   <Button Content="Explain blockers for this Run" Command="{Binding ExplainBlockersCommand}" HorizontalAlignment="Left" />
+   <Expander Header="AI assistance / evidence" IsExpanded="False"><views:LocalAiPanel DataContext="{Binding Ai}" MaxHeight="600" /></Expander>
+   <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Margin="0,5" />
+   <views:PackageHandoffView DataContext="{Binding Handoff}" />
+   <TextBlock Text="Quantity obligation (Batch Operation)" FontWeight="SemiBold" />
+   <TextBlock Text="{Binding Details.BatchQuantity, StringFormat=Batch quantity: {0}}" />
+   <TextBlock Text="{Binding Details.MaterialType, StringFormat=Case material: {0}}" TextWrapping="Wrap" />
+   <Expander Header="Order, stock and scrap allocations"><StackPanel>
+    <TextBlock Text="{Binding Details.AllocationNotice}" TextWrapping="Wrap" />
+    <DataGrid ItemsSource="{Binding Details.Allocations}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MaxHeight="200">
+     <DataGrid.Columns><DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="130" /><DataGridTextColumn Header="Order" Binding="{Binding OrderReference}" Width="170" /><DataGridTextColumn Header="Quantity" Binding="{Binding Quantity}" Width="90" /><DataGridTextColumn Header="Due date" Binding="{Binding DueDate}" Width="130" /></DataGrid.Columns>
+    </DataGrid>
+   </StackPanel></Expander>
+   <TextBlock Text="{Binding Context.BatchOperationId}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+   <TextBlock Text="Physical Run / program / output" FontWeight="SemiBold" Margin="0,10,0,0" />
+   <TextBlock Text="{Binding Context.ExactContext.ProductionRunId}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+   <TextBlock Text="{Binding Context.ExactContext.ProductionRunProgramId}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+   <TextBlock Text="{Binding Context.ExactContext.ProductionRunOutputId}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+   <TextBlock Text="Operation readiness (all contexts)" FontWeight="SemiBold" Margin="0,10,0,4" />
+   <ItemsControl ItemsSource="{Binding Readiness.Components}"><ItemsControl.ItemTemplate><DataTemplate>
+    <StackPanel Margin="0,3"><TextBlock Text="{Binding Label}" FontWeight="SemiBold" /><TextBlock Text="{Binding State}" /><TextBlock Text="{Binding Message}" TextWrapping="Wrap" /></StackPanel>
+   </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+   <TextBlock Text="Inspected immutable package — current or historical status is shown above" FontWeight="SemiBold" Margin="0,10,0,4" />
+   <WrapPanel><Button Content="Inspect previous package" Command="{Binding PreviousPackageCommand}" /><Button Content="Export reviewed current package" Command="{Binding ExportPackageCommand}" /></WrapPanel>
+   <WrapPanel><Button Content="Verify package files" Command="{Binding VerifyFilesCommand}" /><Button Content="Inspect runnable NC" Command="{Binding InspectNcCommand}" /></WrapPanel>
+   <TextBlock Text="{Binding IntegrityStatus}" TextWrapping="Wrap" />
+   <TextBlock Text="{Binding Package.ProductionPackageId}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+   <TextBlock Text="{Binding Package.CreatedAt, StringFormat=u}" /><TextBlock Text="{Binding Package.CreatedBy}" />
+   <TextBlock Text="NC release / Tool Table / Offset Loader" FontWeight="SemiBold" Margin="0,8,0,0" />
+   <TextBlock Text="{Binding Package.GCodeReleaseId}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+   <TextBlock Text="{Binding Package.ToolTableReleaseId}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+   <TextBlock Text="{Binding Package.OffsetLoaderReleaseId}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+   <TextBlock Text="{Binding Package.ToolOffsetMode}" />
+   <TextBlock Text="Manifest SHA-256" FontWeight="SemiBold" Margin="0,8,0,0" />
+   <TextBlock Text="{Binding Package.ManifestSha256}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+   <TextBlock Text="Supersedes package" FontWeight="SemiBold" Margin="0,8,0,0" />
+   <TextBlock Text="{Binding Package.SupersedesProductionPackageId}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+   <ItemsControl ItemsSource="{Binding Package.Artifacts}"><ItemsControl.ItemTemplate><DataTemplate>
+    <StackPanel Margin="0,6"><TextBlock Text="{Binding LogicalPath}" FontWeight="SemiBold" /><TextBlock Text="{Binding ArtifactType}" /><TextBlock Text="{Binding Sha256}" FontFamily="Consolas" FlowDirection="LeftToRight" TextWrapping="Wrap" /></StackPanel>
+   </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+  </StackPanel>
+ </ScrollViewer>
+</UserControl>

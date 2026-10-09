@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "status": "UNCOMMISSIONED",
+  "hostInventory": null,
+  "serviceIdentity": null,
+  "runtime": { "provider": "Ollama", "version": null, "executableSha256": null, "acquisitionSource": null },
+  "candidates": [],
+  "selectedModel": null,
+  "requiredCandidateFields": ["modelId", "digest", "quantization", "licenseSource", "licenseReview", "artifactSource", "evaluationReport"],
+  "budgets": { "maxInputTokens": 8192, "maxOutputTokens": 1024, "requestTimeoutSeconds": 60, "maxQueueWaitSeconds": 30 },
+  "offlineRebootVerified": false,
+  "ingestionImpactAccepted": false,
+  "humanUsefulnessAccepted": false,
+  "approvedBy": null,
+  "approvedAt": null
+}

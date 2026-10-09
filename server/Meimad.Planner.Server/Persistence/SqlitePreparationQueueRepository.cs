@@ -1,5 +1,7 @@
 using Meimad.Planner.Server.Application.Preparation;
 using Microsoft.Data.Sqlite;
+using System.Diagnostics;
+using Meimad.Planner.Server.Application.Projections;
 
 namespace Meimad.Planner.Server.Persistence;
 
@@ -11,17 +13,27 @@ internal sealed class SqlitePreparationQueueRepository(SqliteDatabase database)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: true);
+        var snapshotStarted = Stopwatch.GetTimestamp();
         var metadata = await ReadMetadataAsync(connection, transaction, cancellationToken);
         var result = new List<PreparationQueueSource>(metadata.Count);
         var contexts = (await SqliteProductionPackageContext.ListAsync(connection,transaction,null,cancellationToken))
             .ToDictionary(value=>value.ProductionRunOutputId,StringComparer.Ordinal);
+        var verifiedPackages = await SqliteMachineWorkflowReporting.ReadVerifiedPackagesAsync(connection, transaction, cancellationToken);
+        var references = await SqliteProductionReadinessContextReader.ReadReferencesAsync(connection, transaction,
+            contexts.Values.Select(context => context.MachineId), contexts.Values.Select(context => context.ProcessRevisionId).OfType<string>(),
+            contexts.Values.Select(context => context.BatchOperationId), cancellationToken);
+        var bases = await SqliteProductionReadinessContextReader.ReadManyAsync(connection, transaction,
+            metadata.Select(x => x.BatchOperationId).Distinct(StringComparer.Ordinal).ToArray(), cancellationToken, verifiedPackages: verifiedPackages);
 
         foreach (var row in metadata)
         {
             if (!contexts.TryGetValue(row.OutputId,out var exact)) continue;
-            var context=await SqliteProductionReadinessContextReader.ReadForPackageAsync(connection,transaction,exact,cancellationToken);
+            var basis = bases.GetValueOrDefault(row.BatchOperationId);
+            // A split/ambiguous assignment must still resolve its exact Machine independently.
+            if (basis?.MachineAssignmentId != exact.MachineAssignmentId || basis.AmbiguousExecutionContext) basis = null;
+            var context=await SqliteProductionReadinessContextReader.ReadForPackageAsync(connection,transaction,exact,cancellationToken,
+                preloadedBasis: basis, verifiedPackages: verifiedPackages, references: references);
             exact=exact with { ProcessRevisionId=context.ActiveProcessRevisionId };
-            var hasPackage=await SqliteProductionPackageRepository.ReadCurrentAsync(connection,transaction,exact,cancellationToken) is not null;
             result.Add(new(
                 row.BatchOperationId,
                 row.ProductionRunId,
@@ -36,13 +48,15 @@ internal sealed class SqlitePreparationQueueRepository(SqliteDatabase database)
                 row.OperationName,
                 row.LatestWorkflowEventType,
                 context,
-                hasPackage,
+                false,
                 row.CaseId,
                 row.CaseOperationId, exact, row.RecipeCaseId, row.RecipeCaseOperationId));
         }
 
+        var valid = await SqlitePreparationPackageValidity.ReadAsync(connection, transaction, result, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return result;
+        PlannerPerformanceMetrics.QueueSnapshot.Record(Stopwatch.GetElapsedTime(snapshotStarted).TotalMilliseconds);
+        return result.Select(row => row with { HasCurrentValidProductionPackage = valid.Contains(row.Context!.ProductionRunOutputId) }).ToArray();
     }
 
     private static async Task<IReadOnlyList<MetadataRow>> ReadMetadataAsync(

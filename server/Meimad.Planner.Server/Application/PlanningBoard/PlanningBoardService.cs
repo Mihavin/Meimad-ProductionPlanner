@@ -1,4 +1,5 @@
 using Meimad.Planner.Server.Application.Timeline;
+using Meimad.Planner.Server.Application.Projections;
 
 namespace Meimad.Planner.Server.Application.PlanningBoard;
 
@@ -15,29 +16,38 @@ internal sealed class PlanningBoardService
     private readonly IProductionRunPlanningProjectionRepository runProjection;
     private readonly TimelineProjectionService timeline;
     private readonly ILogger<PlanningBoardService> logger;
+    private readonly ProjectionConsistency? consistency;
 
     public PlanningBoardService(
         IPlanningBoardRepository repository,
         IProductionRunPlanningProjectionRepository runProjection,
         TimelineProjectionService timeline,
-        ILogger<PlanningBoardService> logger)
+        ILogger<PlanningBoardService> logger,
+        ProjectionConsistency? consistency = null)
     {
         this.repository = repository;
         this.runProjection = runProjection;
         this.timeline = timeline;
         this.logger = logger;
+        this.consistency = consistency;
     }
 
     internal async Task<PlanningBoardSnapshot> ReadAsync(CancellationToken cancellationToken = default)
+        => consistency is null ? await ReadCoreAsync(cancellationToken)
+            : await consistency.ReadAsync(ReadCoreAsync, (result, freshness) => result with { Freshness = freshness }, cancellationToken);
+
+    private async Task<PlanningBoardSnapshot> ReadCoreAsync(CancellationToken cancellationToken)
     {
+        var sourceStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         var snapshot = await repository.ReadAsync(cancellationToken);
+        PlannerPerformanceMetrics.BoardSource.Record(System.Diagnostics.Stopwatch.GetElapsedTime(sourceStarted).TotalMilliseconds);
         snapshot = snapshot with { ProductionRuns = await runProjection.ReadAsync(cancellationToken) };
         var horizonStart = snapshot.ReadAt.ToUniversalTime();
         var horizonEnd = horizonStart + ConflictHorizon;
         try
         {
             var projection = await timeline.CalculateAsync(
-                horizonStart, horizonEnd, horizonStart, cancellationToken);
+                horizonStart, horizonEnd, horizonStart, cancellationToken, suppliedRuns: snapshot.ProductionRuns);
             var conflicts = projection.Conflicts
                 .Where(conflict => !ExcludedConflictCodes.Contains(conflict.Code))
                 .OrderBy(conflict => SeverityRank(conflict.Severity))
@@ -60,7 +70,7 @@ internal sealed class PlanningBoardService
                 Conflicts = conflicts
             };
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is not OperationCanceledException and not ProjectionChangedException)
         {
             logger.LogError(exception, "Planning-board conflict calculation failed at {ReadAt}.", snapshot.ReadAt);
             return snapshot with

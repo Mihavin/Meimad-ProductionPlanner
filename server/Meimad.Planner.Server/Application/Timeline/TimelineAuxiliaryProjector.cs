@@ -39,7 +39,7 @@ internal static class TimelineAuxiliaryProjector
     internal static string WorkId(string batchOperationId, string requirementId) =>
         $"{batchOperationId}{WorkIdSeparator}{requirementId}";
 
-    internal static Output Project(Input input, AutomaticResourceScheduler scheduler)
+    internal static Output Project(Input input, AutomaticResourceScheduler scheduler, CancellationToken cancellationToken = default)
     {
         var conflicts = new List<TimelineProjectionConflict>();
         var predictedByBatch = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
@@ -161,7 +161,7 @@ internal static class TimelineAuxiliaryProjector
                 work,
                 workstations,
                 employees,
-                externals));
+                externals), cancellationToken);
         }
         catch (ResourcePlanningException exception)
         {

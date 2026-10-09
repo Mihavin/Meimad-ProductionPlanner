@@ -2209,6 +2209,7 @@ public sealed class PlannerApiClientTests
             Json(HttpStatusCode.OK, """
                 {
                   "readAt": "2026-08-11T10:00:00Z",
+                  "freshness": { "revision": "epoch:42", "runtimeId": "runtime", "evaluationAt": "2026-08-11T10:00:00Z", "computedAt": "2026-08-11T10:00:01Z", "attempts": 2, "status": "revision-stable" },
                   "conflictCalculationStatus": "unavailable",
                   "conflictCalculationMessage": "The pure time engine is not connected to the planning-board projection yet.",
                   "conflicts": [],

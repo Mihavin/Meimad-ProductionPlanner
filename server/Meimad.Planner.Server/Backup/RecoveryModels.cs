@@ -8,7 +8,12 @@ internal sealed record RecoveryManifest(int FormatVersion, string SetId, DateTim
 internal sealed record RecoverySetResult(string FileName, string SetId, DateTimeOffset SnapshotAt,
     DateTimeOffset VerifiedAt, int SchemaVersion, long ByteLength, string Sha256, int FileCount, int ExternalFolderCount);
 internal sealed record RecoveryStatus(bool Configured, string? Destination, string ScheduleOwner,
-    RecoverySetResult? LastComplete, double? AgeHours, string? LastAttemptResult);
+    RecoverySetResult? LastComplete, double? AgeHours, string? LastAttemptResult, DateTimeOffset? LastAttemptAt = null)
+{
+    public int RecoveryPointTargetHours => 4;
+    public int RecoveryTimeTargetHours => 4;
+    public bool RecoveryPointOverdue => LastComplete is null || AgeHours is null or < 0 or > 4;
+}
 internal sealed record RecoveryRestoreResult(string Directory, RecoveryManifest Manifest, string ActivationNotice);
 
 internal sealed class RecoveryOptions

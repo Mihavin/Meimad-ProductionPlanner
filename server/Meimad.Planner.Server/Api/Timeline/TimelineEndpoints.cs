@@ -1,14 +1,19 @@
 using System.Globalization;
 using Meimad.Planner.Server.Application.Timeline;
 using Meimad.Planner.Server.Application.Accounts;
+using Meimad.Planner.Server.Configuration;
+using Meimad.Planner.Server.Application.Projections;
 
 namespace Meimad.Planner.Server.Api.Timeline;
 
 internal static class TimelineEndpoints
 {
+    private static readonly SemaphoreSlim ReportGate = new(1, 1);
     internal static void MapTimelineEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/api/v1/timeline", ReadAsync);
+        endpoints.MapGet("/api/v1/timeline/report", (HttpContext context, TimelineProjectionService service,
+            TimelineOptions options, ProjectionResponseCache responses, CancellationToken token) => ReadCoreAsync(context, service, options, responses, token, report: true));
         endpoints.MapPut("/api/v1/timeline/auxiliary-pins", SetPinAsync);
         endpoints.MapDelete("/api/v1/timeline/auxiliary-pins/{batchOperationId}/{requirementId}", ClearPinAsync);
     }
@@ -108,8 +113,15 @@ internal static class TimelineEndpoints
     private static async Task<IResult> ReadAsync(
         HttpContext context,
         TimelineProjectionService service,
+        TimelineOptions options,
+        ProjectionResponseCache responses,
         CancellationToken cancellationToken)
+        => await ReadCoreAsync(context, service, options, responses, cancellationToken, report: false);
+
+    private static async Task<IResult> ReadCoreAsync(HttpContext context, TimelineProjectionService service,
+        TimelineOptions options, ProjectionResponseCache responses, CancellationToken cancellationToken, bool report)
     {
+        context.Response.Headers.CacheControl = "no-store";
         if (!TryReadInstant(context.Request.Query["from"], out var from)
             || !TryReadInstant(context.Request.Query["to"], out var to)
             || to <= from)
@@ -120,6 +132,11 @@ internal static class TimelineEndpoints
                 "Query parameters 'from' and 'to' must be RFC 3339 instants and 'to' must be after 'from'.",
                 context);
         }
+
+        var maximumDays = report ? options.MaximumReportDays : options.MaximumInteractiveDays;
+        if ((to - from).TotalDays > maximumDays)
+            return PlanningHttpSupport.Error(422, "timeline_horizon_limit",
+                $"The requested horizon exceeds {maximumDays} days. " + (report ? "Narrow the report range." : "Choose Long-range report for an explicit longer calculation."), context);
 
         DateTimeOffset? asOf = null;
         if (context.Request.Query.TryGetValue("asOf", out var asOfValues))
@@ -152,8 +169,20 @@ internal static class TimelineEndpoints
                 context);
         }
 
-        return Results.Ok(await service.CalculateAsync(
-            from, to, asOf, cancellationToken, recordDiagnostics: true));
+        if (report && !await ReportGate.WaitAsync(0, cancellationToken))
+        {
+            context.Response.Headers.RetryAfter = "1";
+            return PlanningHttpSupport.Error(429, "timeline_report_busy", "Another long-range report is running. Retry later.", context);
+        }
+        try
+        {
+            var key = $"timeline:{from.UtcTicks}:{to.UtcTicks}:{asOf?.UtcTicks.ToString(CultureInfo.InvariantCulture) ?? "live"}:{report}";
+            var json = context.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>().Value.SerializerOptions;
+            var bytes = await responses.ReadAsync(key, cacheCompleted: asOf is not null,
+                async token => PlannerPerformanceMetrics.Serialize(await service.CalculateAsync(from, to, asOf, token, recordDiagnostics: true), json), cancellationToken);
+            return Results.Bytes(bytes, "application/json; charset=utf-8");
+        }
+        finally { if (report) ReportGate.Release(); }
     }
 
     private static bool TryReadInstant(string? value, out DateTimeOffset instant) =>

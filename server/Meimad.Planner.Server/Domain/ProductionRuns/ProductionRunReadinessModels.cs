@@ -9,7 +9,8 @@ internal sealed record ProductionRunReadiness(
     IReadOnlyList<ProductionRunProgramReadiness> Programs,
     IReadOnlyList<ReadinessComponent> RunComponents,
     string? ContextStamp = null,
-    IReadOnlyList<ProductionActionDecision>? Actions = null);
+    IReadOnlyList<ProductionActionDecision>? Actions = null,
+    Projections.ProjectionFreshness? Freshness = null);
 
 internal sealed record ProductionRunProgramReadiness(
     string ProductionRunProgramId,

@@ -30,14 +30,17 @@ internal sealed record ProductionReadinessInputUpdate(
 
 internal sealed class ProductionReadinessService(
     IProductionReadinessRepository repository,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    Projections.ProjectionConsistency? consistency = null)
 {
     internal Task<ProductionReadinessResult> ReadAsync(
         string batchOperationId,
         CancellationToken cancellationToken = default)
     {
         ValidateId(batchOperationId);
-        return repository.ReadAsync(batchOperationId.Trim(), cancellationToken);
+        return consistency is null ? repository.ReadAsync(batchOperationId.Trim(), cancellationToken)
+            : consistency.ReadAsync(token => repository.ReadAsync(batchOperationId.Trim(), token),
+                (result, freshness) => result with { Freshness = freshness }, cancellationToken);
     }
 
     internal Task<ProductionReadinessResult> UpdateInputsAsync(

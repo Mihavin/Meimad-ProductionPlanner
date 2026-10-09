@@ -60,3 +60,13 @@ focas/*
 *.recovery-status.json*
 *.dpapi
 *.credential.xml
+data-protection-keys/
+appsettings.Recovery.json
+recovery-manifest.json
+
+# Locally acquired AI artifacts and deployment manifests (reviewed examples live in docs).
+*.gguf
+*.safetensors
+.ollama/
+appsettings.LocalAi.json
+local-ai-model-manifest.json

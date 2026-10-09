@@ -100,7 +100,14 @@ internal sealed record KitaronSourceSnapshot(
     IReadOnlyList<KitaronDiscoveredStation>? Stations = null,
     IReadOnlyList<KitaronSourceWorkOrder>? WorkOrders = null,
     IReadOnlyList<KitaronSourceWorkOrderLink>? WorkOrderLinks = null,
-    IReadOnlyList<KitaronSourceWorkOrderMaterial>? WorkOrderMaterials = null);
+    IReadOnlyList<KitaronSourceWorkOrderMaterial>? WorkOrderMaterials = null,
+    KitaronSourceConsistency? Consistency = null);
+
+/// <summary>
+/// How the source tables were read: <c>SQL_SERVER_SNAPSHOT</c> when the ERP database offers snapshot
+/// isolation, otherwise <c>SQL_SERVER_READ_COMMITTED</c>; the caveat records what limits the read.
+/// </summary>
+internal sealed record KitaronSourceConsistency(string Mode, DateTimeOffset StartedAt, DateTimeOffset CompletedAt, string? Caveat = null);
 
 internal interface IKitaronSourceReader
 {
@@ -268,7 +275,11 @@ internal sealed record KitaronSyncPlan(
     int RouteStepsSkipped = 0,
     IReadOnlySet<string>? RoutePartNumbers = null,
     IReadOnlyList<KitaronSyncBatch>? Batches = null,
-    IReadOnlyList<KitaronSyncWorkOrderSnapshot>? WorkOrders = null);
+    IReadOnlyList<KitaronSyncWorkOrderSnapshot>? WorkOrders = null)
+{
+    internal string? ExpectedLocalRevision { get; init; }
+    internal KitaronImportEvidence? Evidence { get; init; }
+}
 
 internal sealed record KitaronSyncStatus(
     string Status,
@@ -303,6 +314,9 @@ internal interface IKitaronSyncRepository
     Task<KitaronSyncStatus> MarkStartedAsync(int mappingVersion, DateTimeOffset now, CancellationToken cancellationToken);
     Task<KitaronSyncStatus> MarkFailedAsync(string status, string message, DateTimeOffset now, CancellationToken cancellationToken);
     Task<KitaronSyncStatus> ApplyAsync(KitaronSyncPlan plan, DateTimeOffset now, CancellationToken cancellationToken);
+    Task<KitaronImportLocalPreview> PreviewAsync(KitaronSyncPlan plan, DateTimeOffset now, CancellationToken cancellationToken)
+        => throw new NotSupportedException();
+    Task<KitaronSyncStatus?> FindReceiptAsync(string runId, CancellationToken cancellationToken) => Task.FromResult<KitaronSyncStatus?>(null);
 }
 
 internal sealed class KitaronSyncBlockedException(string message) : Exception(message);

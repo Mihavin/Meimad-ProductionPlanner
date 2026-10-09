@@ -7,6 +7,44 @@ internal static class ProductionPackageEndpoints
 {
     internal static void MapProductionPackageEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/v1/batch-operations/{operationId}/workbench", async (string operationId, HttpContext context,
+            ExecutionContextService service, CancellationToken token) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, null, out _, out var error)) return error!;
+            context.Response.Headers.CacheControl = "no-store";
+            try
+            {
+                var result = await service.ReadWorkbenchAsync(operationId, Selection(context), token);
+                return result is null ? Results.NotFound() : Results.Ok(result);
+            }
+            catch (ArgumentException exception) { return PlanningHttpSupport.Error(400, "context_invalid", exception.Message, context); }
+            catch (ProductionPackageBuildException exception) { return PlanningHttpSupport.Error(409, exception.Code, exception.Message, context); }
+        });
+        endpoints.MapGet("/api/v1/production-packages/{packageId}/handoffs", async (string packageId, HttpContext context,
+            PackageHandoffService service, CancellationToken token) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, null, out _, out var error)) return error!;
+            context.Response.Headers.CacheControl = "no-store";
+            try { return Results.Ok(await service.ReadAsync(packageId, token)); }
+            catch (ArgumentException exception) { return PlanningHttpSupport.Error(404, "handoff_context_missing", exception.Message, context); }
+        });
+        endpoints.MapPost("/api/v1/production-packages/{packageId}/handoffs", async (string packageId, HandoffRequest request,
+            HttpContext context, PackageHandoffService service, CancellationToken token) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, Permissions.PrepareTools, out var user, out var error)) return error!;
+            try { return Results.Ok(await service.RecordAsync(packageId, request, user!.UserName, token)); }
+            catch (ArgumentException exception) { return PlanningHttpSupport.Error(400, "handoff_invalid", exception.Message, context); }
+            catch (InvalidOperationException exception) { return PlanningHttpSupport.Error(409, "handoff_changed", exception.Message, context); }
+            catch (ProductionPackageBuildException exception) { return PlanningHttpSupport.Error(409, exception.Code, exception.Message, context); }
+        });
+        endpoints.MapGet("/api/v1/batch-operations/{operationId}/execution-contexts", async (string operationId,
+            HttpContext context, ExecutionContextService service, CancellationToken token) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, null, out _, out var error)) return error!;
+            context.Response.Headers.CacheControl = "no-store";
+            try { return Results.Ok(await service.ListAsync(operationId, token)); }
+            catch (ArgumentException exception) { return PlanningHttpSupport.Error(400, "context_invalid", exception.Message, context); }
+        });
         endpoints.MapGet("/api/v1/production-packages/{packageId}", async (string packageId, ProductionPackageService service, CancellationToken token) =>
         {
             var package=await service.ReadHistoricalAsync(packageId,token);
@@ -38,6 +76,11 @@ internal static class ProductionPackageEndpoints
         }
         catch (ProductionPackageBuildException exception)
         {
+            if (exception.Code == "production_package_build_busy")
+            {
+                context.Response.Headers.RetryAfter = "1";
+                return PlanningHttpSupport.Error(429, exception.Code, exception.Message, context);
+            }
             return PlanningHttpSupport.Error(exception.Code.StartsWith("production_package_context", StringComparison.Ordinal)
                 || exception.Code is "production_package_publication_conflict" or "production_package_request_conflict" ? 409 : 422, exception.Code, exception.Message, context);
         }

@@ -1,6 +1,6 @@
 # Meimad implementation tasks — audit repairs, industrial UI and local AI
 
-Repository status: see [the implementation record](../implementation-plan.md#audit-handoff-2026-10-08). C01/C02/C03/C04/C06 have implementations and executable validation; remaining task descriptions below are retained requirements, not completion claims.
+Repository status: see the current [implementation record](../implementation-plan.md). Correctness slices C01–C08 and D01–D04 have local implementations and recorded validation. D06, grouped workbench U01–U04, optional AI/evidence/corpus/feedback controls and deployment/evaluation tooling have been added through schema v108. U05 physical/operator acceptance, D05 performance acceptance and A07/A08 actual host/model/human pilot remain open. A01–A06 are an initial bounded fact-template/literal-retrieval implementation; free narrative and model translation are not claimed. The operational follow-up adds existing Timeline conflicts and completed-cycle samples, with their original measurement semantics; it does not invent shift occupancy or parts. Requirements below are retained and must not be mistaken for completion claims.
 
 
 Prepared 8 October 2026 from the GPT-6 Astra audit of `Mihavin/Meimad-ProductionPlanner`, `main` at `b13f841886e910c5debcc8f635a207912f833547`. This is an implementation handoff, not a statement that the work is complete. Source paths below are relative to that repository. Recheck the current branch before coding; do not reimplement a finding already fixed after the audited revision.
@@ -76,10 +76,10 @@ These are the remaining consequential choices. This backlog defines the proposed
 |---|---|---|---|
 | D1 ERP ownership | Code implements outbound SQL push; historical intent was read-only import | Keep installed enablement unchanged. Document allowed outbound fields, owner and overwrite policy. Import-only installations remain import-only | Enabling/expanding push; field-ownership policy in C07/D03 |
 | D2 Stage gates | Resolved by explicit owner approval, 2026-10-08 | Approved stage matrix; unknown capacity blocks managed work requiring tools, zero-tool work remains allowed; unmanaged legacy NC/tool-release exemptions retained with material readiness and valid execution context | C05 complete locally |
-| D3 Physical handoff | `TASKS_FOR_CODEX.md` §3 requires handoff; §7 makes package creation sufficient for Ready for Setup | Prefer separate “Package ready” and “Handed to setup” facts. Decide whether handoff blocks production/setup or is tracking only; no invented handoff for old work | U02 state transition policy |
-| D4 Non-loader setup | Machines without an executable loader need a real setup-start source | Retain an existing valid signal; otherwise specify the permitted actor/event instead of generating a fake loader | New setup-start behavior on affected machines |
-| D5 Recovery/retention | Production evidence retention and acceptable loss/downtime are not measured | Pilot target: 15–60 minute DB recovery point and same-shift restore; agree actual retention and backup destination | Operational acceptance of D01/D04 |
-| D6 AI data/hardware | Actual server/GPU capacity and approved document corpus are unknown | Start with structured server facts and local logs, one inference request, multilingual 7–14B-class candidate evaluation; add selected documents later | Model selection and production AI enablement |
+| D3 Physical handoff | Resolved by owner approval | Tracking only; package creation remains sufficient for Ready for Setup. Schema v106 records explicit qualified-worker handoff without changing production gates or inventing historical handoffs | Physical/operator acceptance of U02 |
+| D4 Non-loader setup | Owner approved retaining existing supported manual setup reports | Existing authorized signals remain; no fake loader or new bypass | Commissioning any new setup-start source |
+| D5 Recovery/retention | Owner approved `\\192.168.0.240\data\SQlite_BU`, external Windows scheduling every four hours, four-hour RPO/RTO, and seven-day verified orphan-file grace | Configuration/tooling implemented; actual destination access, installed schedule, restore time and backup retention acceptance remain open | Operational acceptance of D01/D04 |
+| D6 AI data/hardware | Owner requested disabled-by-default adapter and deterministic explanations while hardware is undecided, plus retrieval-folder UI | Implemented bounded adapter and explicit administrator-approved folders; no implicit corpus or enabled model. Actual host/model/license/human evaluation remains open | Model selection and production AI enablement |
 
 ## 3. Correctness tasks
 
@@ -195,6 +195,10 @@ Acceptance: failures before write, during transaction, immediately after externa
 
 ### D01 — make a complete, independently recoverable backup set
 
+**Status (2026-10-08): implemented locally; operational acceptance pending.** Encrypted manifest-backed sets, isolated restore checks, offline guarded activation, external scheduler script and Windows age/result display are present. See [implementation evidence](../implementation-plan.md) and the [recovery runbook](../recovery-runbook.md). NAS/service-account access, replacement-PC restore and measured RPO/RTO remain unaccepted; no task is installed and no new retention policy is applied.
+
+**Owner decisions (2026-10-08):** publish complete recovery sets to `\\192.168.0.240\data\SQlite_BU`; use an external Windows scheduled task as the sole scheduler, invoking Server-owned backup behavior. Keep the live database local. No task or destination configuration is deployed by recording this decision. The owner approved four-hour RPO (maximum data loss) and four-hour RTO (maximum restore time). Neither target has been demonstrated. Cadence must account for backup duration and failures to keep the latest verified snapshot within four hours; cadence and retention remain open. Preserve existing backup settings meanwhile.
+
 **Audit:** F10. **Start at:** `Backup/SqliteBackupService.cs`, backup configuration/API, release/package options, Data Protection registration and existing backup tests.
 
 Preserve online SQLite snapshot, integrity/foreign-key checks, checksum and test restore. Extend recovery from a DB file to a manifest-backed set: DB/schema/app version; all referenced immutable release/package artifacts and hashes; configuration; recoverable Data Protection key material/service-identity instructions; separately owned engineering-folder dependencies. Keep secret material protected and out of logs/git.
@@ -207,6 +211,8 @@ Acceptance: missing/corrupt referenced file, disk full, interrupted copy, permis
 
 ### D02 — establish a coherent projection snapshot and revision
 
+**Status (2026-10-08): implemented locally.** Schema v102 transactional revision tracking and three-attempt validation cover board/Timeline/operation-readiness/Run-readiness projections, with fixed evaluation time, additive freshness metadata and retryable 503 on sustained changes. Run cards are reused; diagnostic effects wait for validation. No cache is added; broad invalidation performance remains for D05. See [implementation evidence](../implementation-plan.md).
+
 **Audit:** F11. **Start at:** `Application/PlanningBoard/PlanningBoardService.cs`, timeline source reader/projector, readiness and Run projection services.
 
 Compute related local board/timeline/readiness facts from one read snapshot or a version-stable bounded retry. Define a logical plan revision that changes transactionally for every input affecting prediction: assignments/backlog, resource/calendar changes, relevant timing, allocations, route and preparation facts. Use projection-specific subversions if a single global counter invalidates too much; correctness comes before cache hit rate.
@@ -216,6 +222,8 @@ Return revision, computed/as-of timestamps and freshness metadata. Time itself c
 Acceptance: concurrent assignment/calendar/event updates cannot produce a mixed-version “current” board; continuously changing state ends in a bounded retry/stale result rather than an infinite loop; time-window changes invalidate appropriate results; cache miss/hit gives equivalent deterministic output. Manual assignments remain unchanged.
 
 ### D03 — make import preview, identity and ownership explicit
+
+**2026-10-08 status:** owner approved mandatory review for deletions, route removals and mapping changes. The transactional import guard and Windows review are implemented and tested; SQL snapshot commissioning and installed acceptance remain pending. See the D03 follow-up in `docs/implementation-plan.md`.
 
 **Start at:** `Application/Kitaron/SqlServerKitaronSourceReader.cs`, `KitaronSyncService.cs`, existing mappings/import receipts and Kitaron tests.
 
@@ -229,6 +237,8 @@ Acceptance: stable rerun is idempotent; changed mapping between preview/apply co
 
 ### D04 — reconcile artifact publication and define retention
 
+**2026-10-08 status:** publication journals, startup/manual integrity reports and configurable manual orphan collection are implemented locally. The owner approved a seven-day default grace for manual collection; incomplete/ambiguous/NC orphan files remain report-only. See D04 in `docs/implementation-plan.md` for validation and remaining acceptance.
+
 **Start at:** package/release file stores, package repository, artifact options and startup registrations. Build on C04/D01 rather than adding a parallel package catalog.
 
 Create durable publication state or a journal tying staging directory, expected context, immutable manifest/hash and final package record together. Startup/maintenance reconciliation distinguishes staged, published-unreferenced, active, superseded, missing and corrupt artifacts. Quarantine/report ambiguous files. Delete only demonstrably unreferenced data after a configured grace period and after excluding active builds/backup pins.
@@ -238,6 +248,8 @@ Define separate retention for production evidence, raw telemetry, rebuildable pr
 Acceptance: crash between each filesystem/SQL step; deterministic restart recovery; current and backup-referenced artifacts never collected; missing active artifact yields a visible health error; rebuildable cache can be deleted/rebuilt without changing authoritative quantities, assignments or releases.
 
 ### D05 — measure and remove demonstrated performance waste
+
+**2026-10-08 status: core, read-performance follow-ups and shop-workload profiler implemented; performance acceptance remains open.** Batched queue validity, shared in-flight reads, bounded caching, Timeline/report/package workload controls and readiness/graph batching remain implemented. The disposable profiler now supports all dependency modes, employee/workstation contention, external lead time and independently sized retained QC-event history on an archived Run. At 1,000 active operations/5,000 archived events, one-client Board median/p95 were 750.0/782.5 ms and live Timeline 819.6/848.6 ms. All 1,000 operations and 250 intervals per auxiliary class were projected. These observations are not a runtime speedup claim or factory acceptance; Board p95 still exceeds the proposed target. See [evidence and limitations](../timeline-performance-report.md). Next D05 work is approved-recipe/full execution-history diversity and concurrent ingestion/import/backup/package workloads, with phase profiling where justified.
 
 Use a production-shaped test copy: 16 Machines, real calendar/dependency patterns, 200/1,000/5,000 active operations, independent history sizes, 1/3/5 Windows clients, TV/tablets, CNC ingestion, import, backup and package builds. These are test dimensions, not claimed factory volumes.
 

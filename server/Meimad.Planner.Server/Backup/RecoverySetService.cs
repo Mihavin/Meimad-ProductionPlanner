@@ -10,7 +10,7 @@ namespace Meimad.Planner.Server.Backup;
 
 internal sealed class RecoverySetService(SqliteDatabase database, SqliteBackupService snapshots, RecoveryOptions options,
     GCodeOptions gcode, ProductionPackageOptions packages, EInkOptions eink, IConfiguration configuration,
-    IKeyManager keyManager, IDataProtectionProvider protection, TimeProvider clock)
+    IKeyManager keyManager, IDataProtectionProvider protection, TimeProvider clock, ILogger<RecoverySetService> logger)
 {
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -23,10 +23,17 @@ internal sealed class RecoverySetService(SqliteDatabase database, SqliteBackupSe
     {
         RecoveryStatus? saved = null;
         if (File.Exists(StatusPath))
-            saved = JsonSerializer.Deserialize<RecoveryStatus>(await File.ReadAllTextAsync(StatusPath, token), Json);
+        {
+            try { saved = JsonSerializer.Deserialize<RecoveryStatus>(await File.ReadAllTextAsync(StatusPath, token), Json); }
+            catch (JsonException exception) { logger.LogWarning(exception, "Recovery status cache is damaged; inspect published completion markers."); }
+        }
+        if (saved is not null && !string.Equals(saved.Destination, options.Folder, StringComparison.OrdinalIgnoreCase))
+            saved = null;
         return new(options.Configured, options.Folder, "External Windows Task Scheduler", saved?.LastComplete,
             saved?.LastComplete is { } complete ? (clock.GetUtcNow() - complete.SnapshotAt).TotalHours : null,
-            saved?.LastAttemptResult);
+            saved?.LastAttemptResult == "In progress" && gate.CurrentCount == 1
+                ? "Previous attempt was interrupted; inspect completion markers before retrying." : saved?.LastAttemptResult,
+            saved?.LastAttemptAt);
     }
 
     internal async Task<RecoverySetResult> CreateAsync(string actor, CancellationToken token)
@@ -110,7 +117,9 @@ internal sealed class RecoverySetService(SqliteDatabase database, SqliteBackupSe
             File.Move(pending, final);
             pending = null;
             await WriteJsonDurablyAsync(final + ".complete.json", result, token);
-            await SaveStatusAsync(result, "Complete and restore-verified", CancellationToken.None);
+            try { await SaveStatusAsync(result, "Complete and restore-verified", CancellationToken.None); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            { logger.LogWarning(exception, "Recovery set published, but its status cache could not be updated."); }
             return result;
         }
         catch
@@ -127,6 +136,8 @@ internal sealed class RecoverySetService(SqliteDatabase database, SqliteBackupSe
                 if (pending is not null && File.Exists(pending)) File.Delete(pending);
                 RecoveryPaths.DeleteOwnedDirectory(workspaceParent, workspace);
             }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            { logger.LogWarning(exception, "Recovery workspace cleanup failed; private staging files require cleanup."); }
             finally { gate.Release(); }
         }
     }
@@ -134,18 +145,17 @@ internal sealed class RecoverySetService(SqliteDatabase database, SqliteBackupSe
     internal static async Task<RecoveryRestoreResult> RestoreAsync(string archive, string password, string destination, CancellationToken token)
     {
         RecoveryPaths.RejectLinks(archive);
+        RecoveryPaths.RejectLinks(archive + ".complete.json");
         var marker = JsonSerializer.Deserialize<RecoverySetResult>(await File.ReadAllTextAsync(archive + ".complete.json", token), Json)
             ?? throw new InvalidDataException("Recovery completion marker is missing.");
         if (marker.FileName != Path.GetFileName(archive) || marker.ByteLength != new FileInfo(archive).Length
             || marker.Sha256 != await RecoveryArchive.HashAsync(archive, token))
             throw new InvalidDataException("Recovery set failed its published checksum.");
-        var result = await RestoreCoreAsync(archive, password, destination, token);
-        if (result.Manifest.SetId != marker.SetId || result.Manifest.SchemaVersion != marker.SchemaVersion)
-            throw new InvalidDataException("Recovery marker does not match its manifest.");
-        return result;
+        return await RestoreCoreAsync(archive, password, destination, token, marker);
     }
 
-    private static async Task<RecoveryRestoreResult> RestoreCoreAsync(string archive, string password, string destination, CancellationToken token)
+    private static async Task<RecoveryRestoreResult> RestoreCoreAsync(string archive, string password, string destination, CancellationToken token,
+        RecoverySetResult? marker = null)
     {
         destination = Path.GetFullPath(destination);
         if (Directory.Exists(destination) || File.Exists(destination)) throw new InvalidOperationException("Restore requires a new, separate destination; existing locations cannot be overwritten.");
@@ -194,6 +204,10 @@ internal sealed class RecoverySetService(SqliteDatabase database, SqliteBackupSe
             if (manifest is null || keys is null || manifest.FormatVersion != 1 || manifest.SchemaVersion > DatabaseMigrator.LatestVersion
                 || manifest.Files.Count != actual.Count || manifest.Files.Select(f => f.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count() != actual.Count || manifest.Files.Any(f => !actual.TryGetValue(f.Path, out var found) || found != f))
                 throw new InvalidDataException("Recovery manifest, schema version or inventory is invalid.");
+            if (marker is not null && (manifest.SetId != marker.SetId || manifest.SchemaVersion != marker.SchemaVersion
+                || manifest.SnapshotAt != marker.SnapshotAt || manifest.Files.Count != marker.FileCount
+                || manifest.EngineeringDependencies.Count != marker.ExternalFolderCount))
+                throw new InvalidDataException("Recovery marker does not match its manifest.");
             var db = RecoveryPaths.Resolve(destination, "database/planner.db");
             await SqliteBackupService.VerifyIntegrityAsync(db, token);
             var references = await RecoveryDatabase.ReadAsync(db, token);
@@ -218,6 +232,7 @@ internal sealed class RecoverySetService(SqliteDatabase database, SqliteBackupSe
             var settings = JsonSerializer.Deserialize<Dictionary<string, string?>>(await File.ReadAllTextAsync(
                 RecoveryPaths.Resolve(destination, "configuration/effective.json"), token), Json) ?? throw new InvalidDataException("Recovery configuration is missing.");
             settings["Database:Path"] = db;
+            settings["Backup:Folder"] = Path.Combine(destination, "database-backups");
             settings["GCode:ReleaseRoot"] = Path.Combine(destination, "gcode");
             settings["ProductionPackages:PackageRoot"] = Path.Combine(destination, "production");
             settings["EInk:PackageRoot"] = Path.Combine(destination, "eink");
@@ -239,7 +254,8 @@ internal sealed class RecoverySetService(SqliteDatabase database, SqliteBackupSe
     private async Task SaveStatusAsync(RecoverySetResult? result, string message, CancellationToken token)
     {
         var current = await StatusAsync(token);
-        await WriteJsonDurablyAsync(StatusPath, current with { LastComplete = result ?? current.LastComplete, LastAttemptResult = message }, token);
+        await WriteJsonDurablyAsync(StatusPath, current with { LastComplete = result ?? current.LastComplete,
+            LastAttemptResult = message, LastAttemptAt = message == "In progress" ? clock.GetUtcNow() : current.LastAttemptAt }, token);
     }
 
     internal static async Task WriteJsonDurablyAsync<T>(string path, T value, CancellationToken token)

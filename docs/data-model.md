@@ -1,5 +1,81 @@
 # Data Model
 
+## Deterministic operational evidence aggregation (2026-10-08)
+
+No new authoritative timing/history table is introduced. Local explanations read existing `production_run_workflow_events`, `production_run_cycle_attempt_timing`, exact package pointers, connection/state/device observations and ERP intent lifecycle. Completed-cycle aggregates count immutable completed attempts whose end receipt falls inside `[from,to)`; only positive end-minus-start Server durations contribute to totals/averages. Empty valid samples yield null duration. Source deduplication remains the existing event/attempt uniqueness rules. These derived evidence objects are retained only by the existing bounded answer lifecycle; durable request metadata records source identities/versions rather than full answer bodies.
+
+## Scoped projection revisions (schema v108)
+
+`projection_revision.non_planning_revision` counts audited changes that do not feed Board/Timeline/readiness: AI request metadata, feedback, corpus index rows, structured log entries other than `manual_backlog_reorder` / `manual_operation_reported`, and (schema v109, 2026-10-09) the CNC polling, connection-check and device-contact tables (`machine_telemetry_raw`, `machine_connection_events`, `machine_state_history`, `machine_current_state`, `machine_connections`, `haas_machine_snapshots`, `haas_connection_settings`, `haas_events`, `haas_bench_*`, `machine_dprnt_lines`, `operational_anomalies`, `kitaron_connection_settings`, `kitaron_mapping_settings`, `kitaron_sync_state`, `kitaron_push_runs`, `israeli_holiday_sync_state`, `user_sessions`, `device_registry`), which polling rewrote every few seconds and which had moved the planning revision on every write. It advances atomically with the existing all-input `revision`. Planning uses `epoch:planning:(revision - non_planning_revision)`; AI evidence uses `epoch:evidence:revision`. The all-input counter now includes derived Timeline diagnostics because complete shift event aggregates read those too. Manual move events remain planning inputs, and manual timing's derived tables continue invalidating planning. Other and newly added tables retain conservative invalidation. Counters are consistency/cache evidence, never mutation authority or source versions.
+
+## Pilot feedback and control (schema v107)
+
+`local_ai_feedback` is keyed by the originating request ID (foreign key to `local_ai_requests`); ownership comes from that request. It stores useful/not-useful, an explicitly submitted optional correction of at most 500 characters, optimistic version and UTC update instant. Only the owning signed-in account may read/change it, and only for a completed request. Updates require the displayed version. Feedback never enters readiness, quantities or planning decisions. Projection triggers cover the table.
+
+`application_settings.local_ai_pilot_control` stores versioned inference suspension. Suspension survives restart; deployment configuration still owns whether inference is enabled at all. Control changes append actor/time/reason to the structured log atomically. No model credentials, device identity or planning authority is introduced. Automatic metadata/feedback expiry is not implemented; the proposed retention period remains undecided.
+
+Workbench demand details are a read snapshot of existing Cases, batch operations, process recipes, Orders and explicit allocations. No new demand, inventory or recipe authority is stored. The exact selected process resolves its recipe operation; an unselected context shows the Batch Operation's source recipe.
+
+## Approved document cache and physical handoffs (schemas v105–v106)
+
+v105 `local_ai_documents` stores document/root IDs, relative filename, SHA-256, text, normalized search text, UTC indexing instant and configuration version. `application_settings.local_ai_approved_corpus` holds versioned approved roots. Configuration changes clear the rebuildable cache atomically; originals remain read-only. Retrieval verifies approval/hash and reports excerpt character boundaries. No embeddings.
+
+v106 `production_package_handoffs` stores immutable actor/time, package/employee IDs, employee name at handoff, qualification stamp, exact context JSON, assignment/program/output keys, per-context sequence and idempotency fingerprint. Current validity is derived from current package/context/qualification. No current flag, workflow mutation or historical backfill. Update/delete is forbidden. Exact receipt retry returns the original record after supersession. Both tables have conservative projection invalidation triggers.
+
+## Optional local AI request metadata (schema v104)
+
+`local_ai_requests` stores request ID, owner account ID, intent, lifecycle state, UTC creation/completion instants, result code, sampled plan revision, evidence source IDs/versions and optional pinned runtime/model digest plus token/duration measurements. Prompt bodies, arbitrary user questions, NC content and full answers are not persisted. In-memory terminal answers are bounded and lost on restart; pending metadata becomes INTERRUPTED. The table participates in conservative projection invalidation. It has no planning, release, execution or permission authority.
+
+## Operational health and import review (schema v103, 2026-10-08)
+
+`kitaron_sync_state.last_successful_at` is nullable UTC text. Migration v103 backfills only a currently successful import with a completion timestamp; an update trigger preserves the latest successful completion across later running/failed/blocked attempts. Historical unknown successes are not invented. Recovery's local status document adds nullable `LastAttemptAt`; artifact inspection retains `LastSuccessfulScanAt` independently of failed attempts. No new health authority or planning state is created.
+
+Import receipt evidence adds `ReviewedPreview` (false for older receipts). Only the Server's actor-bound, unexpired preview application sets it. Automatic import compares the mapping version with the last durable receipt, and compares pre/post domain rows inside the same write transaction before committing. Deletion/deactivation/status changes require review; all work rolls back on rejection. Missing historical receipt with existing imported links requires a baseline reviewed import.
+
+## D05 transient performance state
+
+Run-card exact-output preloads are transient `OutputFacts` dictionaries keyed by the complete internal `ProductionPackageContext` record (including assignment/Run/program/output/operation/Machine IDs, process, target quantity and context fields). Recipe/Machine values are hydrated from existing tables in 100-output / 200-parameter chunks; exact output IDs then accompany the existing 800-parameter evidence batches. The owning connection/read transaction is checked at lookup. Missing or split/ambiguous contexts use ordinary reads. These facts neither persist nor replace program allocation validation, stored release evidence or mutation-time reads; schema remains v102.
+
+Batch readiness enrichment uses an ephemeral VALUES relation containing context index, assignment, operation, optional exact output, Machine, process, effective NC release and tool release. At most 100 rows / 800 parameters are bound per query. Existing verification settings, connection configuration, current loader/session evidence, package allocation context and active tool rows remain the authority. No migration, index, persistent evidence copy or cross-transaction cache is introduced; scalar and batch paths serialize the same eight execution-evidence values into action stamps.
+
+Exact-output reference facts are transient dictionaries for Machine postprocessor support, recipe-operation NC releases and `(BatchOperationId, MachineId)` Tool Room preparations. Coverage sets distinguish an absent database fact from an unrequested key. Their owner is one existing SQLite connection/read transaction, validated at reuse; a new snapshot reloads them. Existing process, release and preparation tables and selection/order rules remain unchanged, with no schema/index addition.
+
+Workflow-reporting package membership is materialized once per read snapshot as a transient set of `(BatchOperationId, MachineId)` pairs using the existing current-pointer query. The set is never persisted or shared across transactions. Package pointers, historical compatibility rules, verification evidence and action-stamp inputs are unchanged; a new snapshot observes pointer/configuration changes normally.
+
+The Run graph reader uses the existing `production_runs`, `production_run_programs`, `production_run_outputs` and active `machine_assignments` relationships in a single read snapshot. Run/program/output ordering, production pins, quantities and versions are preserved. Preloaded readiness bases are transient inputs tied to that same transaction; no stored facts, schema, index or retention policy change.
+
+Schema remains v102. No persistent planning cache or synthetic performance data is stored in an installed database. Projection response caches hold bounded serialized bytes in process memory and vanish on restart. Keys include the opaque D02 revision and the request's projection type, stage/horizon, explicit evaluation instant (or live marker) and report mode. Each instance belongs to one Server runtime/configuration. Cache values preserve the producing response's freshness/read timestamps; they do not create new authority or replace mutation-specific stamps.
+
+The package-validity batch reads use existing typed current-package/context/assignment/release references and inspect the stored context JSON only for comparison with already resolved live contexts. No new JSON-backed query authority or index is introduced. The disposable benchmark creates only temporary test databases via Server migrations; captured JSON contains synthetic workload dimensions, runtime, timings and process memory rather than factory content.
+
+## D04 publication journal and health projection
+
+Schema remains v102; no production catalog, retention tombstone or health-authority table is introduced. Existing `production_packages`, `production_package_artifacts`, both package-current tables, release/subprogram tables and `eink_package_files` supply typed reference evidence. Production state ACTIVE means referenced by a current-package pointer at inventory time; SUPERSEDED means retained without such a pointer, not permission to delete. NC/tool-table/E-Ink groups are labeled REFERENCED without inventing current/superseded semantics for those stores.
+
+The version-1 `.publication.json` sidecar stores package ID, UTC start, SHA-256 build-context fingerprint, STAGING/READY state, and each file's logical path, byte length and SHA-256. It is written atomically before the directory move; DB commit is inferred only from DB references. Existing packages and restored packages may have no journal. Complete recovery sets already include the immutable manifest and all DB-referenced artifacts; the sidecar is not required for restoring referenced packages and is not added to the backup manifest.
+
+Health reports contain inspection start/completion timestamps, runtime scan status, total/problem counts, bounded items with store/ID/publication state/integrity/detail, truncation, retention description and optional configured orphan grace days. They contain no NC bytes or secrets and are rebuilt after restart. They never mutate quantities, allocations, assignments, releases or verification bindings.
+
+## D03 import evidence (no schema migration)
+
+Schema remains v102. Existing `kitaron_sync_links` retain entity/key identity, local target, mapping version and `owns_target`; mapping configuration retains mapped/manual field ownership. The source-system namespace is the existing singleton Kitaron connector, not a newly supported multi-ERP namespace. Database/endpoint changes are recorded separately and invalidate reviewed previews; existing links are not silently migrated to a different source namespace.
+
+Each prepared import receives a GUID run ID and SHA-256 source fingerprint (order-independent serialized source rows, excluding capture timestamps). Evidence includes logical source system, endpoint, connection/mapping versions, requesting actor and source snapshot mode/start/end. A successful import records `kitaron_import_applied` in `structured_event_log`, keyed `kitaron-import:<runId>`, with evidence, original local-context hash and status/counts. Receipt and domain changes commit atomically. Raw source payloads and credentials are not stored in the receipt. Preview data is transient, capped at 500 changed rows with 256-character displayed field values; total/truncation flags are explicit and the local inventory refuses over one million rows. Unchanged counts cover the inventoried local tables, not only rows selected from ERP.
+
+## D02 projection revision (schema v102)
+
+`projection_revision` contains one row (`id=1`), a random persistent `epoch`, and a nonnegative SQLite INTEGER `revision`. INSERT/UPDATE/DELETE triggers on application tables increment the counter in the same transaction as the source change, including cascades and imports; rollback rolls back the increment. Values are opaque revisions, not counts of user actions. Metadata tables (`schema_migrations`, the revision table and SQLite internals) are excluded. Structured events exclude only `timeline_conflict_detected` and `resource_wait_detected`, which are derived outputs; updates changing to/from a source event invalidate as well.
+
+Migration v102 installs the triggers on tables existing at that version. Future table creation/rebuild migrations must add/preserve triggers and pass the schema-wide coverage test. This conservative policy intentionally invalidates on some unrelated writes. No retention, planning assignments, backlog order or production quantities change. The revision is serialized as an opaque epoch/counter string; never use it instead of an entity mutation version or readiness context stamp.
+
+
+## D01 recovery files (no schema migration)
+
+Recovery archive format v1 carries a manifest with set ID, UTC snapshot timestamp, application/schema versions, requesting user, logical file paths, lengths and SHA-256 hashes, external Case Working Folder dependencies and a protected key-verification probe. Contents include the SQLite snapshot; all rows referenced by NC/tool/subprogram releases, Production Package artifacts/manifests and E-Ink package files; effective configuration; and exported Data Protection keys/revocations. Engineering originals are not included or modified. Restored keys are written only as Windows machine-DPAPI protected files.
+
+A sibling `.mprb.complete.json` receipt is published only after isolated restore verification and records archive hash/length, snapshot and verification UTC times, schema, counts and set ID. `<database>.recovery-status.json` caches the last successful receipt and attempt result; it is operational status, not planning authority or a continuous destination-integrity check. Complete-set retention is not implemented pending policy. Existing database-backup retention is unchanged. See [the recovery runbook](recovery-runbook.md) for activation and replacement-PC acceptance.
+
+
 ## C08 durable ERP intent (schema v101)
 
 `kitaron_push_runs` adds `lifecycle_state` (Preparing, Prepared, Writing, Succeeded, FailedBeforeCommit, OutcomeUnknown, Reconciled) and positive `intent_version`. Existing `status` is retained for older clients; lifecycle_state and the explanation distinguish uncertainty from proven failure. Legacy failed/running records migrate conservatively to OutcomeUnknown, successful records to Succeeded. No historical intent is reconstructed.

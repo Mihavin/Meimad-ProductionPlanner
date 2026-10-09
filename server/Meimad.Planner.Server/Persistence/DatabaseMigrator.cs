@@ -106,7 +106,15 @@ internal sealed class DatabaseMigrator
         new SchemaV98ManualTimingMigration(),
         new SchemaV99ProductionPackageContextMigration(),
         new SchemaV100PackagePublicationMigration(),
-        new SchemaV101KitaronPushIntentMigration()
+        new SchemaV101KitaronPushIntentMigration(),
+        new SchemaV102ProjectionRevisionMigration(),
+        new SchemaV103OperationalHealthMigration(),
+        new SchemaV104LocalAiRequestsMigration(),
+        new SchemaV105LocalCorpusMigration(),
+        new SchemaV106PackageHandoffsMigration(),
+        new SchemaV107LocalAiFeedbackMigration(),
+        new SchemaV108ProjectionEvidenceScopeMigration(),
+        new SchemaV109ProjectionPollingScopeMigration()
     ];
 
     internal static int LatestVersion => Migrations.Max(m => m.Version);
