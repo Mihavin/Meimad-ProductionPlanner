@@ -27,8 +27,11 @@ internal static class MachineUsageReportEndpoints
             : DateOnly.TryParseExact(value.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture,
                 DateTimeStyles.None, out var date) ? date : DateOnly.MinValue;
         var end = Parse(to) ?? today;
+        if (end == DateOnly.MinValue)
+            return PlanningHttpSupport.Error(StatusCodes.Status422UnprocessableEntity, "validation_failed",
+                "from and to are dates in the form yyyy-MM-dd.", context);
         var start = Parse(from) ?? end.AddDays(-6);
-        if (start == DateOnly.MinValue || end == DateOnly.MinValue)
+        if (start == DateOnly.MinValue)
             return PlanningHttpSupport.Error(StatusCodes.Status422UnprocessableEntity, "validation_failed",
                 "from and to are dates in the form yyyy-MM-dd.", context);
         try

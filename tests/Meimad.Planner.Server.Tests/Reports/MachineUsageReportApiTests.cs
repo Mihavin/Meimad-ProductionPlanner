@@ -70,7 +70,7 @@ public sealed class MachineUsageReportApiTests
             foreach (var query in new[]
                      {
                          "from=2026-08-12&to=2026-08-11", "from=2026-05-01&to=2026-08-11",
-                         "from=2026-08-11&to=2026-08-11&basis=week", "from=11.08.2026"
+                         "from=2026-08-11&to=2026-08-11&basis=week", "from=11.08.2026", "to=11.08.2026"
                      })
             {
                 using var invalid = await client.GetAsync($"{Report}?{query}");

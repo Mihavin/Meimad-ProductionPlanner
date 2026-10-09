@@ -48,6 +48,35 @@ public sealed class CncFtpDprntReaderTests
     }
 
     [Fact]
+    public async Task A_file_larger_than_the_download_window_logs_only_the_text_appended_since_the_previous_poll()
+    {
+        // The reader keeps the last 4 MB of a large file; the previous tail then starts inside the
+        // new one, and only what follows it is new (audit finding 2026-10-08: the whole tail was
+        // logged again on every poll).
+        var filler = new StringBuilder();
+        for (var line = 0; filler.Length < 5 * 1024 * 1024; line++) filler.Append("filler line ").Append(line).Append("\r\n");
+        await using var server = new FakeFtpServer { FileContent = Encoding.UTF8.GetBytes(filler.ToString()) };
+        var reader = new CncFtpDprntReader();
+        var first = await reader.DrainAsync(Endpoint(server), replayExistingContent: false, CancellationToken.None);
+        Assert.Empty(first.AllLines);
+
+        server.FileContent = Encoding.UTF8.GetBytes(filler + "30P647004101-001\r\nMEIMAD/V/1/EVENT/CST/ID/NC-1-S-1/SEQ/1/MACROVERSION/6/PROGRAM/1\r\n");
+        var second = await reader.DrainAsync(Endpoint(server), replayExistingContent: false, CancellationToken.None);
+
+        Assert.Equal(new[] { "30P647004101-001", "MEIMAD/V/1/EVENT/CST/ID/NC-1-S-1/SEQ/1/MACROVERSION/6/PROGRAM/1" }, second.AllLines);
+        Assert.Equal("30P647004101-001", second.PartName);
+        Assert.Single(second.EventLines);
+
+        var quiet = await reader.DrainAsync(Endpoint(server), replayExistingContent: false, CancellationToken.None);
+        Assert.Empty(quiet.AllLines);
+        Assert.Empty(quiet.EventLines);
+
+        // Without the previous tail the file was rewritten: everything is new.
+        Assert.Equal("new", CncFtpDprntReader.NewText("old content", "new"));
+        Assert.Equal("c", CncFtpDprntReader.NewText("ab", "abc"));
+    }
+
+    [Fact]
     public async Task A_rewritten_or_shortened_file_is_read_again_from_the_start()
     {
         await using var server = new FakeFtpServer

@@ -31,9 +31,7 @@ internal sealed class CncFtpDprntReader
         CncFtpDprntEndpoint endpoint, bool replayExistingContent, CancellationToken token)
     {
         var content = Decode(await DownloadAsync(endpoint, token));
-        var appended = content.StartsWith(consumedContent, StringComparison.Ordinal)
-            ? content[consumedContent.Length..]
-            : content;
+        var appended = NewText(consumedContent, content);
         var added = replayExistingContent ? content : appended;
         // The DPRNT log takes only text new since the previous read, also in replay mode. The first
         // read after a start sees the file again: its lines were logged before, unless the file is
@@ -85,6 +83,25 @@ internal sealed class CncFtpDprntReader
             return false;
         }
     }
+
+    /// <summary>
+    /// The text added since the previous read. The download keeps only the last
+    /// <see cref="MaximumFileBytes"/> of a large file, so the previous read's text can now start
+    /// inside the new one: the tail of the previous text is looked for in the new one and what
+    /// follows it is new. When the tail is not there the controller rewrote or emptied the file,
+    /// and everything is new.
+    /// </summary>
+    internal static string NewText(string previous, string current)
+    {
+        if (previous.Length == 0) return current;
+        if (current.StartsWith(previous, StringComparison.Ordinal)) return current[previous.Length..];
+        var anchorLength = Math.Min(OverlapAnchorLength, previous.Length);
+        var anchor = previous[^anchorLength..];
+        var index = current.IndexOf(anchor, StringComparison.Ordinal);
+        return index < 0 ? current : current[(index + anchorLength)..];
+    }
+
+    private const int OverlapAnchorLength = 4096;
 
     private static async Task<byte[]> DownloadAsync(CncFtpDprntEndpoint endpoint, CancellationToken token)
     {
