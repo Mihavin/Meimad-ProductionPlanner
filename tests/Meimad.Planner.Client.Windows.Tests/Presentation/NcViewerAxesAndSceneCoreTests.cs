@@ -127,6 +127,47 @@ public sealed class NcViewerAxesAndSceneCoreTests : IDisposable
     }
 
     [Fact]
+    public void A_table_that_travels_in_x_and_y_carries_the_part_and_the_tool_stays_on_the_toolpath()
+    {
+        var result = Run("""
+            // Physical C-frame VMC: Y saddle and X table carry the workpiece, Z head on the column.
+            const model = {
+              kind: "mill", frame: { x: -500, y: -250, z: -400 }, view: { unitScale: 1 },
+              machineDefinition: { axes: { X: {}, Y: {}, Z: {} }, kinematics: { nodes: [
+                { id: "base" },
+                { id: "z-head", parent: "base", type: "linear", axis: "Z", direction: [0, 0, 1] },
+                { id: "spindle", parent: "z-head", type: "spindle", toolMount: true },
+                { id: "y-saddle", parent: "base", type: "linear", axis: "Y", direction: [0, -1, 0] },
+                { id: "x-table", parent: "y-saddle", type: "linear", axis: "X", direction: [-1, 0, 0], workpieceMount: true }
+              ] } }
+            };
+            const chain = A.chainFor(model, K);
+            const pose = { tip: { x: 30, y: 40, z: -5 }, rotary: { A: 0, B: 0, C: 0 }, length: 100 };
+            const joints = A.poseJoints(model, K, pose);
+            const part = A.partMatrix(model, K, joints, chain);
+            const tipWorld = K.transformPoint(part, pose.tip);
+            const world = K.evaluateChain(chain, joints);
+            const gauge = K.transformPoint(world.get("spindle"), { x: 0, y: 0, z: 0 });
+            const table = K.transformPoint(world.get("x-table"), { x: 0, y: 0, z: 0 });
+            const spindleOnly = A.chainFor(Object.assign({}, model, { machineDefinition: { axes: {}, kinematics: { nodes: [
+              { id: "base" }, { id: "x", parent: "base", type: "linear", axis: "X", direction: [1, 0, 0] }, { id: "spindle", parent: "x", type: "spindle", toolMount: true },
+              { id: "table", parent: "base", type: "fixed", workpieceMount: true } ] } } }), K);
+            return { joints, tipWorld, gauge, table, moves: A.workpieceMovesLinearly(chain), spindleOnlyMoves: A.workpieceMovesLinearly(spindleOnly) };
+            """);
+        var joints = result.GetProperty("joints");
+        Assert.Equal(-470, joints.GetProperty("X").GetDouble(), 6);   // machine coordinates as before
+        Assert.Equal(-210, joints.GetProperty("Y").GetDouble(), 6);
+        Assert.Equal(-305, joints.GetProperty("Z").GetDouble(), 6);
+        // The table (and the part on it) moved -X/-Y; the spindle only moved in Z.
+        AssertPoint(result.GetProperty("table"), 470, 210, 0);
+        AssertPoint(result.GetProperty("gauge"), 0, 0, -305);
+        // The tool tip sits one tool length below the gauge line, exactly on the moved toolpath point.
+        AssertPoint(result.GetProperty("tipWorld"), 0, 0, -405);
+        Assert.True(result.GetProperty("moves").GetBoolean());
+        Assert.False(result.GetProperty("spindleOnlyMoves").GetBoolean());
+    }
+
+    [Fact]
     public void Work_cs_maps_cimatron_model_coordinates_into_program_coordinates()
     {
         var result = Run("""

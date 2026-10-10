@@ -244,5 +244,25 @@
     return fixed === `-${(0).toFixed(places)}` ? (0).toFixed(places) : fixed;
   }
 
-  return { createCalculator, travelRanges, poseJoints, machineAxes, format };
+  /**
+   * The part frame for the Machine view with the machine's real kinematics: the workpiece mount at
+   * all joints (a table that moves in X/Y carries the part) followed by the drawing frame. With only
+   * rotary nodes on the workpiece path this equals the vendored viewer's rotary-only part frame.
+   */
+  function partMatrix(model, kinematics, joints, chain) {
+    const resolved = chain || chainFor(model, kinematics);
+    if (!resolved || !kinematics) return undefined;
+    const frame = (model && model.frame) || { x: 0, y: 0, z: 0 };
+    const values = joints || { X: 0, Y: 0, Z: 0, A: 0, B: 0, C: 0 };
+    return kinematics.multiply(
+      kinematics.workpieceTransform(resolved, values),
+      kinematics.translation(Number(frame.x) || 0, Number(frame.y) || 0, Number(frame.z) || 0));
+  }
+
+  /** True when a linear axis carries the workpiece (the table moves), so the part moves in the Machine view. */
+  function workpieceMovesLinearly(chain) {
+    return Boolean(chain && (chain.workpiecePath || []).some((node) => node.type === "linear"));
+  }
+
+  return { createCalculator, travelRanges, poseJoints, machineAxes, format, chainFor, partMatrix, workpieceMovesLinearly };
 });

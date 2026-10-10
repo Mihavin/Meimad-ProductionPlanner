@@ -66,14 +66,14 @@
   },
   "kinematics": {
     "type": "vertical-3-axis",
-    "description": "X saddle and Y table under a Z spindle head (drawn on the spindle side); the workpiece sits on the fixed table.",
+    "description": "Physical layout: the Y saddle moves on the base, the X table moves on the saddle and carries the workpiece, the Z spindle head moves on the fixed column. Joint values are machine coordinates of the tool relative to the table.",
     "nodes": [
-      { "id": "base", "label": "Machine base", "geometry": { "shape": "box", "size": [1500, 900, 60], "center": [-508, -254, -640] }, "model": null },
-      { "id": "x-saddle", "parent": "base", "label": "X saddle", "type": "linear", "axis": "X", "direction": [1, 0, 0], "geometry": { "shape": "box", "size": [240, 200, 90], "center": [0, 80, 420] }, "model": null },
-      { "id": "y-ram", "parent": "x-saddle", "label": "Y ram", "type": "linear", "axis": "Y", "direction": [0, 1, 0], "geometry": { "shape": "box", "size": [220, 560, 90], "center": [0, 160, 330] }, "model": null },
-      { "id": "z-head", "parent": "y-ram", "label": "Z spindle head", "type": "linear", "axis": "Z", "direction": [0, 0, 1], "geometry": { "shape": "box", "size": [220, 260, 320], "center": [0, 40, 180] }, "model": null },
+      { "id": "base", "label": "Machine base", "geometry": { "shape": "box", "size": [1500, 900, 60], "center": [-508, -254, -760] }, "model": null },
+      { "id": "column", "parent": "base", "label": "Column", "type": "fixed", "geometry": { "shape": "box", "size": [700, 420, 1300], "center": [0, 420, 250] }, "model": null },
+      { "id": "z-head", "parent": "base", "label": "Z spindle head", "type": "linear", "axis": "Z", "direction": [0, 0, 1], "geometry": { "shape": "box", "size": [220, 260, 320], "center": [0, 40, 180] }, "model": null },
       { "id": "spindle", "parent": "z-head", "label": "Spindle (gauge line)", "type": "spindle", "toolMount": true, "geometry": { "shape": "cylinder", "radius": 60, "height": 90, "center": [0, 0, 45], "axis": "z" }, "model": null },
-      { "id": "table", "parent": "base", "label": "Table", "type": "fixed", "workpieceMount": true, "geometry": { "shape": "box", "size": [1219, 457, 50], "center": "mrzp", "offset": [0, 0, -25] }, "model": null }
+      { "id": "y-saddle", "parent": "base", "label": "Y saddle", "type": "linear", "axis": "Y", "direction": [0, -1, 0], "geometry": { "shape": "box", "size": [800, 520, 120], "center": [-508, -254, -670] }, "model": null },
+      { "id": "x-table", "parent": "y-saddle", "label": "X table", "type": "linear", "axis": "X", "direction": [-1, 0, 0], "geometry": { "shape": "box", "size": [1219, 457, 50], "center": [-508, -254, -585] }, "model": null, "workpieceMount": true }
     ]
   }
 }

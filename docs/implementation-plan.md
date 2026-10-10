@@ -1,5 +1,11 @@
 # Implementation Plan
 
+## Real machine kinematics for machine models (2026-10-10; implemented locally)
+
+**Implemented:** `haas-vf-3ss`, `fanuc-0i-mc-vmc-3axis` and `fanuc-0i-mc-vmc-4axis-a` model the table axes physically (`y-saddle` Y and `x-table` X with negative directions under the workpiece, `column` fixed, `z-head` Z); the engine and the Server evaluate the chain with rotary values only, so their results do not change. `meimad-machine-frame.js` sets the part frame to the workpiece mount at all joints just before each draw (the captured renderer emits `beforeRender`), so a travelling table carries the toolpath, stock and fixtures. **Verified:** the NC engine and machine Server tests, `NcViewerAxesAndSceneCoreTests` (tool tip stays on the toolpath while the table moves), full client suite. **Not verified:** the drawn view in WebView2.
+
+**Machine models from the SolidCAM post library:** each part is attached to the node with the same signed linear axes and rotary depth; offsets come from one pose at which the SolidCAM model at axis zero and the definition agree (workpiece reference and spindle gauge). Placement depends on the definitions' `mrzp`, which is still a placeholder for the Haas VF-3SS and UMC-500.
+
 ## Lathe Machine view and mill-turn axes in the NC viewer (2026-10-10; implemented locally)
 
 **Implemented:** `meimad-lathe-axes-core.js` (C/H/Y/V read from segment rows and the rows between drawn moves, macro/call/chamfer guards, G112/G12.1 and G107/G7.1 reported; lathe chain preparation with a virtual Y slide and placeholder geometry; spindle face position), `meimad-active-segment.js` (active segment from playback and selection), `meimad-lathe-machine.js` (Frame Part/Machine for lathes, chain drawn in the scene, turret and spindle posed per tool pose), Machine 3D models on lathe nodes (`meimad-scene.js`), Y/C in the Axes card. The vendored viewer and interpreter are unchanged. **Verified:** `NcViewerLatheAxesCoreTests` (V8 with the vendored kinematics). **Not verified:** the drawn Machine view in WebView2 with a real lathe program and STL models.

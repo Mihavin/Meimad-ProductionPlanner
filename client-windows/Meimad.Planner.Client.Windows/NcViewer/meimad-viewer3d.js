@@ -46,6 +46,13 @@ export function createToolpathViewer(options) {
           super({ powerPreference: "high-performance", ...parameters }, ...rest);
           captured.renderers.push(this);
         }
+
+        // Meimad scripts adjust the scene just before it is drawn, after the upstream viewer has set
+        // its own frames (meimad-machine-frame.js moves the part with a table that travels in X/Y).
+        render(scene, camera) {
+          emit("beforeRender", scene);
+          super.render(scene, camera);
+        }
       }
     };
   } catch (error) {
@@ -77,6 +84,8 @@ export function createToolpathViewer(options) {
     scene: captured.scenes[0],
     contentRoot: captured.groups[0],
     machineRoot: captured.groups[1],
+    gridRoot: captured.groups[2],
+    pickRoot: captured.groups[3],
     camera: captured.cameras[0],
     renderer: captured.renderers[0],
     upstream,

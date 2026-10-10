@@ -68,14 +68,15 @@
   },
   "kinematics": {
     "type": "table-rotary-a",
-    "description": "X/Y/Z move the spindle relative to the table (drawn on the spindle side); the A rotary table turns the workpiece about a line parallel to X through the A-axis centreline.",
+    "description": "Physical layout of a C-frame VMC with an A rotary table on the X table: the Y saddle moves on the base, the X table on the saddle, the A table turns the workpiece about a line parallel to X through the A-axis centreline, the Z head moves on the fixed column.",
     "nodes": [
-      { "id": "base", "label": "Machine base", "geometry": { "shape": "box", "size": [1100, 700, 60], "center": [-381, -205, -520] }, "model": null },
-      { "id": "x-saddle", "parent": "base", "label": "X saddle", "type": "linear", "axis": "X", "direction": [1, 0, 0], "geometry": { "shape": "box", "size": [220, 180, 90], "center": [0, 60, 380] }, "model": null },
-      { "id": "y-ram", "parent": "x-saddle", "label": "Y ram", "type": "linear", "axis": "Y", "direction": [0, 1, 0], "geometry": { "shape": "box", "size": [200, 480, 90], "center": [0, 140, 290] }, "model": null },
-      { "id": "z-head", "parent": "y-ram", "label": "Z spindle head", "type": "linear", "axis": "Z", "direction": [0, 0, 1], "geometry": { "shape": "box", "size": [200, 240, 300], "center": [0, 40, 160] }, "model": null },
-      { "id": "spindle", "parent": "z-head", "label": "Spindle (gauge line)", "type": "spindle", "toolMount": true, "geometry": { "shape": "cylinder", "radius": 55, "height": 90, "center": [0, 0, 45], "axis": "z" }, "model": null },
-      { "id": "a-table", "parent": "base", "label": "A rotary table", "type": "rotary", "axis": "A", "direction": [1, 0, 0], "pivot": "mrzp", "sense": -1, "workpieceMount": true, "geometry": { "shape": "cylinder", "radius": 100, "height": 400, "center": "mrzp", "offset": [-200, 0, 0], "axis": "x" }, "model": null }
+      { "id": "base", "label": "Machine base", "geometry": { "shape": "box", "size": [1100, 700, 60], "center": [-381, -205, -630] }, "model": null },
+      { "id": "column", "parent": "base", "label": "Column", "type": "fixed", "geometry": { "shape": "box", "size": [600, 380, 1100], "center": [0, 380, 200] }, "model": null },
+      { "id": "z-head", "parent": "base", "label": "Z spindle head", "type": "linear", "axis": "Z", "direction": [0, 0, 1], "geometry": { "shape": "box", "size": [220, 260, 320], "center": [0, 40, 180] }, "model": null },
+      { "id": "spindle", "parent": "z-head", "label": "Spindle (gauge line)", "type": "spindle", "toolMount": true, "geometry": { "shape": "cylinder", "radius": 60, "height": 90, "center": [0, 0, 45], "axis": "z" }, "model": null },
+      { "id": "y-saddle", "parent": "base", "label": "Y saddle", "type": "linear", "axis": "Y", "direction": [0, -1, 0], "geometry": { "shape": "box", "size": [700, 460, 100], "center": [-381, -205, -550] }, "model": null },
+      { "id": "x-table", "parent": "y-saddle", "label": "X table", "type": "linear", "axis": "X", "direction": [-1, 0, 0], "geometry": { "shape": "box", "size": [900, 400, 50], "center": [-381, -205, -475] }, "model": null },
+      { "id": "a-table", "parent": "x-table", "label": "A rotary table", "type": "rotary", "axis": "A", "direction": [1, 0, 0], "pivot": "mrzp", "sense": -1, "workpieceMount": true, "geometry": { "shape": "cylinder", "radius": 100, "height": 400, "center": "mrzp", "offset": [-200, 0, 0], "axis": "x" }, "model": null }
     ]
   }
 }
