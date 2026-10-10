@@ -7,7 +7,7 @@
   <base href="/tv-dashboard/">
   <title>Meimad Machine Status</title>
   <meta name="description" content="Read-only factory-floor machine status dashboard">
-  <link rel="stylesheet" href="styles.css?v=0.1.37">
+  <link rel="stylesheet" href="styles.css?v=0.1.38">
   <script>
   // Plain ES5 on purpose: it must run on old TV browsers. When app.js fails to load or
   // to parse, the error is written on the board instead of leaving a black screen.
@@ -34,8 +34,12 @@
 </head>
 <body>
   <header class="topbar">
-    <h1 id="page-title">Machine status</h1>
+    <div class="topbar-title">
+      <h1 id="page-title">Machine status</h1>
+      <div id="summary" class="summary" aria-live="polite"></div>
+    </div>
     <div class="topbar-tools">
+      <span id="clock" class="clock" aria-hidden="true"></span>
       <nav id="language-nav" class="language-nav" aria-label="Language">
         <a href="?lang=en" data-language="en" lang="en">EN</a>
         <a href="?lang=he" data-language="he" lang="he">עב</a>
@@ -52,6 +56,6 @@
     <div class="empty-state">Waiting for machine status</div>
   </main>
 
-  <script src="app.js?v=0.1.37" defer></script>
+  <script src="app.js?v=0.1.38" defer></script>
 </body>
 </html>

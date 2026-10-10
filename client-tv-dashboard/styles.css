@@ -1,7 +1,9 @@
-/* Factory TV board. Written for the browsers of factory TVs (Samsung Tizen ships Chromium
-   47-94): flexbox only, no CSS grid, custom properties, clamp/min functions or flex gap. Band text
-   uses rem units; app.js sets the root font size from the band height, and the 12px default
-   below keeps the page readable before the script runs. Every state is written as text. */
+/* Factory TV board (concept C3, owner choice 2026-10-10): a dark departure-board table grouped by
+   status, with the Machines needing attention first. Written for the browsers of factory TVs
+   (Samsung Tizen ships Chromium 47-94): flexbox only, no CSS grid, custom properties, clamp/min
+   functions or flex gap. Row text uses rem units; app.js sets the root font size from the row
+   height, and the 12px default below keeps the page readable before the script runs. Every state
+   is written as text next to its colour. */
 
 html { font-size: 12px; }
 
@@ -18,11 +20,13 @@ body {
   margin: 0;
   display: flex;
   flex-direction: column;
-  background: #071019;
-  color: #ffffff;
+  background: #070c12;
+  color: #f3f6f8;
   font-family: "Segoe UI", Arial, sans-serif;
   font-variant-numeric: tabular-nums;
 }
+
+.mono { font-family: Consolas, "Courier New", monospace; }
 
 .topbar {
   flex: 0 0 auto;
@@ -30,17 +34,66 @@ body {
   align-items: center;
   justify-content: space-between;
   min-width: 0;
-  height: 5.5vh;
-  min-height: 42px;
-  max-height: 68px;
-  padding: 0 1.5vw;
-  background: #0b1721;
-  border-bottom: 1px solid #2b3c49;
+  height: 7.5vh;
+  min-height: 48px;
+  max-height: 90px;
+  padding: 0 1.8vw;
+  border-bottom: 2px solid #1f2b36;
 }
+
+.topbar-title { display: flex; align-items: baseline; min-width: 0; }
+
+h1 {
+  margin: 0;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 1.8vw;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Counts per group, written as words next to a coloured square. */
+.summary {
+  display: flex;
+  align-items: baseline;
+  margin-left: 1.5vw;
+  color: #9fb0bd;
+  font-size: 1.05vw;
+  font-weight: 600;
+  white-space: nowrap;
+}
+html[dir="rtl"] .summary { margin-left: 0; margin-right: 1.5vw; }
+.summary-item { display: inline-flex; align-items: center; margin-left: 1.2vw; }
+html[dir="rtl"] .summary-item { margin-left: 0; margin-right: 1.2vw; }
+.summary-item:first-child { margin: 0; }
+.summary-swatch {
+  display: inline-block;
+  width: 0.75vw;
+  height: 0.75vw;
+  min-width: 9px;
+  min-height: 9px;
+  margin-right: 0.4vw;
+  border-radius: 2px;
+}
+html[dir="rtl"] .summary-swatch { margin-right: 0; margin-left: 0.4vw; }
+.summary-production .summary-swatch { background: #1E88E5; }
+.summary-setup .summary-swatch { background: #FBC02D; }
+.summary-attention .summary-swatch { background: #F57C00; }
+.summary-idle .summary-swatch { background: #9E9E9E; }
 
 .topbar-tools { display: flex; align-items: center; }
 .topbar-tools > * { margin-left: 1.4vw; }
 html[dir="rtl"] .topbar-tools > * { margin-left: 0; margin-right: 1.4vw; }
+
+.clock {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 2vw;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
 
 .language-nav { display: flex; align-items: center; direction: ltr; }
 .language-nav a {
@@ -76,15 +129,6 @@ html[dir="rtl"] .topbar-tools > * { margin-left: 0; margin-right: 1.4vw; }
 .fullscreen-toggle:hover, .fullscreen-toggle:focus { color: #ffffff; border-color: #8dccff; outline: none; }
 .fullscreen-toggle[aria-pressed="true"] { color: #071019; border-color: #8dccff; background: #8dccff; }
 
-h1 {
-  margin: 0;
-  font-size: 2vw;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: .02em;
-  text-transform: uppercase;
-}
-
 /* Server connection dot: colour plus the aria-label/title text. */
 .server-status {
   width: 1vw;
@@ -110,207 +154,186 @@ html[dir="rtl"] .server-status-text { margin-left: 0; margin-right: 0.5vw; }
 .server-status-connecting { background: #f5c542; box-shadow: 0 0 12px #f5c542; }
 .server-status-disconnected { background: #ff4d4f; box-shadow: 0 0 12px #ff4d4f; }
 
-/* One horizontal band per Machine; the bands share the height left under the header. */
+/* The table: a column header, then one band per status group, each with its Machine rows. */
 .machine-grid {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 0 1.25vw 2px;
-  background: #09131c;
+  padding: 0.4rem 1.8vw 0.6rem;
   overflow: hidden;
 }
+
+.column-header,
+.machine-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 0.7rem;
+}
+html[dir="rtl"] .column-header,
+html[dir="rtl"] .machine-row { direction: rtl; }
+
+.column-header {
+  flex: 0 0 auto;
+  height: 1.6rem;
+  margin-bottom: 0.3rem;
+  border-bottom: 2px solid #2b3c49;
+  color: #7f91a0;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.group-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  height: 1.45rem;
+  margin-top: 0.35rem;
+  padding: 0 0.7rem;
+  color: #ffffff;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.group-header:first-of-type { margin-top: 0; }
+.group-swatch {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-right: 0.6rem;
+  border-radius: 2px;
+}
+html[dir="rtl"] .group-swatch { margin-right: 0; margin-left: 0.6rem; }
+.group-count {
+  margin-left: 0.6rem;
+  color: #9fb0bd;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+html[dir="rtl"] .group-count { margin-left: 0; margin-right: 0.6rem; }
+.group-attention { background: #5a2a00; }
+.group-attention .group-swatch { background: #F57C00; }
+.group-setup { background: #5a4a00; }
+.group-setup .group-swatch { background: #FBC02D; }
+.group-production { background: #0d3a66; }
+.group-production .group-swatch { background: #1E88E5; }
+.group-idle { background: #1f3a24; }
+.group-idle .group-swatch { background: #43A047; }
 
 .machine-row {
   flex: 1 1 0;
-  min-width: 0;
   min-height: 0;
-  display: flex;
-  align-items: stretch;
+  background: #111a24;
+  border-bottom: 2px solid #070c12;
+  font-size: 1rem;
   overflow: hidden;
-  background: #14232e;
-  border-bottom: 3px solid #071019;
+}
+.machine-row.attention { box-shadow: inset 0.35rem 0 0 #F57C00; }
+html[dir="rtl"] .machine-row.attention { box-shadow: inset -0.35rem 0 0 #F57C00; }
+.machine-row.idle { background: #0d151e; color: #9fb0bd; font-style: italic; }
+
+/* Columns. Fixed columns are sized in rem so they follow the row height; the operation name takes the rest. */
+.cell { min-width: 0; padding-right: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[dir="rtl"] .cell { padding-right: 0; padding-left: 0.7rem; }
+/* Latin part numbers and OP codes keep left-to-right order but sit at the row's start edge in Hebrew. */
+html[dir="rtl"] .part-number, html[dir="rtl"] .job-op, html[dir="rtl"] .machine-number { text-align: right; }
+html[dir="rtl"] .column-header .cell { direction: rtl; text-align: right; }
+html[dir="rtl"] h1, html[dir="rtl"] .group-header, html[dir="rtl"] .column-header { letter-spacing: 0; }
+.machine-identity { flex: 0 0 3.6rem; }
+.machine-number {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 1.55rem;
+  font-weight: 700;
+  line-height: 1;
   direction: ltr;
 }
-
-.machine-identity,
-.operation,
-.execution {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.machine-identity {
-  flex: 0 0 19%;
-  min-width: 145px;
-  padding: 3px 1vw;
-  border-right: 1px solid #2a3b47;
-  text-align: left;
-}
-
-.machine-number {
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-  color: #ffffff;
-  font-size: 1.8rem;
-  font-weight: 900;
-  line-height: 1.05;
-  white-space: nowrap;
-}
-
-.machine-name {
-  margin: 3px 0 0;
-  overflow: hidden;
-  color: #9eb1bf;
-  font-size: 1.15rem;
-  font-weight: 500;
-  line-height: 1.05;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* CNC connection after the Machine number: a dot plus the state in words. */
-.machine-connection {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  margin-left: 0.6vw;
-}
+.machine-row.idle .machine-number { color: #7f91a0; }
+.machine-connection { flex: 0 0 5.3rem; display: flex; align-items: center; }
 .connection-dot {
   display: inline-block;
-  width: 0.6rem;
-  height: 0.6rem;
-  min-width: 7px;
-  min-height: 7px;
-  margin-right: 0.3vw;
+  width: 0.5rem;
+  height: 0.5rem;
+  min-width: 6px;
+  min-height: 6px;
+  margin-right: 0.3rem;
   border-radius: 50%;
   background: #ff4d4f;
 }
+html[dir="rtl"] .connection-dot { margin-right: 0; margin-left: 0.3rem; }
 .connection-text {
-  color: #ff8a8c;
-  font-size: 0.85rem;
+  color: #ff9a9c;
+  font-size: 0.66rem;
   font-weight: 700;
-  letter-spacing: .02em;
+  letter-spacing: .04em;
   text-transform: uppercase;
   white-space: nowrap;
 }
 .connection-online .connection-dot { background: #39d353; }
 .connection-online .connection-text { color: #6fdc85; }
-
-.operation {
-  flex: 1 1 0;
-  padding: 3px 1.25vw;
+.part-number {
+  flex: 0 0 15rem;
+  font-family: Consolas, "Courier New", monospace;
+  font-weight: 700;
+  direction: ltr;
+  unicode-bidi: isolate;
 }
-
-.operation-title {
-  display: flex;
-  align-items: baseline;
-  min-width: 0;
-  font-size: 1.9rem;
-  line-height: 1.05;
-}
-
-.operation-title strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.work-order {
-  margin-left: 1.25vw;
-  color: #f4f6f8;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.job-op {
-  margin-left: .35em;
-  color: #8dccff;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.operation-name {
-  margin-top: 4px;
-  overflow: hidden;
-  color: #b9cad5;
-  font-size: 1.15rem;
-  line-height: 1.05;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.operation.empty {
-  flex: 1 1 0;
-  padding-left: 1.25vw;
-  color: #8fa5b4;
-  font-size: 1.6rem;
-}
-
-.execution {
-  flex: 0 0 38%;
-  min-width: 260px;
-  padding: 3px 1.5vw;
-  border-left: 1px solid #2a3b47;
-}
-
-.execution-line {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  min-width: 0;
-}
-
+.work-order { flex: 0 0 4.5rem; color: #9fb0bd; font-weight: 600; }
+.job-op { flex: 0 0 3.6rem; color: #8dccff; font-weight: 700; direction: ltr; unicode-bidi: isolate; }
+.operation-name { flex: 1 1 0; color: #c3d0da; }
+.machine-row.idle .operation-name { flex: 1 1 0; color: #9fb0bd; }
 .status-label {
-  flex: 0 0 auto;
-  margin-right: 1vw;
-  color: #e9edf0;
-  font-size: 2.1rem;
-  font-weight: 900;
-  line-height: 1;
+  flex: 0 0 10rem;
+  font-size: 0.85rem;
+  font-weight: 700;
   text-transform: uppercase;
+  color: #e9edf0;
 }
+.status-started .status-label { color: #8dccff; }
+.status-paused .status-label { color: #ffb866; }
+.status-completed .status-label { color: #6fdc85; }
+.status-waiting .status-label { color: #c3d0da; }
+.machine-row.setup .status-label { color: #FBC02D; }
+.machine-row.idle .status-label { color: #9fb0bd; }
+.part-count { flex: 0 0 5.6rem; text-align: right; font-family: Consolas, "Courier New", monospace; font-weight: 700; direction: ltr; }
+.cycle-average { flex: 0 0 5.8rem; text-align: right; font-family: Consolas, "Courier New", monospace; color: #9fb0bd; direction: ltr; }
+html[dir="rtl"] .part-count, html[dir="rtl"] .cycle-average { text-align: left; }
 
-.completion-label {
-  overflow: hidden;
-  color: #c0ccd4;
-  font-size: 1.15rem;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cycle-average {
-  margin-top: 3px;
-  color: #8dccff;
-  font-size: 1rem;
-  font-weight: 750;
-  line-height: 1;
-  text-align: right;
-}
-
-/* Execution state colours; the state is always written in .status-label as well. */
-.status-paused .status-label { color: #ffb020; }
-.status-completed .status-label { color: #39d353; }
-.status-waiting .status-label { color: #e9edf0; }
-
+.progress { flex: 0 0 9.7rem; display: flex; align-items: center; justify-content: flex-end; margin-left: 0.6rem; }
+html[dir="rtl"] .progress { margin-left: 0; margin-right: 0.6rem; }
 .progress-track {
-  height: 0.65vh;
+  display: block;
+  width: 5.6rem;
+  height: 0.5rem;
   min-height: 5px;
-  max-height: 10px;
-  margin-top: 0.7vh;
   overflow: hidden;
-  border-radius: 999px;
-  background: #304653;
+  border-radius: 2px;
+  background: #28394a;
 }
-.progress-track > span { display: block; width: 0; height: 100%; background: #1687e8; }
-.status-paused .progress-track > span { background: #ffb020; }
-.status-completed .progress-track > span { background: #39d353; }
+.progress-track > span { display: block; width: 0; height: 100%; background: #1E88E5; }
+.status-paused .progress-track > span { background: #F57C00; }
+.status-completed .progress-track > span { background: #2E7D32; }
+.machine-row.setup .progress-track > span { background: #FBC02D; }
+.status-waiting .progress-track > span { background: #9E9E9E; }
+.completion-label {
+  width: 3.7rem;
+  margin-left: 0.4rem;
+  text-align: right;
+  font-family: Consolas, "Courier New", monospace;
+  font-weight: 700;
+  direction: ltr;
+}
+html[dir="rtl"] .completion-label { margin-left: 0; margin-right: 0.4rem; text-align: left; }
 
 .empty-state,
 .script-error {
@@ -331,19 +354,6 @@ html[dir="rtl"] .server-status-text { margin-left: 0; margin-right: 0.5vw; }
   font-family: Consolas, "Courier New", monospace;
   word-break: break-word;
 }
-
-html[dir="rtl"] .operation,
-html[dir="rtl"] .execution { direction: rtl; text-align: right; }
-html[dir="rtl"] .machine-identity { text-align: right; border-right: 0; border-left: 1px solid #2a3b47; }
-html[dir="rtl"] .machine-number { justify-content: flex-end; }
-html[dir="rtl"] .machine-connection { margin-left: 0; margin-right: 0.6vw; }
-html[dir="rtl"] .connection-dot { margin-right: 0; margin-left: 0.3vw; }
-html[dir="rtl"] .work-order { margin-right: 1.25vw; margin-left: 0; }
-html[dir="rtl"] .job-op { margin-right: .35em; margin-left: 0; }
-html[dir="rtl"] .status-label { margin-right: 0; margin-left: 1vw; }
-html[dir="rtl"] .cycle-average { text-align: left; }
-html[dir="rtl"] .execution { border-left: 0; border-right: 1px solid #2a3b47; }
-.operation-title strong, .job-op, .machine-number { direction: ltr; unicode-bidi: isolate; }
 
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }

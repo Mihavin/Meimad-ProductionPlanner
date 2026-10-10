@@ -1,5 +1,9 @@
 # Implementation Plan
 
+## TV Dashboard concept C3 (2026-10-10; implemented locally)
+
+**Owner decision (2026-10-10):** of the TV concepts (status plates, shift board, light departure board, their mix, and three 16-machine variants of the departure board), the owner chose C3: dark, grouped by status. Implemented in `client-tv-dashboard` as `dashboardBuild` `0.1.38`: a column header, bands Attention / Setup / In production / Done-waiting-idle with counts, one row per Machine (number, CNC state, part, work order, OP, operation name, status word, parts, average cycle, progress bar + percentage), band counts and the TV clock in the top bar. Bands derive from `statusCode`, `phase` and `connection.online`; the projection is unchanged. Still ES2015/flexbox only; `TvDashboardApiTests` guards the constraints and the new band logic. Not verified on a physical TV; the row-height fit for 16 Machines (about 51 px rows at 1080p) needs a read-distance check in the hall.
+
 ## Spreadsheet, STEP metadata and CMM file indexing (2026-10-09/10; implemented locally)
 
 **Owner decision (2026-10-09):** approved-document indexing also covers Excel and CSV spreadsheets and the metadata of STEP models. This replaces the earlier "no CAD/3D model or Office ingestion" boundary for these formats only.

@@ -23,7 +23,7 @@ public sealed class TvDashboardApiTests
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var root = document.RootElement;
             Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
-            Assert.Equal("0.1.37", root.GetProperty("dashboardBuild").GetString());
+            Assert.Equal("0.1.38", root.GetProperty("dashboardBuild").GetString());
             Assert.Equal(15, root.GetProperty("refreshAfterSeconds").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("machineCount").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("urgentBatchCount").GetInt32());
@@ -96,7 +96,14 @@ public sealed class TvDashboardApiTests
             Assert.Contains("/api/v1/machines/live", javascript, StringComparison.Ordinal);
             Assert.Contains("type: \"subscribe\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machineIds", javascript, StringComparison.Ordinal);
-            Assert.Contains("fitGrid(machines.length)", javascript, StringComparison.Ordinal);
+            Assert.Contains("fitGrid(machines.length, groups.groupCount)", javascript, StringComparison.Ordinal);
+            // Concept C3 (owner choice 2026-10-10): Machines are banded by status, attention first, from projection fields only.
+            Assert.Contains("function groupOf(machine)", javascript, StringComparison.Ordinal);
+            Assert.Contains("progress.statusCode === \"paused\" || !online) return \"attention\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("groupAttention: \"דורש תשומת לב\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("groupAttention: \"Требуют внимания\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("id=\"clock\"", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"summary\"", html, StringComparison.Ordinal);
             Assert.Contains("fullscreen-toggle", javascript, StringComparison.Ordinal);
             // Every connection colour has its state written next to it (rule 13).
             Assert.Contains("id=\"server-status-text\"", html, StringComparison.Ordinal);
@@ -111,12 +118,13 @@ public sealed class TvDashboardApiTests
             Assert.Contains("progressLabel(progress)", javascript, StringComparison.Ordinal);
             Assert.Contains("progress-track", css, StringComparison.Ordinal);
             Assert.Contains(".machine-connection", css, StringComparison.Ordinal);
-            Assert.Contains("flex: 0 0 19%", css, StringComparison.Ordinal);
+            Assert.Contains(".group-header", css, StringComparison.Ordinal);
+            Assert.Contains(".column-header", css, StringComparison.Ordinal);
             Assert.DoesNotContain("renderPreview(machine.current)", javascript, StringComparison.Ordinal);
-            Assert.Contains("const identity = `<div class=\"machine-identity\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("const identity = `<div class=\"cell machine-identity\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machine.connection", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain(">${escapeHtml(connectionState)}</div>", javascript, StringComparison.Ordinal);
-            Assert.Contains("DASHBOARD_BUILD = \"0.1.37\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("DASHBOARD_BUILD = \"0.1.38\"", javascript, StringComparison.Ordinal);
             Assert.Contains("data.dashboardBuild !== DASHBOARD_BUILD", javascript, StringComparison.Ordinal);
             Assert.Contains("machineStatus: \"מצב מכונות\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machineStatus: \"Состояние станков\"", javascript, StringComparison.Ordinal);

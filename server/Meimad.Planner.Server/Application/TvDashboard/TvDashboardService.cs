@@ -79,7 +79,7 @@ internal sealed class TvDashboardService
         var criticalConflictCount = 0;
         var projection = new TvDashboardProjection(
             2,
-            "0.1.37",
+            "0.1.38",
             now,
             "current",
             options.RefreshAfterSeconds,
