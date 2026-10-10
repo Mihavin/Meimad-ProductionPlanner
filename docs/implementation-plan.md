@@ -1,5 +1,11 @@
 # Implementation Plan
 
+## Lathe Machine view and mill-turn axes in the NC viewer (2026-10-10; implemented locally)
+
+**Implemented:** `meimad-lathe-axes-core.js` (C/H/Y/V read from segment rows and the rows between drawn moves, macro/call/chamfer guards, G112/G12.1 and G107/G7.1 reported; lathe chain preparation with a virtual Y slide and placeholder geometry; spindle face position), `meimad-active-segment.js` (active segment from playback and selection), `meimad-lathe-machine.js` (Frame Part/Machine for lathes, chain drawn in the scene, turret and spindle posed per tool pose), Machine 3D models on lathe nodes (`meimad-scene.js`), Y/C in the Axes card. The vendored viewer and interpreter are unchanged. **Verified:** `NcViewerLatheAxesCoreTests` (V8 with the vendored kinematics). **Not verified:** the drawn Machine view in WebView2 with a real lathe program and STL models.
+
+**Open (reversible):** live-tool cuts are not drawn in 3D and polar/cylindrical interpolation is not interpreted; that needs C/Y support in the vendored lathe interpreter (an owner decision on changing vendored code). C/Y follow the main program's row order, not loops or calls the interpreter does not draw.
+
 ## AI search for an Operation's simulation data (2026-10-10; implemented locally)
 
 **Implemented:** `SimulationDataDiscovery` (folders: NC file's part folder, Case Working Folder, part folders from approved-document paths; bounded listing; rule classification by name, `STOCK`/fixture folders, OP number and closeness to the NC file) and `SimulationDataSearchService` (background queue like Ask AI, one active search per account, local model re-ranks up to 40 candidates as JSON from file list, STEP metadata and NC header comments; rule-based result when AI is off, fails or answers unreadably) with `POST/GET/DELETE /api/v1/local-ai/simulation-data`. Windows: the Operation's *Cimatron setup* card searches automatically when an NC file is chosen in the Release G-code form and on demand, shows suggestions with ticks, and links the ticked stock/fixtures to the Operation, a part model to the Case and a tool list into the form. No schema change.

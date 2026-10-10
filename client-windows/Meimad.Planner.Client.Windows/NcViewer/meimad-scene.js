@@ -136,6 +136,10 @@
   }
 
   function nodeGroups() {
+    // A lathe's Machine view is drawn by meimad-lathe-machine.js.
+    if (model && model.kind === "lathe") {
+      return window.meimadLatheMachine ? window.meimadLatheMachine.nodeGroups() : new Map();
+    }
     const groups = new Map();
     for (const child of (hooks && hooks.machineRoot && hooks.machineRoot.children) || []) {
       const node = child.userData && child.userData.node;
@@ -144,8 +148,12 @@
     return groups;
   }
 
+  let machineDrawGeneration = 0;
+
   async function drawMachineModels() {
     if (!hooks || !hooks.captured || !model) return;
+    // A newer draw (another model, or rebuilt lathe node groups) supersedes this one.
+    const generation = ++machineDrawGeneration;
     const models = machineModelsForModel();
     const groups = nodeGroups();
     // The upstream viewer rebuilds the node groups for every model; ours are added again.
@@ -174,7 +182,7 @@
       }
       try {
         const positions = await fetchMesh(entry.meshUrl);
-        if (model !== requested) return;
+        if (model !== requested || generation !== machineDrawGeneration) return;
         const placed = core.placeOnNode(positions, entry, scaleOf());
         const opacity = Number.isFinite(entry.opacity) ? entry.opacity : 1;
         group.add(meshObject(placed, colorOf(entry.color, 0x9aa4ae), opacity));
@@ -381,6 +389,8 @@
   }
 
   elements.machine.addEventListener("change", drawMachineModels);
+  // The lathe Machine view rebuilds its node groups for each machine definition.
+  window.addEventListener("meimad:lathe-machine", () => drawMachineModels());
   elements.fixtures.addEventListener("change", drawFixtures);
   elements.rest.addEventListener("change", drawFixtures);
   elements.importButton.addEventListener("click", importCimatron);

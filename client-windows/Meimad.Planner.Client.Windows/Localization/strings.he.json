@@ -5119,5 +5119,10 @@
   "The search took too long. Try again.": "החיפוש נמשך זמן רב מדי. נסו שוב.",
   "The search did not finish.": "החיפוש לא הסתיים.",
   "Linking files needs an account that may edit Cases.": "קישור קבצים דורש חשבון שרשאי לערוך תיקי חלקים.",
-  "{0} is now the tool table of the Release G-code form.": "{0} היא כעת טבלת הכלים בטופס שחרור ה־G-code."
+  "{0} is now the tool table of the Release G-code form.": "{0} היא כעת טבלת הכלים בטופס שחרור ה־G-code.",
+  "Part: the turning profile only. Machine: the lathe's spindle, carriage, slides and turret follow the tool; the spindle turns with C.": "חלק: פרופיל החריטה בלבד. מכונה: הציר, העגלה, המגלשות והצריח של המחרטה עוקבים אחר הכלי; הציר מסתובב עם C.",
+  "Milling axes in the program: {0}; the Machine view turns the spindle and moves the turret with them. Live-tool cuts are drawn as their X-Z profile only.": "צירי כרסום בתוכנית: {0}; תצוגת המכונה מסובבת את הציר ומזיזה את הצריח לפיהם. חיתוכי כלים חיים משורטטים כפרופיל X-Z בלבד.",
+  "Polar interpolation (G112/G12.1) is not interpreted: its X/C words are not machine positions.": "אינטרפולציה קוטבית (G112/G12.1) אינה מפוענחת: מילות ה־X/C שלה אינן מיקומי מכונה.",
+  "Cylindrical interpolation (G107/G7.1) is not interpreted.": "אינטרפולציה גלילית (G107/G7.1) אינה מפוענחת.",
+  "The lathe definition has no usable kinematic chain, so the Machine view is unavailable.": "להגדרת המחרטה אין שרשרת קינמטית שמישה, ולכן תצוגת המכונה אינה זמינה."
 }

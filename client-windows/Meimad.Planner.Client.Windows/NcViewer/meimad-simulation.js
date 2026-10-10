@@ -804,6 +804,8 @@
 
   // meimad-scene.js: "Use as stock" on a Cimatron rest material of the Operation.
   window.meimadStock = Object.freeze({
+    /** The applied stock definition (the lathe Machine view puts the spindle face behind it). */
+    definition: () => definition,
     async useRestMaterial(item) {
       if (!item?.path) return false;
       if (item.workCs?.workOffset) selectOffset(item.workCs.workOffset);

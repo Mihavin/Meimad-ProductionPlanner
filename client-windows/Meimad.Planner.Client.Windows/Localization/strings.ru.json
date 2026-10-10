@@ -5119,5 +5119,10 @@
   "The search took too long. Try again.": "Поиск занял слишком много времени. Повторите попытку.",
   "The search did not finish.": "Поиск не завершён.",
   "Linking files needs an account that may edit Cases.": "Для привязки файлов нужна учётная запись с правом редактирования деталей.",
-  "{0} is now the tool table of the Release G-code form.": "{0} теперь является таблицей инструментов в форме выпуска G-кода."
+  "{0} is now the tool table of the Release G-code form.": "{0} теперь является таблицей инструментов в форме выпуска G-кода.",
+  "Part: the turning profile only. Machine: the lathe's spindle, carriage, slides and turret follow the tool; the spindle turns with C.": "Деталь: только профиль точения. Станок: шпиндель, каретка, суппорты и револьверная головка токарного станка следуют за инструментом; шпиндель поворачивается по C.",
+  "Milling axes in the program: {0}; the Machine view turns the spindle and moves the turret with them. Live-tool cuts are drawn as their X-Z profile only.": "Фрезерные оси в программе: {0}; вид «Станок» поворачивает шпиндель и перемещает револьверную головку по ним. Обработка приводным инструментом рисуется только как профиль X-Z.",
+  "Polar interpolation (G112/G12.1) is not interpreted: its X/C words are not machine positions.": "Полярная интерполяция (G112/G12.1) не интерпретируется: её слова X/C не являются положениями станка.",
+  "Cylindrical interpolation (G107/G7.1) is not interpreted.": "Цилиндрическая интерполяция (G107/G7.1) не интерпретируется.",
+  "The lathe definition has no usable kinematic chain, so the Machine view is unavailable.": "В описании токарного станка нет пригодной кинематической цепи, поэтому вид «Станок» недоступен."
 }

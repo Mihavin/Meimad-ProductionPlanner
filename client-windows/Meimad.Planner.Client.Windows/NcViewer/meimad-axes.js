@@ -54,9 +54,24 @@
 
   // ----- current position ---------------------------------------------------------------------
 
+  function latheMilling() {
+    const annotation = window.meimadLatheAnnotation;
+    const lathe = window.MeimadLatheAxes;
+    if (!model || model.kind !== "lathe" || !annotation || !lathe || !(annotation.usesC || annotation.usesY)) return null;
+    const active = window.meimadActiveSegment ? window.meimadActiveSegment.current() : null;
+    const values = active ? lathe.at(annotation, active.index, active.fraction) : { C: 0, Y: 0 };
+    const result = {};
+    if (annotation.usesY) result.Y = values.Y;
+    if (annotation.usesC) result.C = values.C;
+    return result;
+  }
+
   function renderPose() {
     poseTimer = 0;
-    const joints = model && calculator && lastPose ? core.poseJoints(model, kinematics, lastPose, calculator) : undefined;
+    let joints = model && calculator && lastPose ? core.poseJoints(model, kinematics, lastPose, calculator) : undefined;
+    // A lathe's milling axes (C spindle position, Y) come from the program rows (meimad-lathe-axes-core.js).
+    const milling = latheMilling();
+    if (joints && milling) joints = Object.assign({}, joints, milling);
     const axes = axisOrder.length ? axisOrder : [];
     elements.now.replaceChildren();
     const overlayParts = [];
@@ -130,6 +145,18 @@
       return;
     }
     const result = core.travelRanges(model, kinematics, { includeRapids: elements.rapids.checked });
+    if (result.kind === "lathe" && window.meimadLatheAnnotation && window.MeimadLatheAxes) {
+      const milling = window.MeimadLatheAxes.ranges(window.meimadLatheAnnotation, model.segments);
+      for (const axis of ["Y", "C"]) {
+        const range = milling[axis];
+        if (!range) continue;
+        result.rows.push({
+          axis, label: axis, type: axis === "C" ? "rotary" : "linear",
+          min: range.min, max: range.max, minLine: range.minLine, maxLine: range.maxLine,
+          limitMin: null, limitMax: null, status: "no-limit", overBy: 0, overLine: null
+        });
+      }
+    }
     axisOrder = result.kind === "lathe"
       ? result.rows.map((row) => ({ axis: row.axis, label: row.label, type: row.type, limitMin: null, limitMax: null, wraps: false }))
       : core.machineAxes(model);

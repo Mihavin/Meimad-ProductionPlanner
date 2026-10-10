@@ -158,6 +158,12 @@
               <option value="machine">Machine</option>
             </select>
           </label>
+          <label id="meimadLatheFrameLabel" hidden>Frame
+            <select id="meimadLatheFrame" title="Part: the turning profile only. Machine: the lathe's spindle, carriage, slides and turret follow the tool; the spindle turns with C.">
+              <option value="part">Part</option>
+              <option value="machine">Machine</option>
+            </select>
+          </label>
           <div class="playback-controls" role="group" aria-label="Toolpath playback">
             <button id="runButton" class="run-button" type="button">Run</button>
             <button id="pauseButton" type="button" disabled>Pause</button>
@@ -247,6 +253,7 @@
             <label class="check"><input id="meimadSceneMachine" type="checkbox" checked> Machine 3D models (Machine view)</label>
             <label class="check"><input id="meimadSceneFixtures" type="checkbox" checked> Fixtures</label>
             <label class="check"><input id="meimadSceneRest" type="checkbox" checked> Rest material</label>
+            <p id="meimadLatheNote" class="meimad-note"></p>
             <ul id="meimadSceneItems" class="meimad-scene-items"></ul>
             <div class="meimad-stock-actions">
               <button id="meimadSceneImport" type="button" title="Show fixture and rest-material files exported from Cimatron (STL or STEP) in this window">Import from Cimatron…</button>
@@ -602,6 +609,7 @@
   <script src="../media/model-transport.js"></script>
   <script src="./meimad-axes-core.js"></script>
   <script src="./meimad-scene-core.js"></script>
+  <script src="./meimad-lathe-axes-core.js"></script>
   <script src="../media/preview.js"></script>
   <script src="./meimad-viewer.js"></script>
   <script src="./meimad-material.js"></script>
@@ -609,6 +617,8 @@
   <script src="./meimad-tool-assembly.js"></script>
   <script src="./meimad-playback-core.js"></script>
   <script src="./meimad-playback.js"></script>
+  <script src="./meimad-active-segment.js"></script>
+  <script src="./meimad-lathe-machine.js"></script>
   <script src="./meimad-axes.js"></script>
   <script src="./meimad-scene.js"></script>
 </body>
