@@ -16,7 +16,7 @@ internal sealed record CorpusIndexProgress(string JobId, int ConfigurationVersio
     long FilesDiscovered, long FilesProcessed, long IndexedFiles, long SkippedFiles, long BytesRead,
     string? CurrentPath, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt, string? Error,
     long OcrPages = 0, bool OcrAvailable = false);
-/// <summary><c>Extraction</c> is TEXT, PDF_TEXT, PDF_OCR or PDF_MIXED; OCR text may contain recognition errors.</summary>
+/// <summary><c>Extraction</c> is TEXT, CSV, PDF_TEXT, PDF_OCR, PDF_MIXED, XLSX, XLS, STEP, DMIS or RTF; OCR text may contain recognition errors.</summary>
 internal sealed record CorpusMatch(string DocumentId, string Title, string ContentHash, string Excerpt,
     int StartCharacter, int EndCharacter, DateTimeOffset IndexedAt, string MatchReason, string Extraction = "TEXT");
 
@@ -171,8 +171,8 @@ internal sealed class LocalCorpusService(SqliteDatabase database, TimeProvider c
             }
             await using var insert = connection.CreateCommand();
             insert.CommandText = "INSERT INTO local_ai_documents_staging(job_id,id,root_id,relative_path,content_hash,content,indexed_at,configuration_version,search_text,extraction) VALUES($job,$id,$root,$path,$hash,$content,$at,$version,$search,$extraction)";
-            // Text extracted from a PDF is cached by file hash as soon as it is read, so neither a
-            // later rebuild nor a retry after a cancelled one recognizes an unchanged PDF again.
+            // Text extracted from a PDF, workbook, STEP or RTF file is cached by file hash as soon as it is read, so
+            // neither a later rebuild nor a retry after a cancelled one extracts an unchanged file again.
             await using var cacheRead = connection.CreateCommand();
             cacheRead.CommandText = "SELECT content,extraction FROM local_ai_extraction_cache WHERE content_hash=$hash";
             await using var cacheWrite = connection.CreateCommand();
@@ -199,7 +199,7 @@ internal sealed class LocalCorpusService(SqliteDatabase database, TimeProvider c
                         var document = new Document(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(root.RootId + ":" + relative.ToUpperInvariant()))),
                             root.RootId, relative, content.Hash, content.Text, content.Bytes, content.Extraction);
                         var at = clock.GetUtcNow().ToString("O");
-                        if (document.Extraction != "TEXT")
+                        if (CorpusDocumentReader.IsCached(document.Extraction))
                         {
                             cacheWrite.Parameters.Clear();
                             cacheWrite.Parameters.AddWithValue("$hash", document.Hash); cacheWrite.Parameters.AddWithValue("$extraction", document.Extraction);
@@ -223,7 +223,7 @@ internal sealed class LocalCorpusService(SqliteDatabase database, TimeProvider c
             await using var tx = connection.BeginTransaction(deferred: false);
             if ((await ReadAsync(connection, tx, token)).Version != settings.Version) throw new InvalidOperationException("Approved folders changed during indexing; rebuild from the current configuration.");
             await using var swap = connection.CreateCommand(); swap.Transaction = tx;
-            // Cached PDF text that no current document uses (removed folders or changed files) is dropped with the swap.
+            // Cached extracted text that no current document uses (removed folders or changed files) is dropped with the swap.
             swap.CommandText = "DELETE FROM local_ai_documents; INSERT INTO local_ai_documents(id,root_id,relative_path,content_hash,content,indexed_at,configuration_version,search_text,extraction) SELECT id,root_id,relative_path,content_hash,content,indexed_at,configuration_version,search_text,extraction FROM local_ai_documents_staging WHERE job_id=$job; DELETE FROM local_ai_documents_staging WHERE job_id=$job; DELETE FROM local_ai_extraction_cache WHERE content_hash NOT IN (SELECT content_hash FROM local_ai_documents);";
             swap.Parameters.AddWithValue("$job", jobId); await swap.ExecuteNonQueryAsync(token); await tx.CommitAsync(token);
             var completed = clock.GetUtcNow(); job?.Completed(completed);
@@ -363,6 +363,12 @@ internal sealed class LocalCorpusService(SqliteDatabase database, TimeProvider c
         "PDF_TEXT" => " (PDF text)",
         "PDF_OCR" => " (PDF recognized by OCR; characters may be misread)",
         "PDF_MIXED" => " (PDF; some pages recognized by OCR, characters may be misread)",
+        "CSV" => " (CSV spreadsheet)",
+        "XLSX" => " (Excel workbook; values as last saved)",
+        "XLS" => " (Excel 97-2003 workbook; values as last saved)",
+        "DMIS" => " (CMM inspection program; nominal values and tolerances as programmed, confirm against the current drawing)",
+        "RTF" => " (RTF document)",
+        "STEP" => " (STEP 3D model metadata; no dimensions)",
         _ => "",
     };
 

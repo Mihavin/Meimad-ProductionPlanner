@@ -25,7 +25,8 @@ internal sealed class OpenXmlLegacyWorkbookReader
     internal async Task<LegacyWorkbookData> ReadAsync(
         Stream source,
         string fileName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool allowDate1904 = false)
     {
         await using var workbookStream = new MemoryStream();
         await CopyBoundedAsync(source, workbookStream, cancellationToken);
@@ -49,7 +50,7 @@ internal sealed class OpenXmlLegacyWorkbookReader
             var sharedStrings = ReadSharedStrings(entries);
             var relationships = ReadWorkbookRelationships(entries);
             var sheetDescriptors = ReadSheetDescriptors(entries, relationships, out var usesDate1904);
-            if (usesDate1904)
+            if (usesDate1904 && !allowDate1904)
             {
                 throw Format(
                     "unsupported_date_system",
@@ -76,7 +77,7 @@ internal sealed class OpenXmlLegacyWorkbookReader
                 sheets.Add(sheet);
             }
 
-            return new LegacyWorkbookData(fileName, sha256, sheets);
+            return new LegacyWorkbookData(fileName, sha256, sheets, usesDate1904);
         }
         catch (InvalidDataException exception)
         {
@@ -523,7 +524,8 @@ internal sealed class OpenXmlLegacyWorkbookReader
 internal sealed record LegacyWorkbookData(
     string FileName,
     string Sha256,
-    IReadOnlyList<LegacySheetData> Sheets);
+    IReadOnlyList<LegacySheetData> Sheets,
+    bool UsesDate1904 = false);
 
 internal sealed record LegacySheetData(
     string Name,

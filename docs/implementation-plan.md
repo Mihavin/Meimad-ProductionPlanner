@@ -1,5 +1,22 @@
 # Implementation Plan
 
+## Spreadsheet, STEP metadata and CMM file indexing (2026-10-09/10; implemented locally)
+
+**Owner decision (2026-10-09):** approved-document indexing also covers Excel and CSV spreadsheets and the metadata of STEP models. This replaces the earlier "no CAD/3D model or Office ingestion" boundary for these formats only.
+
+**Owner decision (2026-10-10):** also index CMM inspection programs (`.dmi`), RTF documents such as CMM reports (`.rtf`) and Excel 97-2003 workbooks (`.xls`), using the ExcelDataReader package (MIT) for `.xls`. Native CATIA files (`.CATPart`, `.CATProduct`, `.CATDrawing`) stay out: the format is closed and reading it needs a licensed SDK. A read-only survey of the approved folders on 2026-10-10 found 4,948 native CATIA files, 8,537 STEP files (655 with graphical-only PMI, 20 with any semantic dimension), 4,212 `.dmi`, 4,045 `.RTF` and 22,350 `.xls`. Hole sizes and tolerances (for example of 30P450172200-001) are in the CMM programs and reports, not in the STEP files. Other CAD formats and Word stay out.
+
+**Implemented:** `CorpusDocumentReader` accepts `.csv` (UTF-8 text, extraction `CSV`), `.xlsx`/`.xlsm` (`CorpusSpreadsheetReader` over the existing `OpenXmlLegacyWorkbookReader`, extraction `XLSX`) and `.stp`/`.step` (`CorpusStepReader`, extraction `STEP`). Workbook text is written per sheet with each row naming its column headers; values are as last saved by Excel (no recalculation), date-formatted cells are ISO dates, hidden sheets are included. STEP text holds the file header, products and versions, assembly structure with quantities, length units, solid-body count and descriptive/material properties; geometry is not interpreted, so no dimensions. `.xls` goes through ExcelDataReader with the same row rendering (extraction `XLS`; an `.xlsx` saved as `.xls` is detected; a sheet over 250,000 cells or the text limit is cut off). `.dmi` DMIS programs are read as UTF-8 or byte-order-marked UTF-16 text (extraction `DMIS`). `CorpusRtfReader` extracts RTF text (extraction `RTF`): destinations such as font/colour tables, pictures, headers and footers are dropped, `\uN` and `\'hh` are decoded, and raw 8-bit bytes use `\ansicpg`, except that a 1252-declared file whose raw bytes are all Hebrew letters in code page 1255 is read as 1255 (PAS-CMM reports on Hebrew Windows). Workbook, STEP and RTF hashes are file-byte SHA-256 and their text is cached in `local_ai_extraction_cache`. Schema v112 rebuilds `local_ai_documents`, `local_ai_documents_staging` and `local_ai_extraction_cache` to extend their extraction checks. The chat tool and search match reasons label the new sources.
+
+**Verified locally (2026-10-09/10):** `LocalCorpusFormatTests` (DMIS ASCII/UTF-16, RTF destinations/escapes/Unicode/table cells and the 1252/1255 CMM case, `.xls` fixture `tests/fixtures/local-ai/corpus-sample.xls` with headers, dates, Hebrew and a hidden sheet, broken `.xls` and non-RTF `.rtf` skipped; CSV, workbook headers/dates/doubles/hidden sheet, STEP header/products/assembly/units/properties/escapes/comments/oversized geometry record, non-STEP `.stp`, broken workbook and non-UTF-8 CSV skipped individually, extraction cache, changed model hidden until reindex) and `LocalCorpusExtractionMigrationTests` (v111 rows, index and triggers survive; new kinds admitted; unknown kinds and cached CSV/TEXT/DMIS refused). Temporary read-only probes (removed) read the real 30P450172200-001 STEP, CMM `.dmi`, `.RTF` (Hebrew date decoded), `_Process.csv` (UTF-16) and `_Process.xls` correctly; a 777 AP242 STEP file also read correctly.
+
+**Open / not verified:**
+- No full rebuild of the approved folders has been run with the new formats; rebuild time and index growth (about 22,000 `.xls` and 8,500 STEP files) are unmeasured.
+- `.xlsx` workbooks over the import reader's 250,000-cell limit are skipped, not truncated (`.xls` is truncated).
+- CMM programs and reports are historical inspection evidence; the chat labels them as such and asks to confirm against the current drawing.
+- Graphical-only STEP PMI (callout names such as `Flatness.1` with tessellated values) is not indexed. CSV files must be UTF-8 (Excel's "CSV UTF-8"); Windows-1255 CSV files are skipped.
+- Model dimensions (bounding box, volume) would need a geometry kernel in the Server (OCCSharp is client-only today); not in scope.
+
 ## Ask AI chat window and PDF/OCR indexing (2026-10-09; implemented locally)
 
 **Owner requests:** "a simple chatbot window to provide answers in context — currently selected case, operation, NC revision(s) etc — and generic answers like 'what the tolerances in 30P45017200-001 for holes?', 'what material was received last week?'", and "index all pdf documents (run OCR if needed), drawings, part lists etc."
@@ -13,7 +30,7 @@
 **Open / not verified:**
 - Windows PDF rendering and OCR were verified in a console/test process, not yet inside the installed Windows Service (LocalSystem). Check the first rebuild's `ocrAvailable` and OCR page count after installation.
 - Only English OCR is installed on the Server PC. Hebrew scans need the Windows capability `Language.OCR~~~he-IL~0.0.1.0`; the recognizer currently prefers English.
-- Hole-specific tolerances of 30P parts live in the CATIA 3D MBD dataset (per the parts-list note) and are not readable; CAD/STEP PMI ingestion is not in scope.
+- Hole-specific tolerances of 30P parts live in the CATIA 3D MBD dataset (per the parts-list note) and are not readable; STEP PMI ingestion is not in scope (STEP header/product metadata is indexed since v112).
 - First rebuild time and database growth for every PDF under the two approved roots are unmeasured; OCR is about one second per page on this PC.
 - Answer latency (about 0.5–2 minutes) is a property of the CPU-only host and the 4B model.
 

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Meimad.Planner.Server.Application.LegacyImport;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.WordExtractor;
 
@@ -13,14 +14,19 @@ internal interface IPageTextRecognizer
     Task<IReadOnlyList<string>> RecognizePdfPagesAsync(byte[] pdf, IReadOnlyList<int> pageIndexes, CancellationToken token);
 }
 
-/// <summary>Extracted document text. <c>Extraction</c> is TEXT, PDF_TEXT, PDF_OCR or PDF_MIXED.</summary>
+/// <summary>
+/// Extracted document text. <c>Extraction</c> is TEXT, CSV, PDF_TEXT, PDF_OCR, PDF_MIXED, XLSX, XLS, STEP, DMIS or RTF.
+/// </summary>
 internal sealed record CorpusFileContent(string Hash, string Text, long Bytes, string Extraction, int OcrPages);
 
 /// <summary>
-/// Reads approved corpus files: UTF-8 text/Markdown as before, and PDF drawings, parts lists and
-/// specifications page by page. A page whose text layer has too little text is recognized by OCR.
-/// A PDF's hash is the SHA-256 of its file bytes, so stored extracted text stays valid exactly while
-/// the file is unchanged and never has to be extracted (or recognized) again to be verified.
+/// Reads approved corpus files: text/Markdown, CSV and DMIS inspection programs (.dmi) as UTF-8 or
+/// byte-order-marked UTF-16 text; PDF drawings, parts lists and specifications page by page, with OCR for a
+/// page whose text layer has too little text; Excel workbooks (.xlsx/.xlsm/.xls) sheet by sheet; STEP models
+/// (.stp/.step) as their header, product, assembly, unit and property records; and RTF documents such as CMM
+/// reports as plain text (owner decisions 2026-10-09/10). The hash of a PDF, workbook, STEP or RTF file is the
+/// SHA-256 of its bytes, so stored extracted text stays valid exactly while the file is unchanged and never has
+/// to be extracted (or recognized) again to be verified.
 /// </summary>
 internal sealed class CorpusDocumentReader(IPageTextRecognizer recognizer)
 {
@@ -30,33 +36,67 @@ internal sealed class CorpusDocumentReader(IPageTextRecognizer recognizer)
     /// <summary>A page with fewer letters/digits than this in its text layer is treated as an image.</summary>
     internal const int MinimumPageCharacters = 40;
 
+    private enum Format { Text, Csv, Dmis, Pdf, Workbook, LegacyWorkbook, Step, Rtf }
+
     internal bool OcrAvailable => recognizer.Available;
 
-    internal static bool Supported(string path) => Path.GetExtension(path).ToLowerInvariant() is ".txt" or ".md" or ".pdf";
-    private static bool IsPdf(string path) => Path.GetExtension(path).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
+    internal static bool Supported(string path) => FormatOf(path) is not null;
+
+    /// <summary>Extracted text of these kinds is cached by file hash; plain text, CSV and DMIS are read directly.</summary>
+    internal static bool IsCached(string extraction) => extraction is not ("TEXT" or "CSV" or "DMIS");
+
+    private static bool IsText(Format format) => format is Format.Text or Format.Csv or Format.Dmis;
+
+    private static Format? FormatOf(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".txt" or ".md" => Format.Text,
+        ".csv" => Format.Csv,
+        ".dmi" => Format.Dmis,
+        ".pdf" => Format.Pdf,
+        ".xlsx" or ".xlsm" => Format.Workbook,
+        ".xls" => Format.LegacyWorkbook,
+        ".stp" or ".step" => Format.Step,
+        ".rtf" => Format.Rtf,
+        _ => null,
+    };
 
     /// <summary>The current content hash without extracting text; used to verify stored extracted text.</summary>
     internal static async Task<string> HashAsync(string path, CancellationToken token)
     {
-        if (!Supported(path)) throw new InvalidDataException("Unsupported document format.");
-        if (!IsPdf(path)) return (await ReadTextAsync(path, token)).Hash;
+        var format = FormatOf(path) ?? throw new InvalidDataException("Unsupported document format.");
+        if (IsText(format)) return (await ReadTextAsync(path, token)).Hash;
         await using var stream = File.OpenRead(path);
         return Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, token));
     }
 
-    /// <summary>Reads a file; <paramref name="cached"/> may return earlier extracted text for an unchanged PDF hash.</summary>
+    /// <summary>Reads a file; <paramref name="cached"/> may return earlier extracted text for an unchanged file hash.</summary>
     internal async Task<CorpusFileContent> ReadAsync(string path, Func<string, Task<(string Text, string Extraction)?>>? cached, CancellationToken token)
     {
-        if (!Supported(path)) throw new InvalidDataException("Unsupported document format.");
-        if (!IsPdf(path))
+        var format = FormatOf(path) ?? throw new InvalidDataException("Unsupported document format.");
+        if (IsText(format))
         {
             var text = await ReadTextAsync(path, token);
-            return new(text.Hash, text.Text, text.Bytes, "TEXT", 0);
+            return new(text.Hash, text.Text, text.Bytes, format switch { Format.Csv => "CSV", Format.Dmis => "DMIS", _ => "TEXT" }, 0);
         }
-        if (new FileInfo(path).Length > MaxPdfBytes) throw new InvalidDataException("PDF exceeds the indexing size limit.");
+        var length = new FileInfo(path).Length;
+        if (format == Format.Step)
+        {
+            if (length > CorpusStepReader.MaxStepBytes) throw new InvalidDataException("STEP file exceeds the indexing size limit.");
+            var stepHash = await HashAsync(path, token);
+            if (cached is not null && await cached(stepHash) is { } earlierStep) return new(stepHash, earlierStep.Text, length, earlierStep.Extraction, 0);
+            return new(stepHash, await CorpusStepReader.ReadAsync(path, MaxTextCharacters, token), length, "STEP", 0);
+        }
+        if (length > format switch { Format.Pdf => MaxPdfBytes, Format.Rtf => CorpusRtfReader.MaxRtfBytes, _ => OpenXmlLegacyWorkbookReader.MaximumWorkbookBytes })
+            throw new InvalidDataException("Document exceeds the indexing size limit.");
         var bytes = await File.ReadAllBytesAsync(path, token);
         var hash = Convert.ToHexStringLower(SHA256.HashData(bytes));
         if (cached is not null && await cached(hash) is { } earlier) return new(hash, earlier.Text, bytes.LongLength, earlier.Extraction, 0);
+        if (format == Format.Workbook)
+            return new(hash, await CorpusSpreadsheetReader.ReadAsync(bytes, MaxTextCharacters, token), bytes.LongLength, "XLSX", 0);
+        if (format == Format.LegacyWorkbook)
+            return new(hash, CorpusSpreadsheetReader.ReadLegacy(bytes, MaxTextCharacters, token), bytes.LongLength, "XLS", 0);
+        if (format == Format.Rtf)
+            return new(hash, CorpusRtfReader.Read(bytes, MaxTextCharacters, token), bytes.LongLength, "RTF", 0);
         var (content, extraction, ocrPages) = await ExtractPdfAsync(bytes, token);
         return new(hash, content, bytes.LongLength, extraction, ocrPages);
     }

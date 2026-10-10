@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="ExcelDataReader" Version="3.9.0" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
     <PackageReference Include="PdfPig" Version="0.1.11" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />

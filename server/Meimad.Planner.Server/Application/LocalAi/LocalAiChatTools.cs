@@ -37,7 +37,7 @@ internal sealed class LocalAiChatTools(SqliteDatabase database, LocalCorpusServi
             """{"type":"object","properties":{"from":{"type":"string","description":"First day, yyyy-MM-dd"},"to":{"type":"string","description":"Last day (inclusive), yyyy-MM-dd"},"partNumber":{"type":"string","description":"Optional part number"}},"required":["from","to"]}"""),
         Tool("material_orders", "Search ERP (Kitaron) material purchase-order lines by material, description, supplier or purchase-order number, or those linked to a part's work orders. Shows ordered/received quantities and delivery dates; ERP lines carry no receipt date.",
             """{"type":"object","properties":{"query":{"type":"string","description":"Material number, alloy/description words, supplier or PO number"},"partNumber":{"type":"string","description":"Optional part number whose work orders use the material"},"openOnly":{"type":"boolean","description":"Only lines not yet closed"}}}"""),
-        Tool("search_documents", "Search the approved documents (drawings, parts lists, specifications, notes; PDFs included, scanned pages by OCR) by keywords. Give a part number to search that part's documents. Returns excerpts with document names.",
+        Tool("search_documents", "Search the approved documents (drawings, parts lists, specifications, notes; PDFs included, scanned pages by OCR; Excel and CSV spreadsheets; STEP 3D model names, assembly structure and properties, without dimensions; CMM inspection programs (DMIS) and reports with nominal sizes and tolerances of inspected features) by keywords. Give a part number to search that part's documents. Returns excerpts with document names.",
             """{"type":"object","properties":{"query":{"type":"string","description":"Keywords such as: hole tolerance, surface roughness, material"},"partNumber":{"type":"string","description":"Optional part number to limit the search"}},"required":["query"]}"""),
     ];
 
@@ -135,11 +135,18 @@ internal sealed class LocalAiChatTools(SqliteDatabase database, LocalCorpusServi
                         sources.Add(new("DOCUMENT", title, matches.First(match => match.Title == title).DocumentId));
                     return Serialize(new
                     {
-                        note = matches.Count == 0 ? "No approved document matched. The document may not be in an approved folder, may be a CAD/3D model, or the index may need a rebuild." : null,
+                        note = matches.Count == 0 ? "No approved document matched. The document may not be in an approved folder, may be a CAD format other than STEP, or the index may need a rebuild." : null,
                         results = matches.Select(match => new
                         {
                             document = match.Title,
-                            textSource = match.Extraction switch { "PDF_OCR" => "OCR of a scanned PDF (may contain misread characters)", "PDF_MIXED" => "PDF, partly OCR", "PDF_TEXT" => "PDF text", _ => "text file" },
+                            textSource = match.Extraction switch
+                            {
+                                "PDF_OCR" => "OCR of a scanned PDF (may contain misread characters)", "PDF_MIXED" => "PDF, partly OCR", "PDF_TEXT" => "PDF text",
+                                "CSV" => "CSV spreadsheet", "XLSX" or "XLS" => "Excel workbook (values as last saved; formulas not recalculated)",
+                                "DMIS" => "CMM inspection program (DMIS): nominal sizes and tolerances as programmed for inspection; confirm against the current drawing",
+                                "RTF" => "RTF document (for example a CMM inspection report of a past measurement)",
+                                "STEP" => "STEP 3D model metadata (names, assembly, properties; no dimensions)", _ => "text file",
+                            },
                             excerpt = match.Excerpt,
                         }),
                     });
