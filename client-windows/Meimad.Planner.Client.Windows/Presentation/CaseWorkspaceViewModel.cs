@@ -212,6 +212,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     /// <summary>Auxiliary steps (Workstation, External Resource, Employee Skill) of the selected Operation.</summary>
     public OperationRequirementsViewModel Requirements { get; } = new();
 
+    /// <summary>The Cimatron setup (Work CS, fixtures, rest material) of the selected Operation.</summary>
+    public OperationCamSetupViewModel CamSetup { get; } = new();
+
     public ObservableCollection<CaseOperation> OperationReferenceOptions { get; } = [];
 
     public ObservableCollection<string> OperationMachineTypeOptions { get; } = [string.Empty, ProductionNoteMachineType];
@@ -490,6 +493,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 RefreshGCodeCommand.RaiseCanExecuteChanged();
                 ReleaseGCodeCommand.RaiseCanExecuteChanged();
                 _ = Requirements.LoadAsync(value?.CaseOperationId);
+                _ = CamSetup.LoadAsync(value is null ? null : SelectedCase?.CaseId, value?.CaseOperationId);
                 if (value is not null && apiClient is not null && !IsBusy)
                 {
                     RefreshGCodeCommand.Execute(null);
@@ -551,6 +555,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanReleaseGCode));
                 ReleaseGCodeCommand.RaiseCanExecuteChanged();
                 DetectReleaseSubprograms();
+                // Owner request 2026-10-10: an NC file chosen for the Operation starts the AI search for its
+                // stock, fixtures and tool list (suggestions only; the planner links them).
+                if (SelectedOperation is not null && !string.IsNullOrWhiteSpace(value) && File.Exists(value))
+                    _ = CamSetup.FindSimulationDataAsync(value, null, automatic: true);
             }
         }
     }
@@ -918,6 +926,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         var nextIsEditor = editStatus?.State == ClientEditState.Editor;
         var nextGeneration = editStatus?.Generation ?? 0;
         Requirements.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
+        CamSetup.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
+        CamSetup.FilesChanged ??= () => SelectedCase is { } current ? RefreshModelFilesAsync(current.CaseId) : Task.CompletedTask;
+        CamSetup.ToolTableChosen ??= path => ToolTableFilePath = path;
         WorkOrderMaterialOrders.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         if (newApiClient is not null && (apiChanged || networkRootPath is null)) _ = LoadNetworkRootAsync(newApiClient);
         if (!apiChanged
@@ -1967,6 +1978,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             : await NcViewer.NcViewerRequests.MachinesAsync(client, CancellationToken.None);
         var dialect = NcViewer.NcViewerDialects.Resolve(machines, null, SelectedReleasePostprocessor?.PostprocessorId);
         var viewerMachine = NcViewer.NcViewerMachines.Resolve(machines, null, SelectedReleasePostprocessor?.PostprocessorId);
+        var scene = client is null
+            ? null
+            : await NcViewer.NcViewerScenes.ForOperationAsync(client, caseId, operationId, null, machines, context);
 
         NcTextDocument document;
         string name;
@@ -2012,7 +2026,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             ProgramFolders: client is null
                 ? null
                 : NcViewer.NcProgramFolders.ForOperation(
-                    client, caseId, operationId, SelectedReleasePostprocessor?.PostprocessorId, GCodeChangeScope));
+                    client, caseId, operationId, SelectedReleasePostprocessor?.PostprocessorId, GCodeChangeScope),
+            Scene: scene);
     }
 
     /// <summary>
@@ -2764,6 +2779,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         try
         {
             var files = await apiClient.ListCaseModelFilesAsync(caseId);
+            // The Operation's Cimatron setup lists the same links; keep it in step.
+            _ = CamSetup.RefreshFilesAsync();
             if (SelectedCase?.CaseId != caseId)
             {
                 return; // the planner moved on to another Case while the list was loading

@@ -37,6 +37,20 @@ public partial class SetupView : UserControl
         }
     }
 
+    private void AddMachineModel_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not SetupViewModel viewModel) return;
+        var dialog = new OpenFileDialog
+        {
+            Title = "Choose machine STL files",
+            Filter = "STL models|*.stl|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = true
+        }.Localized();
+        if (dialog.ShowDialog() != true) return;
+        foreach (var path in dialog.FileNames) viewModel.AddMachineModel(path);
+    }
+
     private async void BrowseLegacyWorkbook_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog

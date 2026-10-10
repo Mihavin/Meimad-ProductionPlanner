@@ -1,8 +1,68 @@
 # API Contract
 
+## NC viewer geometry (2026-10-10; schema v113)
+
+**Machine 3D models.** Machine create and PATCH accept, and every Machine representation returns, `ncViewerModels`: an array (at most 32) of `{ "node": string, "path": string, "offsetMm": {"x","y","z"}, "rotationDeg": {"x","y","z"}, "color": "#RRGGBB", "opacity": number }`. Each item is an STL mesh the NC viewer attaches to the kinematic node `node` of the Machine's NC viewer machine definition, placed in that node's frame by rotating about X, then Y, then Z (degrees, extrinsic, R = Rz·Ry·Rx) and then translating by `offsetMm` (mm). Omitted `offsetMm`/`rotationDeg` (or components) are 0, `color` defaults to `#9AA4AE` and is returned upper-case, `opacity` defaults to 1. On create, an omitted or `null` list is `[]`. On PATCH only an array (also `[]`) replaces the whole list; an absent property **or JSON `null`** keeps the stored list (the Windows client patches with its whole Machine record). The usual `If-Match: "machine:{id}:v{n}"`, `428`/`412` and `machines.setup` permission rules apply. Paths are stored relative to the network folder like Case model files and returned resolved. Validation fails with `422 validation_failed`, one detail `{field, code, message}` per problem, `field` such as `ncViewerModels[0].offsetMm.x`:
+
+| Code | Meaning |
+|---|---|
+| `too_many` | More than 32 models (`field` `ncViewerModels`). |
+| `required` | A `null` item, a blank `node` or a blank `path`. |
+| `too_long` | `node` over 64 or `path` over 4096 characters. |
+| `absolute_path_required` / `invalid_path` | `path` is not a full drive or UNC path, or contains NUL. |
+| `stl_required` | `path` does not end in `.stl` (any case). |
+| `not_finite` | A number is NaN or infinite (System.Text.Json reads `"NaN"`/`"Infinity"` strings). |
+| `out_of_range` | \|offset\| > 100000 mm, a rotation outside −360…360, or `opacity` outside 0.05…1. |
+| `invalid_color` | `color` is not `#RRGGBB`. |
+
+A PATCH whose `ncViewerModels` is not an array of such objects (wrong type or an unknown member) is `400 invalid_request` with issue code `invalid_type`; on create the same is a plain `400`. Node ids are **not** checked against the machine definition: the installed NC engine catalog lists definitions but not their kinematic nodes, so an unknown node is the viewer's to report.
+
+**Operation CAM setup.** `/api/v1/cases/{caseId}/operations/{operationId}/cam-setup`:
+
+| Method | Permission | Preconditions | Success |
+|---|---|---|---|
+| `GET` | any signed-in user | — | `200` body + `ETag` |
+| `PUT` (create) | `cases.edit` | `If-None-Match: *` | `201` body + `ETag` + `Location` |
+| `PUT` (replace) | `cases.edit` | `If-Match: "case-operation-cam-setup:{operationId}:v{n}"` | `200` body + `ETag` |
+| `DELETE` | `cases.edit` | `If-Match` with the current tag | `204` |
+
+Request body (unknown members or malformed JSON are `400`):
+
+```json
+{
+  "source": "cimatron",
+  "workOffset": "G54.1 P3",
+  "originMm": { "x": -12.5, "y": 40, "z": 25.125 },
+  "rotationDeg": { "x": 0, "y": -90, "z": 180 },
+  "notes": "UCS MODEL_ZERO_OP10"
+}
+```
+
+Response (`ETag: "case-operation-cam-setup:case-op-1:v1"`):
+
+```json
+{
+  "caseOperationId": "case-op-1",
+  "source": "cimatron",
+  "workOffset": "G54.1 P3",
+  "originMm": { "x": -12.5, "y": 40, "z": 25.125 },
+  "rotationDeg": { "x": 0, "y": -90, "z": 180 },
+  "notes": "UCS MODEL_ZERO_OP10",
+  "version": 1,
+  "updatedAt": "2026-10-10T08:15:00.0000000+00:00",
+  "updatedBy": "planner"
+}
+```
+
+The setup is the Work CS (the Operation's NC program zero, the Cimatron UCS of its NC procedures) in the part-model coordinates of the Operation's fixture and rest-material model files; R = Rz·Ry·Rx of `rotationDeg`, and a model point p maps to Work coordinates as Rᵀ(p − `originMm`). `source` is `cimatron` or `manual` (case-insensitive, returned lower-case); `workOffset` is null or one of `G54`–`G59`, `G54.1 Pn`, `G154 Pn` (n 1–999), `G110`–`G129`, `G15 Hn` (upper-cased, inner spaces collapsed); omitted vectors or components are 0; `notes` is trimmed, blank is null. Fixture and rest-material STEP/STL files of the Operation use the existing model-file API (`POST/PATCH /api/v1/cases/{caseId}/model-files` with `kind` `fixture` or `stock` and `caseOperationId`).
+
+Errors: `404 resource_not_found` (unknown Case, unknown Operation, or an Operation of another Case); `404 cam_setup_not_found` (GET or DELETE when the Operation has no setup); `428 precondition_required` (PUT with neither header, with both, or with an `If-None-Match` other than `*`; DELETE without `If-Match`); `412 resource_version_stale` (create when a setup exists, replace or delete with another version or a tag of another Operation, replace after the setup was removed) — when the current setup is known the error carries `details: [{currentVersion, currentEntityTag}]` and `conflict: {resource: "Operation CAM setup", changedBy, changedAt, advice}` from the row's `updated_by`/`updated_at`, otherwise the conflict middleware adds `conflict` from its change journal; `422 validation_failed` with detail codes `required`/`invalid_source` (`source`), `invalid_work_offset`, `not_finite`/`out_of_range` (`originMm.x` … `rotationDeg.z`; |origin| ≤ 100000 mm, rotations −360…360) and `too_long` (`notes`, 500); `401`/`403 permission_required` as usual. Writes are atomic, do not change the Case Operation's version or planning data, and do not move the planning revision.
+
 ## Ask AI chat and PDF documents (2026-10-09; schema v111)
 
 `POST /api/v1/local-ai/chat` (any signed-in Windows account) takes `{messages:[{role,content}], context?}`: 1–20 messages, roles `user`/`assistant`, each 1–4,000 characters, the last from the user. `context` holds optional `caseId`, `caseOperationId`, `batchId`, `batchOperationId`, `processRevisionId`, `gCodeReleaseId`, `machineId`, `productionRunId` (each ≤ 256 characters); the Server re-reads them and reports missing ones to the model as gone. It returns 202 `{chatId,status,createdAt,progress}`; 400 `chat_invalid`; 409 `ai_unavailable` when local AI is disabled or suspended; 429 `ai_busy` with `Retry-After` when the account already has an active question or eight are queued. `GET /api/v1/local-ai/chat/{id}` returns `{chatId, status, createdAt, progress?, answer?, sources?:[{kind,title,reference?}], resultCode?, answeredAt?}` for the owner only (others 404). Status is `QUEUED`, `RUNNING`, `COMPLETED` (`resultCode=MODEL_ANSWER`), `FAILED` (`ai_unavailable`, `ai_runtime_unavailable`, `timed_out`; `answer` then explains), `CANCELLED`, `EXPIRED` or `INTERRUPTED`. Source `kind` is `CONTEXT`, `LOOKUP` or `DOCUMENT`. `DELETE /api/v1/local-ai/chat/{id}` cancels the owner's question (202; others 404). The model may call only `find_cases`, `get_case`, `get_nc_releases`, `material_receipts` (factory-local `yyyy-MM-dd` days, inclusive, at most one year), `material_orders` and `search_documents`; all are read-only. Answers are model-written and may be wrong; no response authorizes a mutation. Chats are held in Server memory only and are lost on restart.
+
+`POST /api/v1/local-ai/simulation-data` (any signed-in Windows account; owner request 2026-10-10) takes `{caseId, caseOperationId, ncFilePath?, gCodeReleaseId?}` (IDs ≤ 256 characters, path ≤ 1,024) and returns 202 `{searchId,status,createdAt,progress}`; 400 `simulation_data_invalid`; 429 `ai_busy` with `Retry-After` when the account already has an active search or eight are queued. It works while local AI is off: the rules answer alone. `GET /api/v1/local-ai/simulation-data/{id}` returns `{searchId, status, createdAt, progress?, candidates?:[{path, name, kind, confidence, reason, source, sizeBytes, modifiedAt, alreadyLinked}], folders?, summary?, aiRanked, resultCode?, completedAt?}` for the owner only (others 404); `DELETE` cancels (202). Status values are those of the chat; `resultCode` is `AI_RANKED`, `RULE_BASED`, `not_found` (unknown Case Operation), `search_failed`, `timed_out` or `cancelled`. `kind` is `stock`, `fixture`, `tool-table` or `part-model`; `source` is `AI` or `RULE`; `confidence` is 0–1. The Server lists `.stl`, `.stp`/`.step`, `.mht`/`.mhtml` and tool-named `.csv`/`.xlsx`/`.xls` files (at most 300, 5 levels, 20,000 entries, `_MeimadPlanner` and `.bac` skipped) in at most six folders: the NC file's part folder, the Case Working Folder and the part folders of approved documents whose paths name the part. It reads only below the approved document folders, the network root and the Case Working Folder; an NC path elsewhere is not opened and the summary says so. The local model gets the file list, STEP metadata from the document index and the NC program's header comments, and returns JSON; files it marks as unrelated are dropped. Nothing is written; searches are held in Server memory only. Linking uses the Case model-file API.
 
 `GET /api/v1/local-ai/corpus/reindex/{jobId}` adds `ocrPages` (PDF pages recognized by OCR in this job) and `ocrAvailable` (the Server PC has a Windows OCR language). `GET /api/v1/local-ai/documents/search` results add `extraction` (`TEXT`, `PDF_TEXT`, `PDF_OCR`, `PDF_MIXED`, and since v112 `CSV`, `XLSX`, `XLS`, `STEP`, `DMIS`, `RTF`); the match reason says when text came from OCR, from a workbook's last-saved values, from STEP model metadata without dimensions, or from a CMM inspection program to confirm against the current drawing.
 
@@ -925,6 +985,16 @@ Implemented Machine create request and representation:
   "executionMode": "CNC_GCODE",
   "ncDialect": "HAAS_NGC",
   "ncViewerMachine": "haas-vf-3ss",
+  "ncViewerModels": [
+    {
+      "node": "table",
+      "path": "\\\\factory\\machines\\M-07\\table.stl",
+      "offsetMm": { "x": 0, "y": 0, "z": -12.5 },
+      "rotationDeg": { "x": 90, "y": 0, "z": 0 },
+      "color": "#9AA4AE",
+      "opacity": 1
+    }
+  ],
   "supportedPostprocessorIds": ["opaque-postprocessor-id"],
   "usableToolPositions": 30,
   "rapidRateMillimetersPerMinute": 24000,

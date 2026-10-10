@@ -76,6 +76,10 @@ public sealed class NetworkFolderPathTests
                     VALUES ('case-j', 'PN-J', 'Part J', 'J:\customers files\DPD\PN-J', 'Z:\customers files\DPD\PN-J\preview.png'),
                            ('case-k', 'PN-KIT', 'Kitaron part', $generated, NULL),
                            ('case-l', 'PN-L', 'Local part', 'C:\Local\PN-L', NULL);
+                    INSERT INTO working_calendars (id, name, time_zone_id) VALUES ('calendar-n', 'Factory', 'UTC');
+                    INSERT INTO machines (id, number, name, machine_type, working_calendar_id, status, is_active, nc_viewer_models_json)
+                    VALUES ('machine-n', '10', 'VF-3', 'mill', 'calendar-n', 'active', 1,
+                        '[{"node":"table","path":"J:\\customers files\\Machines\\table.stl","offsetMm":{"x":0,"y":0,"z":-1.5},"rotationDeg":{"x":0,"y":0,"z":0},"color":"#9AA4AE","opacity":1},{"node":"base","path":"C:\\Local\\base.stl","offsetMm":{"x":0,"y":0,"z":0},"rotationDeg":{"x":0,"y":0,"z":0},"color":"#9AA4AE","opacity":1}]');
                     UPDATE edit_tokens SET holder_client_id = 'setup-editor', holder_user_id = 'planner', generation = 1,
                         acquired_at = '2026-09-26T00:00:00Z', version = version + 1 WHERE id = 1;
                     """;
@@ -95,7 +99,23 @@ public sealed class NetworkFolderPathTests
             });
             Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
             using (var document = JsonDocument.Parse(await saved.Content.ReadAsStringAsync()))
-                Assert.Equal(3, document.RootElement.GetProperty("convertedLinks").GetInt32());
+                Assert.Equal(4, document.RootElement.GetProperty("convertedLinks").GetInt32());
+
+            // Machine NC viewer model paths (schema v113) are converted too; paths outside the root stay.
+            using (var machine = await client.GetAsync("/api/v1/machines/machine-n"))
+            using (var document = JsonDocument.Parse(await machine.Content.ReadAsStringAsync()))
+            {
+                var models = document.RootElement.GetProperty("ncViewerModels");
+                Assert.Equal(@"\\fileserver\data\customers files\Machines\table.stl", models[0].GetProperty("path").GetString());
+                Assert.Equal(-1.5, models[0].GetProperty("offsetMm").GetProperty("z").GetDouble());
+                Assert.Equal(@"C:\Local\base.stl", models[1].GetProperty("path").GetString());
+            }
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var verify = connection.CreateCommand())
+            {
+                verify.CommandText = "SELECT json_extract(nc_viewer_models_json, '$[0].path') FROM machines WHERE id = 'machine-n';";
+                Assert.Equal(@"Machines\table.stl", await verify.ExecuteScalarAsync());
+            }
 
             await using (var connection = await database.OpenConnectionAsync())
             await using (var verify = connection.CreateCommand())

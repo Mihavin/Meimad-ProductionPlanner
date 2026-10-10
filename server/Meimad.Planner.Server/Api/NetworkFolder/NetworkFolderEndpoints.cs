@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Configuration;
+using Meimad.Planner.Server.Domain.Machines;
 using Meimad.Planner.Server.Persistence;
 using Microsoft.Data.Sqlite;
 using Meimad.Planner.Server.Application.Accounts;
@@ -129,6 +130,32 @@ internal static class NetworkFolderEndpoints
             update.Parameters.AddWithValue("$now", now.ToString("O", CultureInfo.InvariantCulture));
             update.Parameters.AddWithValue("$id", id);
             changed += await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        // Machine NC viewer model paths (schema v113) live in a JSON list per Machine.
+        var machines = new List<(string Id, string Json)>();
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT id, nc_viewer_models_json FROM machines WHERE nc_viewer_models_json <> '[]';";
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                machines.Add((reader.GetString(0), reader.GetString(1)));
+        }
+        foreach (var (id, json) in machines)
+        {
+            var models = MachineNcViewerModels.Deserialize(json);
+            var converted = MachineNcViewerModels.MapPaths(models, settings.ToStored);
+            var count = models.Zip(converted).Count(pair => !string.Equals(pair.First.Path, pair.Second.Path, StringComparison.Ordinal));
+            if (count == 0) continue;
+            await using var update = connection.CreateCommand();
+            update.Transaction = transaction;
+            update.CommandText = "UPDATE machines SET nc_viewer_models_json = $value, updated_at = $now WHERE id = $id;";
+            update.Parameters.AddWithValue("$value", MachineNcViewerModels.Serialize(converted));
+            update.Parameters.AddWithValue("$now", now.ToString("O", CultureInfo.InvariantCulture));
+            update.Parameters.AddWithValue("$id", id);
+            await update.ExecuteNonQueryAsync(cancellationToken);
+            changed += count;
         }
         return changed;
     }

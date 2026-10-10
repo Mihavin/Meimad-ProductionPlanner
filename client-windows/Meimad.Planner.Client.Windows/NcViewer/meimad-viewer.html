@@ -184,6 +184,7 @@
           <div id="tooltip" class="tooltip" hidden></div>
           <div id="playbackHud" class="playback-hud" aria-live="polite">Ready | 0:00 / 0:00</div>
           <div id="meimadStopNotice" class="meimad-stop-notice" role="status" aria-live="assertive" hidden></div>
+          <div id="meimadAxesOverlay" class="meimad-axes-overlay" translate="no" aria-hidden="true" hidden></div>
           <div id="meimadProgress" class="meimad-progress" hidden role="progressbar" aria-live="polite"><div id="meimadProgressBar" class="meimad-progress-bar"></div><span id="meimadProgressText" class="meimad-progress-text"></span></div>
         </section>
         <aside class="preview-sidebar">
@@ -191,6 +192,17 @@
             <h2>Program</h2>
             <dl id="stats"></dl>
             <p class="meimad-note">The estimated cycle here uses the viewer's machine definition. The Planner's calculated cycle per part applies each Meimad Machine's configured rapid rate, tool-change time and time factor.</p>
+          </section>
+          <section id="meimadAxesCard" class="card meimad-axes">
+            <h2>Axes</h2>
+            <p id="meimadAxesFrame" class="meimad-note"></p>
+            <div id="meimadAxesNow" class="meimad-axes-now" role="group" aria-label="Current axis positions"></div>
+            <label class="check"><input id="meimadAxesOverlayToggle" type="checkbox" checked> Show on the 3D view</label>
+            <h3>Travel used by the program</h3>
+            <p id="meimadAxesSummary" class="meimad-validation" role="status"></p>
+            <ul id="meimadAxesRows" class="meimad-axes-rows"></ul>
+            <label class="check"><input id="meimadAxesRapids" type="checkbox" checked> Include rapid moves</label>
+            <p id="meimadAxesNote" class="meimad-note"></p>
           </section>
           <section class="card">
             <h2>Final macro variables</h2>
@@ -227,6 +239,19 @@
               </table>
             </div>
             <div id="toolTableSource" class="xml-source"></div>
+          </section>
+          <section id="meimadSceneCard" class="card meimad-scene">
+            <h2>Machine &amp; setup</h2>
+            <p id="meimadSceneRenderer" class="meimad-note meimad-scene-renderer"></p>
+            <p id="meimadSceneWorkCs" class="meimad-note"></p>
+            <label class="check"><input id="meimadSceneMachine" type="checkbox" checked> Machine 3D models (Machine view)</label>
+            <label class="check"><input id="meimadSceneFixtures" type="checkbox" checked> Fixtures</label>
+            <label class="check"><input id="meimadSceneRest" type="checkbox" checked> Rest material</label>
+            <ul id="meimadSceneItems" class="meimad-scene-items"></ul>
+            <div class="meimad-stock-actions">
+              <button id="meimadSceneImport" type="button" title="Show fixture and rest-material files exported from Cimatron (STL or STEP) in this window">Import from Cimatron…</button>
+            </div>
+            <p id="meimadSceneStatus" class="meimad-note" role="status"></p>
           </section>
           <section id="meimadStockCard" class="card meimad-stock">
             <h2>Stock</h2>
@@ -575,6 +600,8 @@
   <script src="./renderer.js"></script>
   <script src="../media/kinematics.js"></script>
   <script src="../media/model-transport.js"></script>
+  <script src="./meimad-axes-core.js"></script>
+  <script src="./meimad-scene-core.js"></script>
   <script src="../media/preview.js"></script>
   <script src="./meimad-viewer.js"></script>
   <script src="./meimad-material.js"></script>
@@ -582,5 +609,7 @@
   <script src="./meimad-tool-assembly.js"></script>
   <script src="./meimad-playback-core.js"></script>
   <script src="./meimad-playback.js"></script>
+  <script src="./meimad-axes.js"></script>
+  <script src="./meimad-scene.js"></script>
 </body>
 </html>

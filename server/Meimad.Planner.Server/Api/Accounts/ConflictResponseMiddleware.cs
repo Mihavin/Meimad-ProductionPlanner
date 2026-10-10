@@ -21,6 +21,7 @@ internal sealed class ConflictResponseMiddleware(RequestDelegate next)
         ["operations"] = "Case Operation",
         ["components"] = "Case Component",
         ["model-files"] = "Case model file",
+        ["cam-setup"] = "Operation CAM setup",
         ["orders"] = "Order",
         ["batches"] = "Work Order",
         ["batch-operations"] = "Work Order operation",

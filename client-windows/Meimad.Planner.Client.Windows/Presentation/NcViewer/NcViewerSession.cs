@@ -21,6 +21,7 @@ namespace Meimad.Planner.Client.Windows.Presentation.NcViewer;
 internal sealed class NcViewerSession : IDisposable
 {
     internal const string ModelUrlPrefix = "https://ncviewer.meimad.local/__model/";
+    internal const string MeshUrlPrefix = "https://ncviewer.meimad.local/__mesh/";
     private const int MaximumDocumentBytes = 32 * 1024 * 1024;
     private const int MaximumTranslationBatch = 500;
 
@@ -65,6 +66,10 @@ internal sealed class NcViewerSession : IDisposable
     private bool parseQueued;
     private bool synchronizeToolsQueued;
     private bool disposed;
+    private readonly NcViewerSetupScene scene;
+    private readonly List<NcViewerSceneFile> importedFiles = [];
+    private readonly Dictionary<string, string> meshPaths = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> meshTokens = new(StringComparer.OrdinalIgnoreCase);
 
     internal NcViewerSession(
         NcViewerOpenRequest request,
@@ -89,6 +94,7 @@ internal sealed class NcViewerSession : IDisposable
         // the viewer's own machine list may change it. It is validated when the engine parses.
         machineOverride = NcViewerMachines.Normalize(request.MachineSelection);
         operationToolTable = request.OperationToolTable;
+        scene = request.Scene ?? NcViewerSetupScene.Empty;
         // Loading the engine takes a moment; start it before the page asks for its first parse.
         engineStartup = Task.Run(StartEngine);
         LocalizationService.Current.LanguageChanged += OnLanguageChanged;
@@ -269,6 +275,10 @@ internal sealed class NcViewerSession : IDisposable
                 return StockReadStl(Text(args, 0));
             case "meimadExportStl":
                 return await StockExportStlAsync(Text(args, 0), args.Length > 1 ? args[1] : default);
+            case "meimadScene":
+                return SceneState();
+            case "meimadSceneImport":
+                return await ImportCimatronFilesAsync();
             default:
                 throw new InvalidOperationException($"The NC viewer host has no '{method}' method.");
         }
@@ -1144,6 +1154,10 @@ internal sealed class NcViewerSession : IDisposable
                 // No Working Folder or no Server: the stock stays in this window.
             }
         }
+        // The Operation's Cimatron rest material, placed through its Work CS when it is loaded.
+        candidates.AddRange(SceneFiles()
+            .Where(file => file.Kind == "stock" && string.Equals(Path.GetExtension(file.Path), ".stl", StringComparison.OrdinalIgnoreCase))
+            .Select(file => new { name = file.Name, path = file.Path, workCs = PublicWorkCs(scene.WorkCs) }));
         return new { stock, candidates, canSave = sidecar is not null, savePath = sidecar, nextOperationNumber = nextOperation };
     }
 
@@ -1205,6 +1219,89 @@ internal sealed class NcViewerSession : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         await File.WriteAllBytesAsync(target, bytes);
         return new { canceled = false, path = (string?)target, size = bytes.Length };
+    }
+
+    // ----- machine models, Cimatron Work CS, fixtures and rest material (meimad-scene.js) -------
+
+    private IEnumerable<NcViewerSceneFile> SceneFiles() => scene.Files.Concat(importedFiles);
+
+    private static object? PublicWorkCs(CaseOperationCamSetup? workCs) => workCs is null
+        ? null
+        : new
+        {
+            source = workCs.Source,
+            workOffset = workCs.WorkOffset,
+            originMm = new { x = workCs.OriginMm.X, y = workCs.OriginMm.Y, z = workCs.OriginMm.Z },
+            rotationDeg = new { x = workCs.RotationDeg.X, y = workCs.RotationDeg.Y, z = workCs.RotationDeg.Z },
+            notes = workCs.Notes
+        };
+
+    /// <summary>The page fetches each model from <see cref="MeshUrlPrefix"/> plus this token.</summary>
+    internal string MeshToken(string path)
+    {
+        if (meshTokens.TryGetValue(path, out var token)) return token;
+        token = Guid.NewGuid().ToString("N");
+        meshTokens[path] = token;
+        meshPaths[token] = path;
+        return token;
+    }
+
+    /// <summary>The path behind a mesh token, or null for a token this window never issued.</summary>
+    internal string? MeshPath(string token) => meshPaths.TryGetValue(token, out var path) ? path : null;
+
+    private object SceneFileItem(NcViewerSceneFile file, bool imported) => new
+    {
+        name = file.Name,
+        path = file.Path,
+        kind = file.Kind,
+        imported,
+        meshUrl = MeshUrlPrefix + MeshToken(file.Path)
+    };
+
+    private object SceneState()
+    {
+        var machineModels = scene.MachineModels.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Select(model => (object)new
+            {
+                node = model.Node,
+                name = Path.GetFileName(model.Path),
+                path = model.Path,
+                offsetMm = new { x = model.OffsetMm?.X ?? 0, y = model.OffsetMm?.Y ?? 0, z = model.OffsetMm?.Z ?? 0 },
+                rotationDeg = new { x = model.RotationDeg?.X ?? 0, y = model.RotationDeg?.Y ?? 0, z = model.RotationDeg?.Z ?? 0 },
+                color = model.Color ?? "#9AA4AE",
+                opacity = model.Opacity ?? 1,
+                meshUrl = MeshUrlPrefix + MeshToken(model.Path)
+            }).ToArray(),
+            StringComparer.Ordinal);
+        return new
+        {
+            operationTitle = scene.OperationTitle,
+            workCs = PublicWorkCs(scene.WorkCs),
+            items = scene.Files.Select(file => SceneFileItem(file, imported: false))
+                .Concat(importedFiles.Select(file => SceneFileItem(file, imported: true)))
+                .ToArray(),
+            machineModels
+        };
+    }
+
+    /// <summary>
+    /// Fixture and rest-material files exported from Cimatron, shown in this window only. The
+    /// Operation's Cimatron setup (Case, Operations) keeps them on the Server.
+    /// </summary>
+    private async Task<object> ImportCimatronFilesAsync()
+    {
+        var chosen = ui.ChooseModelFiles(await StockDialogFolderAsync());
+        if (chosen.Count == 0) return new { canceled = true, items = Array.Empty<object>() };
+        var added = new List<object>();
+        foreach (var path in chosen.Where(NcViewerMeshes.IsSupported))
+        {
+            if (SceneFiles().Any(file => string.Equals(file.Path, path, StringComparison.OrdinalIgnoreCase))) continue;
+            var file = new NcViewerSceneFile(Path.GetFileName(path), path, NcViewerScenes.GuessKind(path));
+            importedFiles.Add(file);
+            added.Add(SceneFileItem(file, imported: true));
+        }
+        return new { canceled = false, items = added.ToArray() };
     }
 
     private static bool IsStockFolderFailure(Exception exception) =>

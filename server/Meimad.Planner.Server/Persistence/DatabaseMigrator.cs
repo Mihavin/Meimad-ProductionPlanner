@@ -117,7 +117,8 @@ internal sealed class DatabaseMigrator
         new SchemaV109ProjectionPollingScopeMigration(),
         new SchemaV110LocalCorpusStagingMigration(),
         new SchemaV111LocalCorpusPdfMigration(),
-        new SchemaV112LocalCorpusFormatsMigration()
+        new SchemaV112LocalCorpusFormatsMigration(),
+        new SchemaV113NcViewerGeometryMigration()
     ];
 
     internal static int LatestVersion => Migrations.Max(m => m.Version);

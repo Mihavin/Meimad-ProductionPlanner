@@ -366,6 +366,7 @@
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -600,6 +601,99 @@
                                             <DataGridTextColumn Header="Comment" Binding="{Binding ReleaseComment}" Width="*"/>
                                         </DataGrid.Columns>
                                     </DataGrid>
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Row="5" Margin="0,14,0,0" Padding="14" Background="{DynamicResource RaisedBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" DataContext="{Binding CamSetup}"
+                                    AutomationProperties.Name="Cimatron setup of the selected Operation">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,6">
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Button Content="Import from Cimatron..." Click="ImportCimatronFiles_Click" IsEnabled="{Binding CanEdit}"
+                                                    ToolTip="Link STL or STEP files exported from Cimatron: STOCK files become rest material, the rest fixtures" />
+                                            <Button Content="Add fixture..." Click="AddCimatronFixture_Click" IsEnabled="{Binding CanEdit}" />
+                                            <Button Content="Add rest material..." Click="AddCimatronRestMaterial_Click" IsEnabled="{Binding CanEdit}" Margin="0" />
+                                        </StackPanel>
+                                        <StackPanel>
+                                            <TextBlock Text="Cimatron setup of the selected Operation" FontSize="17" FontWeight="Bold"/>
+                                            <TextBlock Text="{Binding SavedSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <TextBlock Text="Work CS: the Cimatron UCS of this Operation's NC procedures, in the part-model coordinates the fixture and rest-material files were exported in. Copy the origin and rotations from Cimatron's UCS dialog. Rotations are applied about X, then Y, then Z (degrees). The NC viewer places the files through this Work CS."
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <UniformGrid Columns="4" IsEnabled="{Binding CanEdit}">
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Work offset" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding WorkOffset}" ToolTip="G54 … G59, G54.1 P1, G154 P1"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Origin X (mm)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding OriginX}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Origin Y (mm)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding OriginY}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Origin Z (mm)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding OriginZ}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Source" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding Sources}" SelectedItem="{Binding Source}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Rotation X (°)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding RotationX}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Rotation Y (°)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding RotationY}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Rotation Z (°)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding RotationZ}"/></StackPanel>
+                                    </UniformGrid>
+                                    <StackPanel Style="{StaticResource FormField}" IsEnabled="{Binding CanEdit}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Notes}" MaxLength="500"/></StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                        <Button Content="Save Work CS" Command="{Binding SaveCommand}" />
+                                        <Button Content="Remove Work CS" Command="{Binding ClearCommand}" Margin="8,0,0,0" />
+                                    </StackPanel>
+                                    <Border Padding="10" Margin="0,0,0,10" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+                                        <StackPanel>
+                                            <DockPanel Margin="0,0,0,4">
+                                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                                    <Button Content="Find simulation data (AI)" Command="{Binding FindSimulationDataCommand}"
+                                                            ToolTip="Search the Case Working Folder, the NC file's part folder and the approved documents for stock, rest material, fixtures, the tool list and the part model; the local AI ranks what it finds" />
+                                                    <Button Content="Stop" Command="{Binding CancelSearchCommand}" Margin="8,0,0,0" />
+                                                    <Button Content="Link selected" Command="{Binding LinkSuggestionsCommand}" Margin="8,0,0,0"
+                                                            ToolTip="Link the ticked files to this Operation; a ticked tool list goes to the Release G-code form" />
+                                                </StackPanel>
+                                                <StackPanel>
+                                                    <TextBlock Text="Simulation data found for this Operation" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="Choosing an NC file for the Operation starts the search. Suggestions are not linked until you tick them and choose Link selected."
+                                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding SearchStatus}" TextWrapping="Wrap" Margin="0,2,0,6"/>
+                                            <DataGrid ItemsSource="{Binding Suggestions}" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                                                      HeadersVisibility="Column" MinHeight="60" MaxHeight="260" AutomationProperties.Name="Simulation data suggestions">
+                                                <DataGrid.Columns>
+                                                    <DataGridTemplateColumn Header="Use" Width="44">
+                                                        <DataGridTemplateColumn.CellTemplate>
+                                                            <DataTemplate>
+                                                                <CheckBox IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center"
+                                                                          AutomationProperties.Name="Use this file"/>
+                                                            </DataTemplate>
+                                                        </DataGridTemplateColumn.CellTemplate>
+                                                    </DataGridTemplateColumn>
+                                                    <DataGridTextColumn Header="Kind" Binding="{Binding KindLabel}" IsReadOnly="True" Width="140"/>
+                                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" IsReadOnly="True" Width="170"/>
+                                                    <DataGridTextColumn Header="Likely" Binding="{Binding ConfidenceText}" IsReadOnly="True" Width="56"/>
+                                                    <DataGridTextColumn Header="By" Binding="{Binding SourceLabel}" IsReadOnly="True" Width="48"/>
+                                                    <DataGridTextColumn Header="Linked" Binding="{Binding LinkedText}" IsReadOnly="True" Width="58"/>
+                                                    <DataGridTextColumn Header="Why" Binding="{Binding Reason}" IsReadOnly="True" Width="*"/>
+                                                    <DataGridTextColumn Header="Modified" Binding="{Binding Modified}" IsReadOnly="True" Width="80"/>
+                                                    <DataGridTextColumn Header="Folder" Binding="{Binding Folder}" IsReadOnly="True" Width="*"/>
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                        </StackPanel>
+                                    </Border>
+                                    <TextBlock Text="{Binding FilesSummary}" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                    <DataGrid ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile}" AutoGenerateColumns="False" IsReadOnly="True"
+                                              HeadersVisibility="Column" MinHeight="70" MaxHeight="220" AutomationProperties.Name="Cimatron fixture and rest-material files">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Kind" Binding="{Binding KindLabel}" Width="110"/>
+                                            <DataGridTextColumn Header="Name" Binding="{Binding Label}" Width="180"/>
+                                            <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="60"/>
+                                            <DataGridTextColumn Header="File" Binding="{Binding FileState}" Width="70"/>
+                                            <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="*"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <DockPanel Margin="0,6,0,0">
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Button Content="Fixture / rest material" Command="{Binding ToggleKindCommand}" ToolTip="Switch the selected file between fixture and rest material" />
+                                            <Button Content="Unlink file" Command="{Binding RemoveFileCommand}" ToolTip="Remove the link; the file itself is not changed" Margin="8,0,0,0" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                                    </DockPanel>
                                 </StackPanel>
                             </Border>
                             <Border Grid.Row="4" Margin="0,14,0,0" Padding="14" Background="{DynamicResource RaisedBrush}"

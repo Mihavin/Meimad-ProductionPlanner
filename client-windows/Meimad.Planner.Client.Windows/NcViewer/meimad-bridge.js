@@ -169,6 +169,12 @@
         readStl: (path) => invoke("meimadReadStl", path),
         exportStl: (base64, options) => invoke("meimadExportStl", base64, options || {})
       }),
+      // Machine 3D models, the Operation's Cimatron Work CS, fixtures and rest material
+      // (meimad-scene.js). Meshes are fetched as binary STL from /__mesh/<token>.
+      scene: Object.freeze({
+        load: () => invoke("meimadScene"),
+        importCimatron: () => invoke("meimadSceneImport")
+      }),
       onMode: onChannel("meimad:mode"),
       variables: (payload) => send("meimad:variables", payload),
       onVariablesClosed: onChannel("meimad:variables-closed"),

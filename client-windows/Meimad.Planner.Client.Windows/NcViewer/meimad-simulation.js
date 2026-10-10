@@ -56,6 +56,10 @@
   let compact = [];            // segments for the worker
   let stlPositions;            // Float32Array of the loaded STL
   let stlName = "";
+  // Rest material exported by Cimatron is in part-model coordinates; its Work CS (the Operation's
+  // Cimatron setup) turns it into program coordinates when it is loaded. Null for an STL that is
+  // already in program coordinates.
+  let stlWorkCs = null;
   let hostState = { stock: null, candidates: [], canSave: false, nextOperationNumber: null };
   let definition = { type: "none", workOffset: "G54", box: {}, cylinder: {}, stl: { path: "", offset: { x: 0, y: 0, z: 0 } } };
   let worker;
@@ -101,6 +105,7 @@
       },
       stl: { path: elements.stlPath.value.trim(), name: stlName, offset: { x: number("stlX", 0), y: number("stlY", 0), z: number("stlZ", 0) } }
     };
+    if (stlWorkCs) definition.stl.workCs = stlWorkCs;
     return definition;
   }
 
@@ -117,6 +122,7 @@
     setNumber("cylMinZ", cylinder.minZ); setNumber("cylMaxZ", cylinder.maxZ);
     setNumber("cylLength", cylinder.length); setNumber("cylFrontZ", cylinder.frontZ);
     elements.stlPath.value = definition.stl?.path || "";
+    stlWorkCs = definition.stl?.workCs && typeof definition.stl.workCs === "object" ? definition.stl.workCs : null;
     setNumber("stlX", definition.stl?.offset?.x ?? 0);
     setNumber("stlY", definition.stl?.offset?.y ?? 0);
     setNumber("stlZ", definition.stl?.offset?.z ?? 0);
@@ -426,7 +432,14 @@
   function ensureLights() {
     if (lights || !hooks) return;
     const THREE = hooks.THREE;
+    // One light rig for every Meimad mesh (meimad-scene.js reuses it by name).
+    const existing = hooks.scene.getObjectByName("meimad-lights");
+    if (existing) {
+      lights = existing;
+      return;
+    }
     lights = new THREE.Group();
+    lights.name = "meimad-lights";
     const hemisphere = new THREE.HemisphereLight(0xffffff, 0x2a3038, 0.9);
     const key = new THREE.DirectionalLight(0xffffff, 0.75);
     key.position.set(1, -0.6, 1.4);
@@ -626,7 +639,7 @@
     elements.exportNext.textContent = hostState.nextOperationNumber
       ? `Export machined stock to OP${String(hostState.nextOperationNumber).padStart(2, "0")}`
       : "Export machined stock (no next Operation)";
-    if (definition.type === "stl" && definition.stl?.path) await loadStl(definition.stl.path, false);
+    if (definition.type === "stl" && definition.stl?.path) await loadStl(definition.stl.path, false, stlWorkCs);
     applyStock();
   }
 
@@ -639,20 +652,25 @@
     for (const candidate of hostState.candidates || []) {
       const option = document.createElement("option");
       option.value = candidate.path;
-      option.textContent = candidate.name;
+      option.textContent = candidate.workCs ? `${candidate.name} (Cimatron rest material)` : candidate.name;
       elements.candidates.appendChild(option);
     }
     elements.candidates.disabled = !(hostState.candidates || []).length;
   }
 
-  async function loadStl(path, announce) {
+  async function loadStl(path, announce, workCs) {
     try {
       const result = await meimad.stock.readStl(path);
       const bytes = Uint8Array.from(atob(result.base64), (character) => character.charCodeAt(0));
-      stlPositions = window.MeimadMaterial.readStl(bytes.buffer);
+      const raw = window.MeimadMaterial.readStl(bytes.buffer);
+      stlWorkCs = workCs || null;
+      stlPositions = stlWorkCs && window.MeimadScene ? window.MeimadScene.modelToDrawing(raw, stlWorkCs) : raw;
       stlName = result.name || "";
       elements.stlPath.value = path;
-      if (announce) status(`Stock STL loaded: ${stlName} (${Math.floor(stlPositions.length / 9).toLocaleString()} triangles).`, "success");
+      if (announce) {
+        const placed = stlWorkCs ? " Placed through the Operation's Cimatron Work CS." : "";
+        status(`Stock STL loaded: ${stlName} (${Math.floor(stlPositions.length / 9).toLocaleString()} triangles).${placed}`, "success");
+      }
       return true;
     } catch (error) {
       stlPositions = undefined;
@@ -756,7 +774,7 @@
   elements.stlBrowse.addEventListener("click", async () => {
     try {
       const result = await meimad.stock.chooseStl();
-      if (result && !result.canceled && result.path && await loadStl(result.path, true)) {
+      if (result && !result.canceled && result.path && await loadStl(result.path, true, null)) {
         elements.type.value = "stl";
         refreshTypeFields();
         applyStock();
@@ -765,15 +783,38 @@
       status(message(error), "error");
     }
   });
+  // A typed path is an STL in program coordinates; only a Cimatron candidate carries a Work CS.
+  elements.stlPath.addEventListener("change", () => { stlWorkCs = null; });
   elements.candidates.addEventListener("change", async () => {
     const path = elements.candidates.value;
-    if (path && await loadStl(path, true)) {
+    const candidate = (hostState.candidates || []).find((value) => value.path === path);
+    if (candidate?.workCs?.workOffset) selectOffset(candidate.workCs.workOffset);
+    if (path && await loadStl(path, true, candidate?.workCs || null)) {
       elements.type.value = "stl";
       refreshTypeFields();
       applyStock();
     }
   });
   elements.runButton?.addEventListener("click", runFromSelectedRow, true);
+
+  function selectOffset(label) {
+    const value = String(label || "").trim().toUpperCase();
+    if ([...elements.offset.options].some((option) => option.value === value)) elements.offset.value = value;
+  }
+
+  // meimad-scene.js: "Use as stock" on a Cimatron rest material of the Operation.
+  window.meimadStock = Object.freeze({
+    async useRestMaterial(item) {
+      if (!item?.path) return false;
+      if (item.workCs?.workOffset) selectOffset(item.workCs.workOffset);
+      if (!await loadStl(item.path, true, item.workCs || null)) return false;
+      elements.type.value = "stl";
+      refreshTypeFields();
+      elements.card.scrollIntoView({ block: "nearest" });
+      applyStock();
+      return true;
+    }
+  });
 
   window.meimadSimulationState = () => ({
     stockType: definition.type,

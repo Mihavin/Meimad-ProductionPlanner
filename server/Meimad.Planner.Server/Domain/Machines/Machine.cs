@@ -29,7 +29,8 @@ internal sealed record Machine(
     double MachineTimeFactor = 1.0,
     string NcDialect = MachineNcDialects.HaasNgc,
     string? NcViewerMachine = null,
-    string ToolDiameterOffsetKind = ToolDiameterOffsetKinds.Radius);
+    string ToolDiameterOffsetKind = ToolDiameterOffsetKinds.Radius,
+    IReadOnlyList<MachineNcViewerModel>? NcViewerModels = null);
 
 internal sealed record MachineValues(
     string? Number,
@@ -50,7 +51,8 @@ internal sealed record MachineValues(
     double? MachineTimeFactor = null,
     string? NcDialect = null,
     string? NcViewerMachine = null,
-    string? ToolDiameterOffsetKind = null);
+    string? ToolDiameterOffsetKind = null,
+    IReadOnlyList<MachineNcViewerModelInput?>? NcViewerModels = null);
 
 internal sealed record ValidatedMachineValues(
     string Number,
@@ -71,7 +73,8 @@ internal sealed record ValidatedMachineValues(
     double MachineTimeFactor = 1.0,
     string NcDialect = MachineNcDialects.HaasNgc,
     string? NcViewerMachine = null,
-    string ToolDiameterOffsetKind = ToolDiameterOffsetKinds.Radius);
+    string ToolDiameterOffsetKind = ToolDiameterOffsetKinds.Radius,
+    IReadOnlyList<MachineNcViewerModel>? NcViewerModels = null);
 
 internal static class MachineExecutionModes
 {

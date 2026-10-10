@@ -34,7 +34,15 @@ internal static class StepSolidMeshLoader
         "OCCSTKDESTEP.dll"
     ];
 
-    public static StepModelData Load(string path)
+    public static StepModelData Load(string path) => Load(path, keepGeometry: true);
+
+    /// <summary>
+    /// The triangles of a STEP model without its exact geometry (the NC viewer's fixtures and rest
+    /// material): the OpenCascade shape is released as soon as it is tessellated.
+    /// </summary>
+    public static StepModelData LoadMesh(string path) => Load(path, keepGeometry: false);
+
+    private static StepModelData Load(string path, bool keepGeometry)
     {
         EnsureNativeRuntime();
         using var stagedFile = StageForOpenCascade(path);
@@ -59,6 +67,17 @@ internal static class StepSolidMeshLoader
             throw new InvalidDataException("The STEP model contains no transferable solid geometry.");
         }
 
+        if (!keepGeometry)
+        {
+            try
+            {
+                return Tessellate(shape, progress, keepGeometry: false);
+            }
+            finally
+            {
+                shape.Dispose();
+            }
+        }
         try
         {
             return Tessellate(shape, progress, keepGeometry: true);

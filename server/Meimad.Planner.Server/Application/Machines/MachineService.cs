@@ -62,7 +62,8 @@ internal sealed class MachineService
             values.MachineTimeFactor,
             values.NcDialect,
             values.NcViewerMachine,
-            values.ToolDiameterOffsetKind);
+            values.ToolDiameterOffsetKind,
+            values.NcViewerModels);
         var created = await repository.CreateAsync(machine, editAuthority, cancellationToken);
         logger.LogInformation(
             "Created Machine {MachineId} with execution mode {ExecutionMode} and {PostprocessorCount} supported Postprocessors.",
@@ -111,7 +112,9 @@ internal sealed class MachineService
             Select(command.MachineTimeFactor, current.MachineTimeFactor),
             Select(command.NcDialect, current.NcDialect),
             Select(command.NcViewerMachine, current.NcViewerMachine),
-            Select(command.ToolDiameterOffsetKind, current.ToolDiameterOffsetKind)));
+            Select(command.ToolDiameterOffsetKind, current.ToolDiameterOffsetKind),
+            // Present ncViewerModels replace the whole list; absent ones keep the stored list.
+            Select(command.NcViewerModels, MachineNcViewerModels.ToInputs(current.NcViewerModels))));
         if (command.NcViewerMachine.IsSpecified) RequireInstalledNcViewerMachine(values.NcViewerMachine);
         if (!string.Equals(values.NcDialect, current.NcDialect, StringComparison.Ordinal)
             && verification is not null)
@@ -147,6 +150,7 @@ internal sealed class MachineService
             NcDialect = values.NcDialect,
             NcViewerMachine = values.NcViewerMachine,
             ToolDiameterOffsetKind = values.ToolDiameterOffsetKind,
+            NcViewerModels = values.NcViewerModels,
             Version = expectedVersion + 1,
             UpdatedAt = timeProvider.GetUtcNow()
         };
@@ -183,7 +187,8 @@ internal sealed class MachineService
         command.MachineTimeFactor,
         command.NcDialect,
         command.NcViewerMachine,
-        command.ToolDiameterOffsetKind);
+        command.ToolDiameterOffsetKind,
+        command.NcViewerModels);
 
     /// <summary>
     /// An NC viewer machine must be a definition installed with this Server's NC engine; the

@@ -320,6 +320,41 @@
                                     <TextBlock Text="CNC_GCODE readiness accepts only released G-code from one of these explicitly selected postprocessors. MANUAL disables only the G-code requirement."
                                                Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                 </StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}">
+                                    <TextBlock Text="NC viewer 3D models (STL)" Style="{StaticResource SetupFieldLabel}"/>
+                                    <DataGrid ItemsSource="{Binding MachineNcViewerModels}" SelectedItem="{Binding SelectedMachineNcViewerModel}"
+                                              AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column"
+                                              MinHeight="80" MaxHeight="240" AutomationProperties.Name="NC viewer 3D models">
+                                        <DataGrid.Columns>
+                                            <DataGridTemplateColumn Header="Node" Width="130">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate><TextBlock Text="{Binding Node}" Margin="4,2"/></DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                                <DataGridTemplateColumn.CellEditingTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox IsEditable="True" Text="{Binding Node, UpdateSourceTrigger=PropertyChanged}"
+                                                                  ItemsSource="{Binding DataContext.MachineNodeChoices, RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellEditingTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="STL file" Binding="{Binding FileName, Mode=OneWay}" IsReadOnly="True" Width="*"/>
+                                            <DataGridTextColumn Header="X mm" Binding="{Binding OffsetX}" Width="62"/>
+                                            <DataGridTextColumn Header="Y mm" Binding="{Binding OffsetY}" Width="62"/>
+                                            <DataGridTextColumn Header="Z mm" Binding="{Binding OffsetZ}" Width="62"/>
+                                            <DataGridTextColumn Header="Rot X°" Binding="{Binding RotationX}" Width="58"/>
+                                            <DataGridTextColumn Header="Rot Y°" Binding="{Binding RotationY}" Width="58"/>
+                                            <DataGridTextColumn Header="Rot Z°" Binding="{Binding RotationZ}" Width="58"/>
+                                            <DataGridTextColumn Header="Color" Binding="{Binding Color}" Width="76"/>
+                                            <DataGridTextColumn Header="Opacity" Binding="{Binding Opacity}" Width="60"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                        <Button Content="Add STL..." Click="AddMachineModel_Click" ToolTip="Choose an STL file of a machine part (base, table, head, spindle)"/>
+                                        <Button Content="Remove" Command="{Binding RemoveMachineModelCommand}" Margin="8,0,0,0"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Each STL is drawn on a kinematic node of the NC viewer machine and moves with its axes in the NC viewer's Machine view. The node's placeholder box is hidden. Millimetres; the model is rotated about X, then Y, then Z (degrees) and then moved by X/Y/Z. The STL files are only read, never copied."
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                </StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,2,0,12">
                                     <CheckBox Content="Active" IsChecked="{Binding MachineIsActive}" Margin="0,0,18,0" />
                                     <CheckBox Content="Show on displays" IsChecked="{Binding MachineDisplayEnabled}" />

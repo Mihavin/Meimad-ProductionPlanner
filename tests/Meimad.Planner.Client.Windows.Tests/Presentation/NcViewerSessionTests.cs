@@ -638,6 +638,74 @@ public sealed class NcViewerSessionTests : IDisposable
         Assert.False(next.GetProperty("canSave").GetBoolean());
     });
 
+    [Fact]
+    public void Setup_scene_serves_machine_models_and_cimatron_files_and_offers_rest_material_as_stock() => SingleThread.Run(async () =>
+    {
+        var nc = Path.Combine(folder, "NC");
+        Directory.CreateDirectory(Path.Combine(nc, "STOCK"));
+        var rest = Path.Combine(nc, "STOCK_OP1.stl");
+        var vise = Path.Combine(nc, "vise.stl");
+        var table = Path.Combine(folder, "table.stl");
+        var imported = Path.Combine(nc, "STOCK", "FIN_LAYER_1_.stl");
+        foreach (var path in new[] { rest, vise, table, imported }) File.WriteAllBytes(path, new byte[84]);
+        var workCs = new CaseOperationCamSetup("op-10", "cimatron", "G55", new PlannerXyz(10, 20, 30), new PlannerXyz(0, 0, 90), null, 3, DateTimeOffset.UnixEpoch);
+        var scene = new NcViewerSetupScene(
+            "PN-1 · OP10 Mill",
+            workCs,
+            [new NcViewerSceneFile("vise.stl", vise, "fixture"), new NcViewerSceneFile("STOCK_OP1.stl", rest, "stock")],
+            new Dictionary<string, IReadOnlyList<NcViewerMachineModel>>
+            {
+                ["haas-vf-3ss"] = [new NcViewerMachineModel("table", table, new PlannerXyz(0, 0, -25), null, "#A0A0A0", 0.8)]
+            });
+        var ui = new FakeUi { ModelFiles = [imported, Path.Combine(nc, "notes.txt")] };
+        using var session = Session(Request(readOnly: true) with { Scene = scene }, ui);
+
+        var state = await ui.InvokeAsync(session, "meimadScene");
+        Assert.Equal("G55", state.GetProperty("workCs").GetProperty("workOffset").GetString());
+        Assert.Equal(90, state.GetProperty("workCs").GetProperty("rotationDeg").GetProperty("z").GetDouble());
+        var items = state.GetProperty("items").EnumerateArray().ToArray();
+        Assert.Equal(["fixture", "stock"], items.Select(item => item.GetProperty("kind").GetString()!));
+        var model = Assert.Single(state.GetProperty("machineModels").GetProperty("haas-vf-3ss").EnumerateArray());
+        Assert.Equal("table", model.GetProperty("node").GetString());
+        Assert.Equal(-25, model.GetProperty("offsetMm").GetProperty("z").GetDouble());
+
+        // Each mesh URL is a token for a path this window was given; nothing else is served.
+        var url = items[0].GetProperty("meshUrl").GetString()!;
+        Assert.StartsWith(NcViewerSession.MeshUrlPrefix, url, StringComparison.Ordinal);
+        Assert.Equal(vise, session.MeshPath(url[NcViewerSession.MeshUrlPrefix.Length..]));
+        Assert.Null(session.MeshPath("not-issued"));
+
+        // The rest material is a stock candidate that carries the Work CS.
+        var stock = await ui.InvokeAsync(session, "meimadStock");
+        var candidate = Assert.Single(stock.GetProperty("candidates").EnumerateArray());
+        Assert.Equal(rest, candidate.GetProperty("path").GetString());
+        Assert.Equal(10, candidate.GetProperty("workCs").GetProperty("originMm").GetProperty("x").GetDouble());
+
+        // "Import from Cimatron" adds supported files for this window only, classified by name.
+        var import = await ui.InvokeAsync(session, "meimadSceneImport");
+        var added = Assert.Single(import.GetProperty("items").EnumerateArray());
+        Assert.Equal("stock", added.GetProperty("kind").GetString());
+        Assert.True(added.GetProperty("imported").GetBoolean());
+        var again = await ui.InvokeAsync(session, "meimadSceneImport");
+        Assert.Empty(again.GetProperty("items").EnumerateArray());
+        var after = await ui.InvokeAsync(session, "meimadScene");
+        Assert.Equal(3, after.GetProperty("items").GetArrayLength());
+        Assert.Equal(2, (await ui.InvokeAsync(session, "meimadStock")).GetProperty("candidates").GetArrayLength());
+    });
+
+    [Fact]
+    public void Viewer_without_an_operation_has_an_empty_scene() => SingleThread.Run(async () =>
+    {
+        var ui = new FakeUi();
+        using var session = Session(Request(readOnly: true), ui);
+        var state = await ui.InvokeAsync(session, "meimadScene");
+        Assert.Equal(JsonValueKind.Null, state.GetProperty("workCs").ValueKind);
+        Assert.Empty(state.GetProperty("items").EnumerateArray());
+        Assert.Empty(state.GetProperty("machineModels").EnumerateObject());
+        var canceled = await ui.InvokeAsync(session, "meimadSceneImport");
+        Assert.True(canceled.GetProperty("canceled").GetBoolean());
+    });
+
     public void Dispose()
     {
         if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
@@ -687,6 +755,8 @@ public sealed class NcViewerSessionTests : IDisposable
         public string? ChooseToolTableFile(string? initialDirectory) => ToolTablePath;
         public string? StlPath { get; init; }
         public string? ChooseStlFile(string? initialDirectory) => StlPath;
+        public IReadOnlyList<string> ModelFiles { get; init; } = [];
+        public IReadOnlyList<string> ChooseModelFiles(string? initialDirectory) => ModelFiles;
         public bool ConfirmDiscardChanges(string documentName) => true;
         public void UpdateTitle(string documentName, bool dirty) => LastTitleDirty = dirty;
 

@@ -64,6 +64,7 @@ internal static partial class MachineValidator
                 "invalid_tool_diameter_offset_kind",
                 "toolDiameterOffsetKind must be exactly 'RADIUS' or 'DIAMETER'."));
         }
+        var ncViewerModels = MachineNcViewerModels.Validate(values.NcViewerModels, issues);
         var supportedPostprocessorIds = NormalizeIdentifiers(
             values.SupportedPostprocessorIds,
             "supportedPostprocessorIds",
@@ -126,7 +127,8 @@ internal static partial class MachineValidator
             machineTimeFactor,
             ncDialect,
             ncViewerMachine,
-            toolDiameterOffsetKind);
+            toolDiameterOffsetKind,
+            ncViewerModels);
     }
 
     private static IReadOnlyList<string> NormalizeIdentifiers(

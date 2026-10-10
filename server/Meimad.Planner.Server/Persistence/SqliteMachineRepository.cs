@@ -63,7 +63,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         ), '[]') AS supported_postprocessor_ids_json,
         machines.nc_dialect,
         machines.nc_viewer_machine,
-        machines.tool_diameter_offset_kind
+        machines.tool_diameter_offset_kind,
+        machines.nc_viewer_models_json
         """;
 
     private readonly SqliteDatabase database;
@@ -83,6 +84,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         var actor = await EnsureEditAuthorityAsync(
             connection, transaction, editAuthority, cancellationToken);
         machine = await ApplyMachineTypeAsync(connection, transaction, machine, cancellationToken);
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, transaction, cancellationToken);
         await EnsureCalendarExistsAsync(
             connection,
             transaction,
@@ -109,16 +111,16 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 is_active, display_enabled, version, created_at, updated_at, machine_type_id,
                 respect_master_calendar, execution_mode, usable_tool_positions,
                 rapid_rate_mm_per_min, tool_change_time_seconds, machine_time_factor, nc_dialect,
-                nc_viewer_machine, tool_diameter_offset_kind)
+                nc_viewer_machine, tool_diameter_offset_kind, nc_viewer_models_json)
             VALUES (
                 $id, $number, $name, $processType, $axisType, $capabilities,
                 $calendarId, '{}', $status, $picturePath,
                 $isActive, $displayEnabled, $version, $createdAt, $updatedAt, $machineTypeId,
                 $respectMasterCalendar, $executionMode, $usableToolPositions,
                 $rapidRateMillimetersPerMinute, $toolChangeTimeSeconds, $machineTimeFactor, $ncDialect,
-                $ncViewerMachine, $toolDiameterOffsetKind);
+                $ncViewerMachine, $toolDiameterOffsetKind, $ncViewerModels);
             """;
-        AddWriteParameters(command, machine);
+        AddWriteParameters(command, machine, paths);
         await command.ExecuteNonQueryAsync(cancellationToken);
         await ReplaceSupportedPostprocessorsAsync(
             connection,
@@ -129,7 +131,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             connection, transaction, machine.MachineId, machine.UpdatedAt,
             actor, "machine_created", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return machine;
+        return Resolve(Stored(machine, paths), paths);
     }
 
     public async Task<Machine?> GetByIdAsync(
@@ -140,8 +142,9 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         await using var command = connection.CreateCommand();
         command.CommandText = $"SELECT {Projection} FROM machines WHERE machines.id = $id;";
         command.Parameters.AddWithValue("$id", machineId);
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, null, cancellationToken);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken) ? ReadMachine(reader) : null;
+        return await reader.ReadAsync(cancellationToken) ? Resolve(ReadMachine(reader), paths) : null;
     }
 
     public async Task<IReadOnlyList<Machine>> ListAsync(CancellationToken cancellationToken)
@@ -149,11 +152,12 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = $"SELECT {Projection} FROM machines ORDER BY number, id;";
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, null, cancellationToken);
         var machines = new List<Machine>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            machines.Add(ReadMachine(reader));
+            machines.Add(Resolve(ReadMachine(reader), paths));
         }
 
         return machines;
@@ -170,6 +174,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         var actor = await EnsureEditAuthorityAsync(
             connection, transaction, editAuthority, cancellationToken);
         machine = await ApplyMachineTypeAsync(connection, transaction, machine, cancellationToken);
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, transaction, cancellationToken);
         await EnsureCalendarExistsAsync(
             connection,
             transaction,
@@ -216,11 +221,12 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 nc_dialect = $ncDialect,
                 nc_viewer_machine = $ncViewerMachine,
                 tool_diameter_offset_kind = $toolDiameterOffsetKind,
+                nc_viewer_models_json = $ncViewerModels,
                 version = $version,
                 updated_at = $updatedAt
             WHERE id = $id AND version = $expectedVersion;
             """;
-        AddWriteParameters(command, machine);
+        AddWriteParameters(command, machine, paths);
         command.Parameters.AddWithValue("$expectedVersion", expectedVersion);
         var affected = await command.ExecuteNonQueryAsync(cancellationToken);
         if (affected == 1)
@@ -235,7 +241,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 actor, "machine_timing_or_compatibility_changed", cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
-        return affected == 1 ? machine : null;
+        return affected == 1 ? Resolve(Stored(machine, paths), paths) : null;
     }
 
     private static async Task EnsurePostprocessorsExistAsync(
@@ -409,8 +415,23 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         return SignedInActor.Require(editAuthority);
     }
 
-    private static void AddWriteParameters(SqliteCommand command, Machine machine)
+    /// <summary>NC viewer model paths are handed out resolved against the network folder.</summary>
+    private static Machine Resolve(Machine machine, NetworkFolderSettings paths) => machine with
     {
+        NcViewerModels = MachineNcViewerModels.MapPaths(machine.NcViewerModels, paths.ToAbsolute)
+    };
+
+    /// <summary>NC viewer model paths are stored relative to the network folder like Case model files.</summary>
+    private static Machine Stored(Machine machine, NetworkFolderSettings paths) => machine with
+    {
+        NcViewerModels = MachineNcViewerModels.MapPaths(machine.NcViewerModels, paths.ToStored)
+    };
+
+    private static void AddWriteParameters(SqliteCommand command, Machine machine, NetworkFolderSettings paths)
+    {
+        command.Parameters.AddWithValue(
+            "$ncViewerModels",
+            MachineNcViewerModels.Serialize(Stored(machine, paths).NcViewerModels));
         command.Parameters.AddWithValue("$id", machine.MachineId);
         command.Parameters.AddWithValue("$number", machine.Number);
         command.Parameters.AddWithValue("$name", machine.Name);
@@ -488,7 +509,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             reader.GetDouble(22),
             reader.GetString(24),
             reader.IsDBNull(25) ? null : reader.GetString(25),
-            reader.GetString(26));
+            reader.GetString(26),
+            MachineNcViewerModels.Deserialize(reader.GetString(27)));
     }
 
     private static string FormatInstant(DateTimeOffset value) =>

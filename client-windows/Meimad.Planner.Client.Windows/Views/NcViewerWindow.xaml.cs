@@ -36,6 +36,7 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
         UpdateTitle(request.DocumentName, dirty: false);
         Loaded += async (_, _) => await InitializeBrowserAsync();
         Closing += OnClosing;
+        ApplyBrowserBackground();
         Themes.WorkbenchTheme.Changed += WorkbenchThemeChanged;
         Closed += (_, _) =>
         {
@@ -65,7 +66,8 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
             _ = CoreWebView2Environment.GetAvailableBrowserVersionString();
             var userData = Path.Combine(NcViewerSettingsStore.DataFolder, "WebView2");
             Directory.CreateDirectory(userData);
-            var environment = await CoreWebView2Environment.CreateAsync(null, userData);
+            var environment = await CoreWebView2Environment.CreateAsync(
+                null, userData, new CoreWebView2EnvironmentOptions(BrowserArguments()));
             await Browser.EnsureCoreWebView2Async(environment);
         }
         catch (Exception exception) when (exception is WebView2RuntimeNotFoundException or COMException
@@ -97,20 +99,49 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
             session.HandleMessage(e.WebMessageAsJson);
         };
         core.NavigationCompleted += (_, _) => ApplyWorkbenchTheme();
+        // The theme attribute is present before the first paint, so a Light workshop viewer never
+        // flashes the dark chrome while the page loads.
+        await core.AddScriptToExecuteOnDocumentCreatedAsync(WorkbenchThemeScript());
         core.Navigate(Origin + PagePath);
     }
 
-    private void WorkbenchThemeChanged(object? sender, EventArgs e) => ApplyWorkbenchTheme();
+    /// <summary>
+    /// GPU acceleration for the toolpath view. Chromium refuses WebGL hardware acceleration on
+    /// GPU drivers it blocklists and then draws through a slow software rasterizer, which is common
+    /// on older shop-floor PCs, so the blocklist is ignored and rasterization runs on the GPU.
+    /// MEIMAD_NC_VIEWER_GPU=off forces software rendering if a driver misbehaves. Every NC viewer
+    /// window shares this WebView2 user data folder and therefore these arguments.
+    /// </summary>
+    internal static string BrowserArguments() =>
+        string.Equals(Environment.GetEnvironmentVariable("MEIMAD_NC_VIEWER_GPU"), "off", StringComparison.OrdinalIgnoreCase)
+            ? "--disable-gpu"
+            : "--ignore-gpu-blocklist --enable-gpu-rasterization --enable-zero-copy";
+
+    private void WorkbenchThemeChanged(object? sender, EventArgs e)
+    {
+        ApplyBrowserBackground();
+        ApplyWorkbenchTheme();
+    }
+
+    /// <summary>Only these two application-owned constants enter the script; no document text.</summary>
+    private static string WorkbenchThemeScript()
+    {
+        var theme = Themes.WorkbenchTheme.Current == "light" ? "light" : "graphite";
+        return $"document.documentElement.dataset.workbenchTheme = '{theme}';";
+    }
+
+    /// <summary>The WebView fill behind the page follows the workbench canvas of the current theme.</summary>
+    private void ApplyBrowserBackground() =>
+        Browser.DefaultBackgroundColor = Themes.WorkbenchTheme.Current == "light"
+            ? System.Drawing.Color.FromArgb(0xED, 0xF0, 0xF1)
+            : System.Drawing.Color.FromArgb(0x0F, 0x17, 0x20);
 
     private async void ApplyWorkbenchTheme()
     {
         if (Browser.CoreWebView2 is null) return;
         try
         {
-            // Only these two application-owned constants enter the script; no document text.
-            var theme = Themes.WorkbenchTheme.Current == "light" ? "light" : "graphite";
-            await Browser.CoreWebView2.ExecuteScriptAsync(
-                $"document.documentElement.dataset.workbenchTheme = '{theme}';");
+            await Browser.CoreWebView2.ExecuteScriptAsync(WorkbenchThemeScript());
         }
         catch (Exception ex) when (ex is InvalidOperationException or COMException or ObjectDisposedException)
         {
@@ -138,6 +169,12 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
             return;
         }
 
+        if (uri.AbsolutePath.StartsWith("/__mesh/", StringComparison.Ordinal))
+        {
+            ServeMesh(e, uri.AbsolutePath["/__mesh/".Length..]);
+            return;
+        }
+
         var relative = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
         var path = Path.GetFullPath(Path.Combine(AssetRoot, relative));
         if (!path.StartsWith(AssetRoot, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
@@ -148,6 +185,63 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
         e.Response = environment.CreateWebResourceResponse(
             new MemoryStream(File.ReadAllBytes(path), writable: false), 200, "OK",
             $"Content-Type: {ContentType(path)}\r\nCache-Control: no-cache");
+    }
+
+    /// <summary>
+    /// A machine, fixture or rest-material model as binary STL. Only paths the session issued a
+    /// token for are served; STEP tessellation runs off the UI thread under a request deferral.
+    /// </summary>
+    private void ServeMesh(CoreWebView2WebResourceRequestedEventArgs e, string token)
+    {
+        var environment = Browser.CoreWebView2.Environment;
+        var path = session.MeshPath(token);
+        if (path is null)
+        {
+            e.Response = environment.CreateWebResourceResponse(null, 404, "Not Found", string.Empty);
+            return;
+        }
+        var deferral = e.GetDeferral();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                return (Bytes: NcViewerMeshes.ReadAsStl(path), Error: (string?)null);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                or InvalidDataException or InvalidOperationException or DllNotFoundException or BadImageFormatException
+                or TypeInitializationException or SEHException)
+            {
+                return (Bytes: (byte[]?)null, Error: (string?)exception.Message);
+            }
+        }).ContinueWith(task =>
+        {
+            try
+            {
+                if (Browser.CoreWebView2 is null) return;
+                var (bytes, error) = task.Result;
+                e.Response = bytes is null
+                    ? environment.CreateWebResourceResponse(
+                        new MemoryStream(System.Text.Encoding.UTF8.GetBytes(error ?? "The model could not be read.")), 422,
+                        "Unprocessable", "Content-Type: text/plain; charset=utf-8")
+                    : environment.CreateWebResourceResponse(new MemoryStream(bytes, writable: false), 200, "OK",
+                        "Content-Type: model/stl\r\nCache-Control: no-store");
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or COMException or ObjectDisposedException)
+            {
+                Trace.WriteLine($"NC viewer model was not served: {exception.Message}");
+            }
+            finally
+            {
+                try
+                {
+                    deferral.Complete();
+                }
+                catch (Exception exception) when (exception is InvalidOperationException or COMException or ObjectDisposedException)
+                {
+                    // The window closed while the model was read.
+                }
+            }
+        }, TaskScheduler.FromCurrentSynchronizationContext());
     }
 
     private static string ContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
@@ -238,6 +332,19 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
         }.Localized();
         if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory)) dialog.InitialDirectory = initialDirectory;
         return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+    }
+
+    IReadOnlyList<string> INcViewerHostUi.ChooseModelFiles(string? initialDirectory)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Import fixtures and rest material exported from Cimatron",
+            Filter = "3D models (STL, STEP)|*.stl;*.stp;*.step|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = true
+        }.Localized();
+        if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory)) dialog.InitialDirectory = initialDirectory;
+        return dialog.ShowDialog(this) == true ? dialog.FileNames : [];
     }
 
     string? INcViewerHostUi.ChooseToolTableFile(string? initialDirectory)

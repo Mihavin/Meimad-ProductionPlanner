@@ -1,3 +1,5 @@
+using Meimad.Planner.Server.Domain.Machines;
+
 namespace Meimad.Planner.Server.Application.Machines;
 
 internal sealed record CreateMachineCommand(
@@ -20,7 +22,8 @@ internal sealed record CreateMachineCommand(
     double? MachineTimeFactor = null,
     string? NcDialect = null,
     string? NcViewerMachine = null,
-    string? ToolDiameterOffsetKind = null);
+    string? ToolDiameterOffsetKind = null,
+    IReadOnlyList<MachineNcViewerModelInput?>? NcViewerModels = null);
 
 internal readonly record struct MachineField<T>(bool IsSpecified, T Value)
 {
@@ -49,4 +52,5 @@ internal sealed record UpdateMachineCommand(
     MachineField<double?> MachineTimeFactor = default,
     MachineField<string?> NcDialect = default,
     MachineField<string?> NcViewerMachine = default,
-    MachineField<string?> ToolDiameterOffsetKind = default);
+    MachineField<string?> ToolDiameterOffsetKind = default,
+    MachineField<IReadOnlyList<MachineNcViewerModelInput?>?> NcViewerModels = default);

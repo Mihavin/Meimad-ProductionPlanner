@@ -42,5 +42,19 @@ internal sealed record AiChatContext(string? CaseId = null, string? CaseOperatio
     string? BatchOperationId = null, string? ProcessRevisionId = null, string? GCodeReleaseId = null,
     string? MachineId = null, string? ProductionRunId = null);
 internal sealed record AiChatSource(string Kind, string Title, string? Reference = null);
+/// <summary>
+/// A file the simulation-data search proposes for an Operation (Server <c>/api/v1/local-ai/simulation-data</c>):
+/// kind <c>stock</c>, <c>fixture</c>, <c>tool-table</c> or <c>part-model</c>; source <c>AI</c> or <c>RULE</c>.
+/// </summary>
+internal sealed record SimulationDataCandidate(
+    string Path, string Name, string Kind, double Confidence, string Reason, string Source,
+    long SizeBytes, DateTimeOffset ModifiedAt, bool AlreadyLinked);
+
+/// <summary>States: QUEUED, RUNNING, COMPLETED, FAILED, CANCELLED, EXPIRED, INTERRUPTED.</summary>
+internal sealed record SimulationDataSearchStatus(
+    string SearchId, string Status, DateTimeOffset CreatedAt, string? Progress = null,
+    IReadOnlyList<SimulationDataCandidate>? Candidates = null, IReadOnlyList<string>? Folders = null,
+    string? Summary = null, bool AiRanked = false, string? ResultCode = null, DateTimeOffset? CompletedAt = null);
+
 internal sealed record AiChatStatus(string ChatId, string Status, DateTimeOffset CreatedAt, string? Progress = null,
     string? Answer = null, IReadOnlyList<AiChatSource>? Sources = null, string? ResultCode = null, DateTimeOffset? AnsweredAt = null);

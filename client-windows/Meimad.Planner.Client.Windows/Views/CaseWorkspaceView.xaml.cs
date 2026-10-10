@@ -230,6 +230,34 @@ public partial class CaseWorkspaceView : UserControl
         }
     }
 
+    private async void ImportCimatronFiles_Click(object sender, RoutedEventArgs e) => await AddCimatronFilesAsync(null);
+
+    private async void AddCimatronFixture_Click(object sender, RoutedEventArgs e) => await AddCimatronFilesAsync("fixture");
+
+    private async void AddCimatronRestMaterial_Click(object sender, RoutedEventArgs e) => await AddCimatronFilesAsync("stock");
+
+    /// <summary>Links Cimatron exports (STL or STEP) to the selected Operation; null kind guesses from the name.</summary>
+    private async Task AddCimatronFilesAsync(string? kind)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel) return;
+        var dialog = new OpenFileDialog
+        {
+            Title = kind switch
+            {
+                "fixture" => "Choose fixture files exported from Cimatron",
+                "stock" => "Choose rest-material files exported from Cimatron",
+                _ => "Choose files exported from Cimatron (fixtures and rest material)"
+            },
+            Filter = "3D models (STL, STEP)|*.stl;*.stp;*.step|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = true
+        }.Localized();
+        var start = viewModel.CamSetup.SuggestedFolder ?? viewModel.CaseBrowseStartFolder();
+        if (!string.IsNullOrWhiteSpace(start) && Directory.Exists(start)) dialog.InitialDirectory = start;
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
+        await viewModel.CamSetup.ImportFilesAsync(dialog.FileNames, kind);
+    }
+
     private async void AddModelFile_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not CaseWorkspaceViewModel viewModel || !viewModel.CanManageModelFiles)

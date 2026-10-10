@@ -199,6 +199,7 @@ public static class ServerApplication
         builder.Services.AddSingleton<LocalAiRequestService>();
         builder.Services.AddSingleton<LocalAiChatTools>();
         builder.Services.AddSingleton<LocalAiChatService>();
+        builder.Services.AddSingleton<SimulationDataSearchService>();
         builder.Services.AddSingleton<LocalAiRuntimeDiagnostics>();
         builder.Services.AddSingleton<OperationalEvidenceReader>();
         builder.Services.AddSingleton<IAdministrativeSetupRepository, SqliteAdministrativeSetupRepository>();
@@ -214,9 +215,12 @@ public static class ServerApplication
         builder.Services.AddSingleton<PlanningDeletionService>();
         builder.Services.AddSingleton<ICaseModelFileRepository, SqliteCaseModelFileRepository>();
         builder.Services.AddSingleton<CaseModelFileService>();
+        builder.Services.AddSingleton<ICaseOperationCamSetupRepository, SqliteCaseOperationCamSetupRepository>();
+        builder.Services.AddSingleton<CaseOperationCamSetupService>();
         builder.Services.AddHostedService<DatabaseInitializationService>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<LocalAiRequestService>());
         builder.Services.AddHostedService(provider => provider.GetRequiredService<LocalAiChatService>());
+        builder.Services.AddHostedService(provider => provider.GetRequiredService<SimulationDataSearchService>());
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<ICaseRepository, SqliteCaseRepository>();
         builder.Services.AddSingleton<CaseService>();
@@ -496,6 +500,7 @@ public static class ServerApplication
         application.MapAccountEndpoints();
         application.MapCaseEndpoints();
         application.MapCaseModelFileEndpoints();
+        application.MapCaseOperationCamSetupEndpoints();
         application.MapAdministrativeSetupEndpoints();
         application.MapPlanningDeletionEndpoints();
         application.MapOrderEndpoints();

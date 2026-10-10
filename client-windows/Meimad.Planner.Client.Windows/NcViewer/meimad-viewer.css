@@ -435,3 +435,317 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   outline: 2px solid var(--app-accent);
   outline-offset: 2px;
 }
+
+/* Axes card: current machine axis values and the travel the program uses (meimad-axes.js). */
+.meimad-axes h3,
+.meimad-scene h3 { margin: 10px 0 4px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+.meimad-axes-now {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 4px;
+  margin: 6px 0;
+}
+.meimad-axes-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 7px;
+  border: 1px solid var(--app-border);
+  border-radius: 3px;
+  background: var(--app-surface-raised);
+  font-variant-numeric: tabular-nums;
+}
+.meimad-axes-name { font-weight: 700; color: var(--app-muted); }
+.meimad-axes-number { font: 600 12px/1.2 var(--vscode-editor-font-family, Consolas, monospace); color: var(--app-text); }
+.meimad-axes-value.outside { border-color: var(--app-danger); }
+.meimad-axes-value.outside .meimad-axes-number { color: var(--app-danger); }
+.meimad-axes-rows { margin: 4px 0; padding: 0; list-style: none; font-size: 11px; }
+.meimad-axes-row {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 1px 6px;
+  padding: 4px 2px;
+  border-bottom: 1px solid var(--app-border);
+}
+.meimad-axes-row[tabindex] { cursor: pointer; }
+.meimad-axes-row[tabindex]:hover { background: var(--app-surface-raised); }
+.meimad-axes-row strong { grid-row: span 3; color: var(--app-text); }
+.meimad-axes-range { font-family: var(--vscode-editor-font-family, Consolas, monospace); color: var(--app-text); }
+.meimad-axes-limits { color: var(--app-muted); }
+.meimad-axes-status { font-weight: 600; color: var(--app-muted); }
+.meimad-axes-row.inside .meimad-axes-status { color: var(--app-success); }
+.meimad-axes-row.outside .meimad-axes-status,
+.meimad-axes-detail { color: var(--app-danger); font-weight: 600; }
+.meimad-axes-detail { grid-column: 2; }
+
+.meimad-axes .check,
+.meimad-scene .check { font-size: 11px; min-height: 22px; }
+.meimad-axes .meimad-validation { margin: 4px 0; padding: 5px 8px; font-size: 11px; }
+.meimad-axes .meimad-validation:empty { display: none; }
+.meimad-axes .meimad-validation.neutral { color: var(--app-muted); border-color: var(--app-border); font-weight: 400; }
+.meimad-axes-now > .meimad-note { grid-column: 1 / -1; margin: 0; }
+
+/* The axis readout sits on the always-dark 3D viewport in both themes. */
+.meimad-axes-overlay {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  max-width: calc(100% - 24px);
+  padding: 4px 9px;
+  border: 1px solid rgba(88, 166, 255, 0.45);
+  border-radius: 4px;
+  background: rgba(13, 17, 23, 0.86);
+  color: #e6edf3;
+  font: 600 12px/1.4 var(--vscode-editor-font-family, Consolas, monospace);
+  white-space: pre;
+  pointer-events: none;
+}
+
+/* Machine & setup card (meimad-scene.js). */
+.meimad-scene-items { margin: 6px 0; padding: 0; list-style: none; font-size: 11px; }
+.meimad-scene-items li { padding: 3px 0; border-bottom: 1px solid var(--app-border); line-height: 1.45; }
+.meimad-scene-items li > span:first-child { color: var(--app-muted); }
+.meimad-scene-items button { margin-left: 6px; }
+.meimad-scene-detail { color: var(--app-muted); }
+.meimad-scene-renderer[data-kind="warning"],
+#meimadSceneStatus[data-kind="warning"] { color: var(--app-warning); }
+#meimadSceneStatus[data-kind="error"] { color: var(--app-danger); }
+#meimadSceneStatus[data-kind="success"] { color: var(--app-success); }
+
+/* Light workshop. The vendored stylesheets hard-code the dark chrome (light text, dark buttons,
+   modals, tables and sidebars) instead of using the tokens, so every such rule is re-expressed
+   here. Toolpath, machining-state and 3D viewport colors stay fixed, and the overlays that sit on
+   the dark viewport (playback HUD, progress, stop notice, tooltip, STEP help) keep their dark
+   backing so they stay readable over the model. */
+:root[data-workbench-theme="light"] {
+  --panel: #ffffff;
+  --border: #d8dfe2;
+  --muted: #566977;
+  --text: #162631;
+  --app-selection: #d5eaec;
+}
+:root[data-workbench-theme="light"] [tabindex]:focus-visible { outline-color: var(--app-accent); }
+
+/* Command bar */
+:root[data-workbench-theme="light"] .brand-mark {
+  border-color: var(--app-accent);
+  background: var(--app-accent);
+  color: #ffffff;
+  box-shadow: none;
+}
+:root[data-workbench-theme="light"] .brand-copy strong,
+:root[data-workbench-theme="light"] .pane-header h2,
+:root[data-workbench-theme="light"] .document-identity,
+:root[data-workbench-theme="light"] .status-state,
+:root[data-workbench-theme="light"] .legend,
+:root[data-workbench-theme="light"] .card h2,
+:root[data-workbench-theme="light"] .toggle-label,
+:root[data-workbench-theme="light"] .step-viewer-card h3,
+:root[data-workbench-theme="light"] .step-viewer-stats dd,
+:root[data-workbench-theme="light"] .step-envelope-toggle,
+:root[data-workbench-theme="light"] .tool-editor-table .tool-editor-number {
+  color: var(--app-text);
+}
+:root[data-workbench-theme="light"] .editor-meta,
+:root[data-workbench-theme="light"] .statusbar,
+:root[data-workbench-theme="light"] .icon-button,
+:root[data-workbench-theme="light"] .key-status,
+:root[data-workbench-theme="light"] .settings-note,
+:root[data-workbench-theme="light"] .settings-feedback,
+:root[data-workbench-theme="light"] .tool-editor-meta p,
+:root[data-workbench-theme="light"] .tool-editor-meta label,
+:root[data-workbench-theme="light"] #settingsProgramMemory label,
+:root[data-workbench-theme="light"] .tool-editor-table th,
+:root[data-workbench-theme="light"] .tool-editor-empty,
+:root[data-workbench-theme="light"] .step-z-zero-status,
+:root[data-workbench-theme="light"] .step-measurement-hint,
+:root[data-workbench-theme="light"] .step-viewer-stats dt,
+:root[data-workbench-theme="light"] .step-viewer-save-card p,
+:root[data-workbench-theme="light"] .work-offset-table td.placeholder,
+:root[data-workbench-theme="light"] .meimad-note {
+  color: var(--app-muted);
+}
+:root[data-workbench-theme="light"] .pane-kicker,
+:root[data-workbench-theme="light"] .eyebrow,
+:root[data-workbench-theme="light"] .work-offset-table tr.used td:first-child,
+:root[data-workbench-theme="light"] .tool-table .tool-used td:first-child {
+  color: var(--app-accent);
+}
+:root[data-workbench-theme="light"] .meimad-call-pane .pane-kicker { color: var(--app-warning); }
+:root[data-workbench-theme="light"] .meimad-call-pane .pane-header { background: var(--app-surface-raised); }
+
+/* Buttons and inputs. The generic rule mirrors preview.css; the command-bar buttons stay flat. */
+:root[data-workbench-theme="light"] select,
+:root[data-workbench-theme="light"] input[type="number"],
+:root[data-workbench-theme="light"] input[type="text"],
+:root[data-workbench-theme="light"] button {
+  border-color: var(--app-border-strong);
+  background: var(--app-surface);
+  color: var(--app-text);
+}
+:root[data-workbench-theme="light"] button:hover { border-color: var(--app-accent); }
+:root[data-workbench-theme="light"] .run-button { border-color: var(--app-success); color: var(--app-success); }
+:root[data-workbench-theme="light"] input[type="range"],
+:root[data-workbench-theme="light"] .step-envelope-toggle input { accent-color: var(--app-accent); }
+:root[data-workbench-theme="light"] .view-controls button.active {
+  border-color: var(--app-accent);
+  background: var(--app-selection);
+  color: var(--app-text);
+}
+:root[data-workbench-theme="light"] .command-button,
+:root[data-workbench-theme="light"] .field-button,
+:root[data-workbench-theme="light"] .icon-button,
+:root[data-workbench-theme="light"] .text-button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--app-text);
+}
+:root[data-workbench-theme="light"] .icon-button { color: var(--app-muted); }
+:root[data-workbench-theme="light"] .command-button:hover,
+:root[data-workbench-theme="light"] .field-button:hover,
+:root[data-workbench-theme="light"] .icon-button:hover {
+  border-color: var(--app-border-strong);
+  background: var(--app-surface-raised);
+  color: var(--app-text);
+}
+:root[data-workbench-theme="light"] .settings-button,
+:root[data-workbench-theme="light"] .field-button {
+  border-color: var(--app-border-strong);
+  background: var(--app-surface-raised);
+}
+:root[data-workbench-theme="light"] .command-button.primary {
+  border-color: var(--app-accent);
+  background: var(--app-accent);
+  color: #ffffff;
+}
+:root[data-workbench-theme="light"] .command-button.primary:hover {
+  border-color: var(--app-accent-hover);
+  background: var(--app-accent-hover);
+  color: #ffffff;
+}
+:root[data-workbench-theme="light"] .text-button.danger { color: var(--app-danger); }
+:root[data-workbench-theme="light"] .meimad-toggle.meimad-toggle-on {
+  border-color: var(--app-warning);
+  color: var(--app-warning);
+}
+:root[data-workbench-theme="light"] .dirty-indicator {
+  background: var(--app-border-strong);
+  box-shadow: 0 0 0 2px rgba(154, 175, 183, 0.25);
+}
+:root[data-workbench-theme="light"] .document-identity.dirty .dirty-indicator {
+  background: var(--app-warning);
+  box-shadow: 0 0 0 2px rgba(151, 96, 11, 0.2);
+}
+
+/* Editor */
+:root[data-workbench-theme="light"] .editor-pane { border-right-color: var(--app-border); }
+:root[data-workbench-theme="light"] .editor-meta span + span { border-left-color: var(--app-border); }
+:root[data-workbench-theme="light"] .CodeMirror-selected { background: rgba(0, 108, 115, 0.16) !important; }
+:root[data-workbench-theme="light"] .CodeMirror-focused .CodeMirror-selected { background: rgba(0, 108, 115, 0.22) !important; }
+:root[data-workbench-theme="light"] .CodeMirror-line > span > span::selection { background: rgba(0, 108, 115, 0.22); }
+:root[data-workbench-theme="light"] .CodeMirror-linebackground.cm-source-selected-line {
+  border-left-color: var(--app-accent);
+  background: rgba(0, 108, 115, 0.07);
+}
+:root[data-workbench-theme="light"] .CodeMirror-linebackground.meimad-step-line { box-shadow: inset 3px 0 var(--app-warning); }
+:root[data-workbench-theme="light"] .editor-gutter-marker { border-color: rgba(22, 38, 49, 0.45); }
+:root[data-workbench-theme="light"] .CodeMirror-dialog {
+  border-color: var(--app-border-strong);
+  background: var(--app-surface-raised);
+  color: var(--app-text);
+  box-shadow: 0 5px 18px rgba(22, 38, 49, 0.18);
+}
+:root[data-workbench-theme="light"] .CodeMirror-dialog input {
+  border-color: var(--app-border-strong);
+  background: var(--app-surface);
+  color: var(--app-text);
+}
+:root[data-workbench-theme="light"] .cm-s-fanuc-dark .cm-variable-2 { color: #6f3fa8; }
+:root[data-workbench-theme="light"] .workspace-splitter span,
+:root[data-workbench-theme="light"] .meimad-call-splitter span { background: var(--app-border-strong); }
+:root[data-workbench-theme="light"] .workspace-splitter:hover span,
+:root[data-workbench-theme="light"] .workspace-splitter.dragging span { background: #ffffff; }
+:root[data-workbench-theme="light"] .CodeMirror-hscrollbar::-webkit-scrollbar-thumb { background: var(--app-border-strong); }
+:root[data-workbench-theme="light"] .CodeMirror-hscrollbar::-webkit-scrollbar-thumb:hover { background: var(--app-muted); }
+
+/* Preview pane and sidebar cards */
+:root[data-workbench-theme="light"] .preview-pane,
+:root[data-workbench-theme="light"] .preview-sidebar,
+:root[data-workbench-theme="light"] aside { background: var(--app-bg); }
+:root[data-workbench-theme="light"] .preview-sidebar { scrollbar-color: var(--app-border-strong) var(--app-bg); }
+:root[data-workbench-theme="light"] .work-offset-table th,
+:root[data-workbench-theme="light"] .work-offset-table td,
+:root[data-workbench-theme="light"] .tool-table th,
+:root[data-workbench-theme="light"] .tool-table td { border-bottom-color: var(--app-border); }
+:root[data-workbench-theme="light"] .work-offset-table tbody tr:hover td { background: var(--app-surface-raised); }
+:root[data-workbench-theme="light"] .work-offset-table tr.editing td { background: var(--app-selection); }
+:root[data-workbench-theme="light"] .warning-card ul { color: var(--app-warning); }
+:root[data-workbench-theme="light"] .error-card {
+  border-color: var(--app-danger);
+  background: rgba(167, 50, 49, 0.06);
+}
+:root[data-workbench-theme="light"] .error-card h2,
+:root[data-workbench-theme="light"] .error-card ul { color: var(--app-danger); }
+:root[data-workbench-theme="light"] .error-card li[data-line] { text-decoration-color: rgba(167, 50, 49, 0.45); }
+:root[data-workbench-theme="light"] .error-card li[data-line]:hover,
+:root[data-workbench-theme="light"] .error-card li[data-line]:focus { color: #7a1f1e; }
+/* Legend swatches show the fixed toolpath colors, so each sits on a dark chip like the viewport. */
+:root[data-workbench-theme="light"] .legend i {
+  margin: 5px 5px;
+  border-radius: 1px;
+  box-shadow: 0 0 0 5px #0d1117;
+}
+
+/* Status bar */
+:root[data-workbench-theme="light"] .statusbar { border-top-color: var(--app-border); }
+:root[data-workbench-theme="light"] .status-secondary > span + span { border-left-color: var(--app-border); }
+:root[data-workbench-theme="light"] .status-state i { background: var(--app-border-strong); }
+:root[data-workbench-theme="light"] .status-state.ready i,
+:root[data-workbench-theme="light"] .status-state.success i { background: var(--app-success); box-shadow: none; }
+:root[data-workbench-theme="light"] .status-state.working i { background: var(--app-accent); box-shadow: none; }
+:root[data-workbench-theme="light"] .status-state.warning i { background: var(--app-warning); }
+:root[data-workbench-theme="light"] .status-state.error i { background: var(--app-danger); }
+
+/* Settings, tool editor and STEP viewer modals */
+:root[data-workbench-theme="light"] .settings-modal,
+:root[data-workbench-theme="light"] .step-viewer-modal {
+  border-color: var(--app-border-strong);
+  background: var(--app-surface);
+  box-shadow: 0 22px 70px rgba(22, 38, 49, 0.28);
+}
+:root[data-workbench-theme="light"] .settings-modal::backdrop,
+:root[data-workbench-theme="light"] .step-viewer-modal::backdrop { background: rgba(22, 38, 49, 0.45); }
+:root[data-workbench-theme="light"] .modal-header { background: var(--app-surface-raised); }
+:root[data-workbench-theme="light"] .settings-section input:hover { border-color: var(--app-border-strong); }
+:root[data-workbench-theme="light"] .toggle {
+  border-color: var(--app-border-strong);
+  background: var(--app-surface-raised);
+}
+:root[data-workbench-theme="light"] .toggle::after { background: var(--app-muted); }
+:root[data-workbench-theme="light"] .toggle-label input:checked + .toggle {
+  border-color: var(--app-accent);
+  background: var(--app-accent);
+}
+:root[data-workbench-theme="light"] .toggle-label input:checked + .toggle::after { background: #ffffff; }
+:root[data-workbench-theme="light"] .toggle-label input:focus-visible + .toggle { outline-color: var(--app-accent); }
+:root[data-workbench-theme="light"] .key-status::before { background: var(--app-border-strong); }
+:root[data-workbench-theme="light"] .key-status.configured { color: var(--app-success); }
+:root[data-workbench-theme="light"] .settings-feedback.error { color: var(--app-danger); }
+:root[data-workbench-theme="light"] .settings-feedback.success { color: var(--app-success); }
+:root[data-workbench-theme="light"] .tool-editor-table-wrap { border-color: var(--app-border); }
+:root[data-workbench-theme="light"] .tool-editor-table th { background: var(--app-surface-raised); }
+:root[data-workbench-theme="light"] .step-viewer-sidebar { background: var(--app-surface); }
+:root[data-workbench-theme="light"] .step-viewer-status { background: var(--app-surface-raised); }
+:root[data-workbench-theme="light"] .step-measurement-tools button {
+  border-color: var(--app-border-strong);
+  background: var(--app-surface-raised);
+  color: var(--app-text);
+}
+:root[data-workbench-theme="light"] .step-measurement-tools button:hover:not(:disabled),
+:root[data-workbench-theme="light"] .step-measurement-tools button[aria-pressed="true"],
+:root[data-workbench-theme="light"] .step-z-zero-controls .text-button[aria-pressed="true"] {
+  border-color: var(--app-accent);
+  background: var(--app-selection);
+  color: var(--app-text);
+}

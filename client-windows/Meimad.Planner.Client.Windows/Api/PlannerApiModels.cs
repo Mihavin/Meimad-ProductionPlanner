@@ -149,10 +149,54 @@ internal sealed record PlannerMachine(
     double MachineTimeFactor = 1.0,
     string NcDialect = "HAAS_NGC",
     string? NcViewerMachine = null,
-    string ToolDiameterOffsetKind = "RADIUS")
+    string ToolDiameterOffsetKind = "RADIUS",
+    IReadOnlyList<NcViewerMachineModel>? NcViewerModels = null)
 {
     public string DisplayName => $"{Number} — {Name}";
 }
+
+/// <summary>An x/y/z triple (millimetres or degrees, as the property name says).</summary>
+internal sealed record PlannerXyz(double X, double Y, double Z)
+{
+    internal static PlannerXyz Zero { get; } = new(0, 0, 0);
+}
+
+/// <summary>
+/// An STL model the NC viewer draws on one kinematic node of the Machine's NC viewer machine
+/// (schema v113). Rotated about X, then Y, then Z (degrees, fixed axes), then moved by the offset.
+/// </summary>
+internal sealed record NcViewerMachineModel(
+    string Node,
+    string Path,
+    PlannerXyz? OffsetMm = null,
+    PlannerXyz? RotationDeg = null,
+    string? Color = null,
+    double? Opacity = null);
+
+/// <summary>
+/// The Operation's Cimatron setup (schema v113): the Work CS of its NC programs in the part-model
+/// coordinates its fixture and rest-material files were exported in. Rotations about X, then Y,
+/// then Z (degrees, fixed axes); a model point p is Rᵀ(p − origin) in Work CS coordinates.
+/// </summary>
+internal sealed record CaseOperationCamSetup(
+    string CaseOperationId,
+    string Source,
+    string? WorkOffset,
+    PlannerXyz OriginMm,
+    PlannerXyz RotationDeg,
+    string? Notes,
+    int Version,
+    DateTimeOffset UpdatedAt,
+    string? UpdatedBy = null);
+
+internal sealed record CaseOperationCamSetupResource(CaseOperationCamSetup Value, string EntityTag);
+
+internal sealed record CaseOperationCamSetupWrite(
+    string Source,
+    string? WorkOffset,
+    PlannerXyz OriginMm,
+    PlannerXyz RotationDeg,
+    string? Notes);
 
 internal sealed record MachineResource(PlannerMachine Value, string EntityTag);
 
@@ -505,7 +549,9 @@ internal sealed record MachineCreate(
     double MachineTimeFactor = 1.0,
     string NcDialect = "HAAS_NGC",
     string? NcViewerMachine = null,
-    string ToolDiameterOffsetKind = "RADIUS");
+    string ToolDiameterOffsetKind = "RADIUS",
+    // Null leaves the Machine's NC viewer 3D models unchanged on update.
+    IReadOnlyList<NcViewerMachineModel>? NcViewerModels = null);
 
 internal sealed record HaasConnectionSettings(
     string MachineId, string Host, string MacAddress, int MdcPort, int MtConnectPort, int DprntPort,

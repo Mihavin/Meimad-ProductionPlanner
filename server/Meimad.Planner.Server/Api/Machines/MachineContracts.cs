@@ -26,7 +26,8 @@ internal sealed record CreateMachineRequest(
     double? MachineTimeFactor = null,
     string? NcDialect = null,
     string? NcViewerMachine = null,
-    string? ToolDiameterOffsetKind = null)
+    string? ToolDiameterOffsetKind = null,
+    IReadOnlyList<MachineNcViewerModelRequest?>? NcViewerModels = null)
 {
     internal CreateMachineCommand ToCommand() => new(
         Number,
@@ -48,7 +49,29 @@ internal sealed record CreateMachineRequest(
         MachineTimeFactor,
         NcDialect,
         NcViewerMachine,
-        ToolDiameterOffsetKind);
+        ToolDiameterOffsetKind,
+        NcViewerModels?.Select(model => model?.ToInput()).ToArray());
+}
+
+/// <summary>One STL mesh of the Machine in the NC viewer (schema v113).</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed record MachineNcViewerModelRequest(
+    string? Node,
+    string? Path,
+    MachineVectorRequest? OffsetMm = null,
+    MachineVectorRequest? RotationDeg = null,
+    string? Color = null,
+    double? Opacity = null)
+{
+    internal MachineNcViewerModelInput ToInput() => new(
+        Node, Path, OffsetMm?.ToDomain(), RotationDeg?.ToDomain(), Color, Opacity);
+}
+
+/// <summary>An X/Y/Z triple; an omitted component is zero.</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed record MachineVectorRequest(double? X = null, double? Y = null, double? Z = null)
+{
+    internal MachineVector3 ToDomain() => new(X ?? 0, Y ?? 0, Z ?? 0);
 }
 
 internal sealed class PatchMachineRequest
@@ -80,7 +103,8 @@ internal sealed class PatchMachineRequest
             reader.Double("machineTimeFactor"),
             reader.String("ncDialect"),
             reader.String("ncViewerMachine"),
-            reader.String("toolDiameterOffsetKind"));
+            reader.String("toolDiameterOffsetKind"),
+            reader.NcViewerModels("ncViewerModels"));
         reader.ThrowIfInvalid();
         return command;
     }
@@ -94,7 +118,7 @@ internal sealed class PatchMachineRequest
             "machineTypeId", "respectMasterCalendar", "executionMode",
             "supportedPostprocessorIds", "usableToolPositions",
             "rapidRateMillimetersPerMinute", "toolChangeTimeSeconds", "machineTimeFactor",
-            "ncDialect", "ncViewerMachine", "toolDiameterOffsetKind"
+            "ncDialect", "ncViewerMachine", "toolDiameterOffsetKind", "ncViewerModels"
         ];
 
         private readonly IReadOnlyDictionary<string, JsonElement> fields;
@@ -226,6 +250,42 @@ internal sealed class PatchMachineRequest
             return MachineField<double?>.Unspecified;
         }
 
+        /// <summary>
+        /// The whole replacement list of NC viewer models. Only an array (also <c>[]</c>) replaces the
+        /// list; JSON null is treated like an absent property and keeps it, because the Windows
+        /// client patches with its whole Machine record. Values are validated by the Machine
+        /// validator, only the JSON shape is checked here.
+        /// </summary>
+        internal MachineField<IReadOnlyList<MachineNcViewerModelInput?>?> NcViewerModels(string name)
+        {
+            if (!fields.TryGetValue(name, out var element))
+            {
+                return MachineField<IReadOnlyList<MachineNcViewerModelInput?>?>.Unspecified;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                return MachineField<IReadOnlyList<MachineNcViewerModelInput?>?>.Unspecified;
+            }
+
+            if (element.ValueKind == JsonValueKind.Array)
+            {
+                try
+                {
+                    var models = element.Deserialize<MachineNcViewerModelRequest?[]>(JsonSerializerOptions.Web) ?? [];
+                    return MachineField<IReadOnlyList<MachineNcViewerModelInput?>?>.Specified(
+                        models.Select(model => model?.ToInput()).ToArray());
+                }
+                catch (JsonException)
+                {
+                    // Reported below as an invalid type.
+                }
+            }
+
+            InvalidType(name, "array of { node, path, offsetMm {x,y,z}, rotationDeg {x,y,z}, color, opacity } objects (null keeps the list)");
+            return MachineField<IReadOnlyList<MachineNcViewerModelInput?>?>.Unspecified;
+        }
+
         internal void ThrowIfInvalid()
         {
             if (issues.Count > 0)
@@ -265,7 +325,8 @@ internal sealed record MachineResponse(
     double MachineTimeFactor,
     string NcDialect,
     string? NcViewerMachine,
-    string ToolDiameterOffsetKind)
+    string ToolDiameterOffsetKind,
+    IReadOnlyList<MachineNcViewerModel> NcViewerModels)
 {
     internal static MachineResponse FromDomain(Machine machine) => new(
         machine.MachineId,
@@ -293,7 +354,8 @@ internal sealed record MachineResponse(
         machine.MachineTimeFactor,
         machine.NcDialect,
         machine.NcViewerMachine,
-        machine.ToolDiameterOffsetKind);
+        machine.ToolDiameterOffsetKind,
+        machine.NcViewerModels ?? []);
 }
 
 internal sealed record MachineListResponse(IReadOnlyList<MachineResponse> Items, string? NextCursor);

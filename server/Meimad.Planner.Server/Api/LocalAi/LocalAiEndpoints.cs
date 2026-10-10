@@ -69,6 +69,31 @@ internal static class LocalAiEndpoints
             if (!PlanningHttpSupport.TryAuthorize(context, null, out var user, out var error)) return error!;
             return chat.Cancel(user!.UserId, id) ? Results.Accepted() : Results.NotFound();
         });
+        // Simulation data of an Operation's NC program (owner request 2026-10-10): read-only suggestions the
+        // planner confirms; the local model ranks rule-found files and the rules alone answer when it is off.
+        endpoints.MapPost("/api/v1/local-ai/simulation-data", (SimulationDataSearchRequest request, HttpContext context, SimulationDataSearchService search) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, null, out var user, out var error)) return error!;
+            context.Response.Headers.CacheControl = "no-store";
+            try
+            {
+                var work = search.Submit(user!.UserId, request);
+                return Results.Accepted("/api/v1/local-ai/simulation-data/" + work.SearchId, work);
+            }
+            catch (ArgumentException exception) { return PlanningHttpSupport.Error(400, "simulation_data_invalid", exception.Message, context); }
+            catch (LocalAiBusyException) { context.Response.Headers.RetryAfter = "5"; return PlanningHttpSupport.Error(429, "ai_busy", "One active search per user and eight queued searches are allowed. Retry shortly.", context); }
+        });
+        endpoints.MapGet("/api/v1/local-ai/simulation-data/{id}", (string id, HttpContext context, SimulationDataSearchService search) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, null, out var user, out var error)) return error!;
+            context.Response.Headers.CacheControl = "no-store";
+            return search.Read(user!.UserId, id) is { } work ? Results.Ok(work) : Results.NotFound();
+        });
+        endpoints.MapDelete("/api/v1/local-ai/simulation-data/{id}", (string id, HttpContext context, SimulationDataSearchService search) =>
+        {
+            if (!PlanningHttpSupport.TryAuthorize(context, null, out var user, out var error)) return error!;
+            return search.Cancel(user!.UserId, id) ? Results.Accepted() : Results.NotFound();
+        });
         endpoints.MapPost("/api/v1/local-ai/explanations", async (ExplanationRequest request, HttpContext context,
             LocalEvidenceService evidence, CancellationToken token) =>
         {

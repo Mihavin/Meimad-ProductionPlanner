@@ -40,8 +40,12 @@ export function createToolpathViewer(options) {
       OrthographicCamera: class extends THREE.OrthographicCamera {
         constructor(...args) { super(...args); captured.cameras.push(this); }
       },
+      // The toolpath view asks for the discrete (high-performance) GPU on dual-GPU PCs.
       WebGLRenderer: class extends THREE.WebGLRenderer {
-        constructor(...args) { super(...args); captured.renderers.push(this); }
+        constructor(parameters = {}, ...rest) {
+          super({ powerPreference: "high-performance", ...parameters }, ...rest);
+          captured.renderers.push(this);
+        }
       }
     };
   } catch (error) {

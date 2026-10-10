@@ -241,6 +241,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         NewMachineCommand = new AsyncCommand(BeginNewMachineAsync, CanManage);
         SaveMachineCommand = new AsyncCommand(SaveMachineAsync, CanSaveMachine);
         DeactivateMachineCommand = new AsyncCommand(DeactivateSelectedMachineAsync, CanDeactivateMachine);
+        RemoveMachineModelCommand = new AsyncCommand(RemoveSelectedMachineModelAsync, () => SelectedMachineNcViewerModel is not null);
         DeleteMachineCommand = new AsyncCommand(DeleteSelectedMachineAsync, CanDeleteMachine);
         LoadHaasConfigurationCommand = new AsyncCommand(LoadHaasConfigurationAsync, CanReadHaas);
         SaveHaasConfigurationCommand = new AsyncCommand(SaveHaasConfigurationAsync, CanManageHaas);
@@ -365,6 +366,70 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public AsyncCommand ClearMasterCalendarCommand { get; }
     public AsyncCommand NewMachineCommand { get; }
     public AsyncCommand SaveMachineCommand { get; }
+    public AsyncCommand RemoveMachineModelCommand { get; }
+
+    /// <summary>
+    /// NC viewer 3D models: STL files drawn on the kinematic nodes of this Machine's NC viewer
+    /// machine, saved with the Machine (Server schema v113).
+    /// </summary>
+    public ObservableCollection<NcViewerMachineModelRow> MachineNcViewerModels { get; } = [];
+    private NcViewerMachineModelRow? selectedMachineNcViewerModel;
+    public NcViewerMachineModelRow? SelectedMachineNcViewerModel
+    {
+        get => selectedMachineNcViewerModel;
+        set
+        {
+            if (SetField(ref selectedMachineNcViewerModel, value)) RemoveMachineModelCommand.RaiseCanExecuteChanged();
+        }
+    }
+    /// <summary>The kinematic nodes of the selected NC viewer machine (a node can also be typed).</summary>
+    public IReadOnlyList<string> MachineNodeChoices => NcViewerMachineNodes.For(SelectedNcViewerMachine.Id);
+
+    /// <summary>Adds an STL (from Browse) on the machine's first moving node, or on the base.</summary>
+    internal void AddMachineModel(string path)
+    {
+        var nodes = MachineNodeChoices;
+        var row = new NcViewerMachineModelRow
+        {
+            Path = path,
+            Node = nodes.FirstOrDefault(node => node.Contains("table", StringComparison.OrdinalIgnoreCase))
+                ?? nodes.FirstOrDefault()
+                ?? string.Empty
+        };
+        MachineNcViewerModels.Add(row);
+        SelectedMachineNcViewerModel = row;
+        StatusMessage = "3D model added. Check its node and placement, then save the Machine.";
+    }
+
+    private Task RemoveSelectedMachineModelAsync()
+    {
+        if (SelectedMachineNcViewerModel is { } row) MachineNcViewerModels.Remove(row);
+        SelectedMachineNcViewerModel = null;
+        return Task.CompletedTask;
+    }
+
+    private bool TryMachineNcViewerModels(out IReadOnlyList<NcViewerMachineModel> models, out string error)
+    {
+        var result = new List<NcViewerMachineModel>();
+        foreach (var row in MachineNcViewerModels)
+        {
+            if (!row.TryCreate(out var model, out error))
+            {
+                models = [];
+                return false;
+            }
+            result.Add(model!);
+        }
+        if (result.Count > 32)
+        {
+            models = [];
+            error = "A Machine can have at most 32 NC viewer 3D models.";
+            return false;
+        }
+        models = result;
+        error = string.Empty;
+        return true;
+    }
     public AsyncCommand DeactivateMachineCommand { get; }
     public AsyncCommand DeleteMachineCommand { get; }
     public AsyncCommand LoadHaasConfigurationCommand { get; }
@@ -596,7 +661,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public NcViewerMachineOption SelectedNcViewerMachine
     {
         get => selectedNcViewerMachine;
-        set => SetField(ref selectedNcViewerMachine, value ?? NcViewerMachineOption.Auto);
+        set
+        {
+            if (SetField(ref selectedNcViewerMachine, value ?? NcViewerMachineOption.Auto)) OnPropertyChanged(nameof(MachineNodeChoices));
+        }
     }
     public ObservableCollection<NcViewerMachineOption> NcViewerMachines { get; } = new(NcViewerMachineOption.Installed());
     public string MachineUsableToolPositions { get => machineUsableToolPositions; set => SetField(ref machineUsableToolPositions, value); }
@@ -1279,6 +1347,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineNcDialect = "HAAS_NGC";
         MachineToolDiameterOffsetKind = "RADIUS";
         SelectedNcViewerMachine = NcViewerMachineOption.Auto;
+        MachineNcViewerModels.Clear();
+        SelectedMachineNcViewerModel = null;
         MachineUsableToolPositions = string.Empty;
         MachineRapidRateMillimetersPerMinute = string.Empty;
         MachineToolChangeTimeSeconds = string.Empty;
@@ -1307,6 +1377,12 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             StatusMessage = "Use positive capacity and rapid-rate values, non-negative tool-change seconds, and a Machine time factor greater than zero.";
             return;
         }
+        if (!TryMachineNcViewerModels(out var ncViewerModels, out var modelError))
+        {
+            StatusMessage = modelError;
+            return;
+        }
+        values = values! with { NcViewerModels = ncViewerModels };
         var savedId = editingMachineId;
         var succeeded = false;
         IsBusy = true;
@@ -2647,6 +2723,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineNcDialect = value.NcDialect;
         MachineToolDiameterOffsetKind = value.ToolDiameterOffsetKind;
         SelectedNcViewerMachine = FindNcViewerMachine(value.NcViewerMachine);
+        MachineNcViewerModels.Clear();
+        foreach (var model in value.NcViewerModels ?? []) MachineNcViewerModels.Add(NcViewerMachineModelRow.From(model));
+        SelectedMachineNcViewerModel = null;
         MachineUsableToolPositions = value.UsableToolPositions?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         MachineRapidRateMillimetersPerMinute = value.RapidRateMillimetersPerMinute?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         MachineToolChangeTimeSeconds = value.ToolChangeTimeSeconds?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;

@@ -60,7 +60,9 @@ internal sealed record NcViewerOpenRequest(
     NcProgramFolders? ProgramFolders = null,
     NcViewerOperationToolTable? OperationToolTable = null,
     // Where a program without a file of its own (a Server release) finds its subprograms.
-    string? SubprogramFolder = null)
+    string? SubprogramFolder = null,
+    // Machine 3D models and the Operation's Cimatron Work CS, fixtures and rest material.
+    NcViewerSetupScene? Scene = null)
 {
     /// <summary>The upstream viewer's blank program.</summary>
     internal const string BlankProgram = "%\nO0001\n\nM30\n%\n";
@@ -202,6 +204,8 @@ internal interface INcViewerHostUi
     IReadOnlyList<string> ChooseSubprogramFiles(string? initialDirectory) => [];
     /// <summary>An STL file to use as the stock of the simulation.</summary>
     string? ChooseStlFile(string? initialDirectory);
+    /// <summary>Fixture and rest-material files exported from Cimatron (STL or STEP); empty when canceled.</summary>
+    IReadOnlyList<string> ChooseModelFiles(string? initialDirectory) => [];
     bool ConfirmDiscardChanges(string documentName);
     /// <summary>Asks before a different file of the same name in a revision folder is replaced.</summary>
     bool ConfirmReplaceFile(string path);

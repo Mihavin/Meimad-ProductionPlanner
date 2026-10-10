@@ -27,6 +27,10 @@ internal interface IPlannerApiClient : IDisposable
     Task<AiChatStatus> AskAiAsync(IReadOnlyList<AiChatTurn> messages, AiChatContext? context, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<AiChatStatus> GetAiChatAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task CancelAiChatAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    /// <summary>Starts the AI-assisted search for an Operation's simulation data (read-only).</summary>
+    Task<SimulationDataSearchStatus> StartSimulationDataSearchAsync(string caseId, string caseOperationId, string? ncFilePath, string? gCodeReleaseId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<SimulationDataSearchStatus> GetSimulationDataSearchAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task CancelSimulationDataSearchAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<CorpusSettings> GetLocalCorpusAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<CorpusSettings> UpdateLocalCorpusAsync(int version, IReadOnlyList<string> folders, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<CorpusIndexProgress> StartLocalCorpusIndexAsync(int version, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -520,6 +524,14 @@ internal interface IPlannerApiClient : IDisposable
     Task<CaseModelFile> UpdateCaseModelFileAsync(string caseId, string caseModelFileId, int version, CaseModelFileUpdate update, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    /// <summary>The Operation's Cimatron setup, or null when it has none.</summary>
+    Task<CaseOperationCamSetupResource?> GetCaseOperationCamSetupAsync(string caseId, string caseOperationId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    /// <summary>Creates (entity tag null) or replaces the Operation's Cimatron setup.</summary>
+    Task<CaseOperationCamSetupResource> SaveCaseOperationCamSetupAsync(string caseId, string caseOperationId, CaseOperationCamSetupWrite value, string? entityTag, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    Task DeleteCaseOperationCamSetupAsync(string caseId, string caseOperationId, string entityTag, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
     Task DeleteCaseModelFileAsync(string caseId, string caseModelFileId, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
     Task DeleteOrderAsync(string orderId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -1647,6 +1659,21 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         using var response = await httpClient.DeleteAsync("api/v1/local-ai/chat/" + Uri.EscapeDataString(id), cancellationToken);
         await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
     }
+    public async Task<SimulationDataSearchStatus> StartSimulationDataSearchAsync(string caseId, string caseOperationId, string? ncFilePath, string? gCodeReleaseId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync("api/v1/local-ai/simulation-data", new { caseId, caseOperationId, ncFilePath, gCodeReleaseId }, JsonOptions, cancellationToken);
+        return await ReadSuccessAsync<SimulationDataSearchStatus>(response, cancellationToken);
+    }
+    public async Task<SimulationDataSearchStatus> GetSimulationDataSearchAsync(string id, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/local-ai/simulation-data/" + Uri.EscapeDataString(id), cancellationToken);
+        return await ReadSuccessAsync<SimulationDataSearchStatus>(response, cancellationToken);
+    }
+    public async Task CancelSimulationDataSearchAsync(string id, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.DeleteAsync("api/v1/local-ai/simulation-data/" + Uri.EscapeDataString(id), cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+    }
     public async Task<CorpusSettings> GetLocalCorpusAsync(CancellationToken cancellationToken = default)
     {
         using var response = await httpClient.GetAsync("api/v1/local-ai/corpus", cancellationToken);
@@ -2744,6 +2771,49 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Content = JsonContent.Create(update, options: JsonOptions);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<CaseModelFile>(response, cancellationToken);
+    }
+
+    private static string CamSetupPath(string caseId, string caseOperationId) =>
+        $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(caseOperationId)}/cam-setup";
+
+    public async Task<CaseOperationCamSetupResource?> GetCaseOperationCamSetupAsync(
+        string caseId, string caseOperationId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(CamSetupPath(caseId, caseOperationId), cancellationToken);
+        try
+        {
+            var value = await ReadSuccessAsync<CaseOperationCamSetup>(response, cancellationToken);
+            return new CaseOperationCamSetupResource(value, RequiredEntityTag(response));
+        }
+        catch (PlannerApiException exception) when (exception.Code == "cam_setup_not_found")
+        {
+            return null;
+        }
+    }
+
+    public async Task<CaseOperationCamSetupResource> SaveCaseOperationCamSetupAsync(
+        string caseId, string caseOperationId, CaseOperationCamSetupWrite value, string? entityTag,
+        string clientId, long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, CamSetupPath(caseId, caseOperationId), clientId);
+        if (entityTag is null) request.Headers.TryAddWithoutValidation("If-None-Match", "*");
+        else request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(value, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        var saved = await ReadSuccessAsync<CaseOperationCamSetup>(response, cancellationToken);
+        return new CaseOperationCamSetupResource(saved, RequiredEntityTag(response));
+    }
+
+    public async Task DeleteCaseOperationCamSetupAsync(
+        string caseId, string caseOperationId, string entityTag, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Delete, CamSetupPath(caseId, caseOperationId), clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
     }
 
     public Task DeleteCaseModelFileAsync(string caseId, string caseModelFileId, string clientId, long generation, CancellationToken token = default) =>

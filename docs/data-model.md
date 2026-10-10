@@ -1,5 +1,25 @@
 # Data Model
 
+## NC viewer geometry (schema v113, 2026-10-10)
+
+`machines.nc_viewer_models_json TEXT NOT NULL DEFAULT '[]'` (checked to be a JSON array; existing Machines get `[]`) lists at most 32 STL meshes the NC viewer draws for the Machine: `[{node, path, offsetMm:{x,y,z}, rotationDeg:{x,y,z}, color, opacity}]`. `node` (1–64 characters) is a kinematic node id of the NC viewer machine definition selected by `nc_viewer_machine` (for example `base`, `table`, `spindle-head`); the mesh is placed in that node's frame by rotating it about X, then Y, then Z (degrees, extrinsic, R = Rz·Ry·Rx) and then translating it by `offsetMm`; units are millimetres. `path` is a full `.stl` path, stored relative to `network_folder_settings.root_path` when it lies under the root or an alias, exactly like `case_model_files.file_path`, and served resolved; a network-folder change rewrites it with the Case links. `color` is `#RRGGBB` stored upper-case (default `#9AA4AE`), `opacity` 0.05–1 (default 1). The JSON is written by System.Text.Json: culture-invariant numbers with `.` as decimal separator. The list is Machine configuration: it changes the Machine `version` like any other Machine field. The Server does not read the STL files.
+
+`case_operation_cam_setups` holds at most one CAM setup per Case Operation:
+
+| Column | Meaning |
+|---|---|
+| `case_operation_id TEXT PRIMARY KEY` | References `case_operations(id) ON DELETE CASCADE`. |
+| `source` | `cimatron` or `manual` (CHECK). |
+| `work_offset` | Nullable work offset of the program zero (`G54`–`G59`, `G54.1 P1`, `G154 P1`, `G110`–`G129`, Okuma `G15 H1`); at most 16 characters. |
+| `origin_x_mm`, `origin_y_mm`, `origin_z_mm` | Work CS origin in part-model coordinates, mm (default 0; the Server limits each to ±100000). |
+| `rotation_x_deg`, `rotation_y_deg`, `rotation_z_deg` | Work CS orientation, degrees, −360…360 (CHECK). |
+| `notes` | Nullable, at most 500 characters. |
+| `version`, `created_at`, `updated_at`, `updated_by` | Optimistic version (starts at 1), UTC instants and the signed-in user who last saved it. |
+
+**Coordinate convention.** The row describes the Work coordinate system — the NC program zero of the Operation, the Cimatron UCS its NC procedures use — expressed in the part-model coordinates the Operation's linked fixture and rest-material files (`case_model_files` of kind `fixture`/`stock` with this `case_operation_id`) were exported in. The orientation is R = Rz(rz)·Ry(ry)·Rx(rx); R's columns are the Work X/Y/Z axes in model coordinates. A model point p lies at Rᵀ(p − origin) in Work coordinates. Cimatron writes no UCS file, so the planner types these values from Cimatron.
+
+The setup is not a planning input: its triggers advance the all-input projection `revision` and `non_planning_revision` together, so the planning revision (`revision − non_planning_revision`) does not change, and a save never changes the Case Operation row, its version, Batch Operations or the Timeline. Saves and removals append `case_operation_cam_setup_saved` / `case_operation_cam_setup_removed` events with before/after values. The setup goes with its Case Operation: an explicit Operation delete and the Kitaron synchronization's removal of an Operation its route no longer produces (`RemoveMissingOperationsAsync`) both cascade-delete it; nothing in the Server rewrites `case_operations` with `INSERT OR REPLACE`, and no later migration rebuilds `case_operations`.
+
 ## Deterministic operational evidence aggregation (2026-10-08)
 
 No new authoritative timing/history table is introduced. Local explanations read existing `production_run_workflow_events`, `production_run_cycle_attempt_timing`, exact package pointers, connection/state/device observations and ERP intent lifecycle. Completed-cycle aggregates count immutable completed attempts whose end receipt falls inside `[from,to)`; only positive end-minus-start Server durations contribute to totals/averages. Empty valid samples yield null duration. Source deduplication remains the existing event/attempt uniqueness rules. These derived evidence objects are retained only by the existing bounded answer lifecycle; durable request metadata records source identities/versions rather than full answer bodies.
@@ -199,6 +219,7 @@ Whether a formal append-only audit log is required is TBD. Hard-delete/archive b
 | Case Component | `case_components` | Parent Case to child Case BOM edge; positive quantity per parent, stable sort order, active flag, restrictive Case foreign keys, and unique parent/child pair. |
 | Order | `orders` | Required Case; positive quantity. |
 | Case Operation | `case_operations` | Required Case; unique route position/operation number per Case; optional self-referenced predecessor. |
+| Operation CAM Setup | `case_operation_cam_setups` | Schema v113: at most one per Case Operation (primary key), cascade-deleted with it; Work CS origin/rotation in part-model coordinates, source `cimatron`/`manual`, optional work offset and notes, version, `updated_by` and times. |
 | Production Batch | `production_batches` | Required Case; positive planned quantity. |
 | Verified Material Receipt | `verified_material_receipts` | Required Case; positive whole-piece quantity; explicit local verifier and timestamp; source fixed to `LOCAL_VERIFIED`. |
 | Batch Material Reservation | `batch_material_reservations` | Required verified receipt and Production Batch of the same Case; positive whole-piece quantity; unique receipt/Batch pair. |

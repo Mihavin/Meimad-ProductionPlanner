@@ -65,6 +65,8 @@ internal static class NcViewerRequests
                     release.PostprocessorName, release.PostSpecificRevision));
         var subprogramFolder = await PlaceSubprogramsAsync(
             api, caseId, caseOperationId, release, programFolders, cancellationToken);
+        var scene = await NcViewerScenes.ForOperationAsync(
+            api, caseId, caseOperationId, machineId, machines, contextTitle, cancellationToken);
         return new NcViewerOpenRequest(
             contextTitle,
             release?.OriginalFileName ?? $"release-{releaseId[..Math.Min(8, releaseId.Length)]}.nc",
@@ -76,7 +78,8 @@ internal static class NcViewerRequests
             MachineSelection: NcViewerMachines.Resolve(machines, machineId, release?.PostprocessorId),
             ProgramFolders: programFolders,
             OperationToolTable: operationToolTable,
-            SubprogramFolder: subprogramFolder);
+            SubprogramFolder: subprogramFolder,
+            Scene: scene);
     }
 
     /// <summary>
