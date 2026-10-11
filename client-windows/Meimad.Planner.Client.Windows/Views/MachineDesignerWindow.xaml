@@ -262,7 +262,8 @@
                                     <Button Command="{Binding DataContext.SetMeshColorCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                             CommandParameter="{Binding}" ToolTip="{Binding Name}" AutomationProperties.Name="{Binding Name}"
                                             Width="28" Height="24" Margin="0,0,4,4" Padding="2">
-                                        <Border Background="{Binding Hex}" BorderBrush="#66000000" BorderThickness="1" />
+                                        <Border Width="20" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                Background="{Binding Hex}" BorderBrush="#66000000" BorderThickness="1" />
                                     </Button>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>

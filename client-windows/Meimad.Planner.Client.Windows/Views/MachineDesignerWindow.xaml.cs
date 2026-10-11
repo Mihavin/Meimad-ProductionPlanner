@@ -154,7 +154,8 @@ public partial class MachineDesignerWindow : Window, IMachineDesignerHost
         "Machine collisions not checked.", "Iso", "Front", "Right", "Top", "Fit", "Meshes", "Boxes",
         "Isometric view", "View along +Y", "View along −X", "View along −Z", "Fit the machine in the view (F)",
         "Click a component to select it · drag to rotate · right-drag to pan · wheel to zoom · ▲ tool mount · XYZ workpiece mount",
-        "mesh not drawn", "No axes", "Unverified: positions are not yet checked on the real machine."
+        "mesh not drawn", "No axes", "Unverified: positions are not yet checked on the real machine.",
+        "Background", "Gradient", "Solid", "Top color", "Bottom color", "Reset", "Theme background"
     ];
 
     private void PostLabels()

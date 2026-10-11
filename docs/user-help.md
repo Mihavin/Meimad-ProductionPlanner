@@ -185,7 +185,8 @@ the tool magazine, the timing values and the 3D models are changed only here; th
 5. **Timing & Tool Magazine** holds capacity, usable tool positions, tool-change time, rapid rate and time factor.
    Leave unknown values empty.
 6. Move the jog sliders, or type a value, to check that every part moves the right way; **Zero all** returns to the
-   reference pose.
+   reference pose. **Background** above the 3D view switches between a gradient and one color and picks the top and
+   bottom colors; the choice is kept on this PC, and **Reset** returns to the theme's gradient.
 7. **Save draft**, **Validate** (errors block publishing, warnings do not; double-click an item to jump to its
    component), then **Publish**. Only the published definition is used by the NC viewer and by planning.
 

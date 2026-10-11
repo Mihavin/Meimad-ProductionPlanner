@@ -5256,5 +5256,11 @@
   "Remove the Case picture stored on the Server?": "להסיר את תמונת ה-Case השמורה בשרת?",
   "Case picture": "תמונת Case",
   "No picture. Use Browse Picture… or Snapshot in the 3D view.": "אין תמונה. השתמשו ב-Browse Picture… או ב-Snapshot בתצוגת התלת-ממד.",
-  "Select a saved Case before storing its picture.": "בחרו Case שמור לפני שמירת התמונה שלו."
+  "Select a saved Case before storing its picture.": "בחרו Case שמור לפני שמירת התמונה שלו.",
+  "Background": "רקע",
+  "Gradient": "מדורג",
+  "Solid": "אחיד",
+  "Top color": "צבע עליון",
+  "Bottom color": "צבע תחתון",
+  "Theme background": "רקע ערכת הנושא"
 }

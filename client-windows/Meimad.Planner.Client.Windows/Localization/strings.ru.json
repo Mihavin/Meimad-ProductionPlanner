@@ -5256,5 +5256,11 @@
   "Remove the Case picture stored on the Server?": "Удалить изображение Case, сохранённое на сервере?",
   "Case picture": "Изображение Case",
   "No picture. Use Browse Picture… or Snapshot in the 3D view.": "Нет изображения. Используйте Browse Picture… или Snapshot в 3D-виде.",
-  "Select a saved Case before storing its picture.": "Выберите сохранённый Case перед сохранением его изображения."
+  "Select a saved Case before storing its picture.": "Выберите сохранённый Case перед сохранением его изображения.",
+  "Background": "Фон",
+  "Gradient": "Градиент",
+  "Solid": "Сплошной",
+  "Top color": "Верхний цвет",
+  "Bottom color": "Нижний цвет",
+  "Theme background": "Фон темы"
 }

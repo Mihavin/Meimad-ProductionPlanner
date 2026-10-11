@@ -39,6 +39,9 @@
     #tools button { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 3px; padding: 3px 8px; font: inherit; cursor: pointer; }
     #tools button:hover, #tools button:focus-visible { border-color: var(--accent); outline: none; }
     #tools label { display: flex; align-items: center; gap: 3px; margin-left: 4px; }
+    #tools select { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 3px; font: inherit; padding: 2px; }
+    #tools select option { color: #1d2a33; }
+    #tools input[type="color"] { width: 26px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 3px; background: transparent; cursor: pointer; }
     #problems { bottom: 8px; left: 8px; right: 8px; max-height: 30%; overflow: auto; color: var(--danger); }
     #problems:empty { display: none; }
     #problems div::before { content: "⚠ "; }
@@ -61,6 +64,15 @@
     <button type="button" id="fit" title="Fit the machine in the view (F)" data-i18n data-i18n-title>Fit</button>
     <label><input type="checkbox" id="showMeshes" checked> <span data-i18n>Meshes</span></label>
     <label><input type="checkbox" id="showPrimitives" checked> <span data-i18n>Boxes</span></label>
+    <label><span data-i18n>Background</span>
+      <select id="backgroundMode" aria-label="Background">
+        <option value="gradient" data-i18n>Gradient</option>
+        <option value="solid" data-i18n>Solid</option>
+      </select>
+    </label>
+    <input type="color" id="backgroundTop" title="Top color" data-i18n-title aria-label="Top color">
+    <input type="color" id="backgroundBottom" title="Bottom color" data-i18n-title aria-label="Bottom color">
+    <button type="button" id="backgroundReset" title="Theme background" data-i18n data-i18n-title>Reset</button>
   </div>
   <div id="problems" class="panel" role="alert"></div>
   <div id="legend" class="panel" data-i18n>Click a component to select it · drag to rotate · right-drag to pan · wheel to zoom · ▲ tool mount · XYZ workpiece mount</div>

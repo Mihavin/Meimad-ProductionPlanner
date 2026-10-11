@@ -20,8 +20,10 @@ const elements = {
   showPrimitives: document.getElementById("showPrimitives")
 };
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+// The canvas is transparent; its CSS background (a gradient or one color) shows behind the machine.
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "high-performance" });
 renderer.setPixelRatio(window.devicePixelRatio || 1);
+renderer.setClearColor(0x000000, 0);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(35, 1, 1, 200000);
 camera.up.set(0, 0, 1);
@@ -74,8 +76,69 @@ function theme() {
   return document.documentElement.dataset.workbenchTheme === "light";
 }
 
+// ----- background ----------------------------------------------------------------------------
+// A per-PC display preference (not part of the machine definition): gradient or solid, top and bottom
+// colors. Without a saved choice the theme's gradient is used.
+const BACKGROUND_KEY = "meimad-designer-background";
+const background = {
+  mode: document.getElementById("backgroundMode"),
+  top: document.getElementById("backgroundTop"),
+  bottom: document.getElementById("backgroundBottom"),
+  reset: document.getElementById("backgroundReset")
+};
+
+function themeBackground() {
+  return theme()
+    ? { mode: "gradient", top: "#ffffff", bottom: "#c9d3da" }
+    : { mode: "gradient", top: "#33475b", bottom: "#0b1016" };
+}
+
+function savedBackground() {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(BACKGROUND_KEY) || "null");
+    const color = /^#[0-9a-f]{6}$/i;
+    return value && (value.mode === "gradient" || value.mode === "solid") && color.test(value.top) && color.test(value.bottom) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function showBackground(value) {
+  background.mode.value = value.mode;
+  background.top.value = value.top;
+  background.bottom.value = value.bottom;
+  background.bottom.disabled = value.mode !== "gradient";
+  canvas.style.background = value.mode === "gradient"
+    ? `linear-gradient(to bottom, ${value.top}, ${value.bottom})`
+    : value.top;
+  render();
+}
+
+function backgroundChanged() {
+  const value = { mode: background.mode.value, top: background.top.value, bottom: background.bottom.value };
+  try {
+    window.localStorage.setItem(BACKGROUND_KEY, JSON.stringify(value));
+  } catch {
+    // Storage may be unavailable; the choice still applies until the window closes.
+  }
+  showBackground(value);
+}
+
+background.mode.addEventListener("change", backgroundChanged);
+background.top.addEventListener("input", backgroundChanged);
+background.bottom.addEventListener("input", backgroundChanged);
+background.reset.addEventListener("click", () => {
+  try {
+    window.localStorage.removeItem(BACKGROUND_KEY);
+  } catch {
+    // Nothing saved to remove.
+  }
+  showBackground(themeBackground());
+});
+
 function applyTheme() {
-  scene.background = new THREE.Color(theme() ? 0xedf0f1 : 0x0c1118);
+  scene.background = null;
+  showBackground(savedBackground() || themeBackground());
 }
 
 // ----- meshes -----------------------------------------------------------------------------------
