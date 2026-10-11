@@ -18,10 +18,13 @@ internal static class RecoveryDatabase
         command.CommandText = "PRAGMA user_version";
         var schema = Convert.ToInt32(await command.ExecuteScalarAsync(token));
         command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'machine_simulation_assets'";
-        // Machine meshes (schema v114) are stored below the release root like the releases.
+        // Machine meshes (schema v114) and Case pictures (v115) are stored below the release root like the releases.
         var machineAssets = Convert.ToInt32(await command.ExecuteScalarAsync(token)) == 1
             ? "UNION ALL SELECT 'gcode/' || stored_relative_path,file_size,file_hash FROM machine_simulation_assets"
             : string.Empty;
+        command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'case_pictures'";
+        if (Convert.ToInt32(await command.ExecuteScalarAsync(token)) == 1)
+            machineAssets += " UNION ALL SELECT 'gcode/' || stored_relative_path,file_size,file_hash FROM case_pictures";
         command.CommandText = $"""
             SELECT 'gcode/' || stored_relative_path,file_size,file_hash FROM gcode_releases
             UNION ALL SELECT 'gcode/' || stored_relative_path,file_size,file_hash FROM tool_table_releases

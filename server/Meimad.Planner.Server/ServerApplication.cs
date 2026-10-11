@@ -217,6 +217,10 @@ public static class ServerApplication
         builder.Services.AddSingleton<CaseModelFileService>();
         builder.Services.AddSingleton<ICaseOperationCamSetupRepository, SqliteCaseOperationCamSetupRepository>();
         builder.Services.AddSingleton<CaseOperationCamSetupService>();
+        builder.Services.AddSingleton<CasePictureStore>();
+        builder.Services.AddSingleton<SqliteCasePictureRepository>();
+        builder.Services.AddSingleton<CasePictureCopyService>();
+        builder.Services.AddHostedService(provider => provider.GetRequiredService<CasePictureCopyService>());
         builder.Services.AddHostedService<DatabaseInitializationService>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<LocalAiRequestService>());
         builder.Services.AddHostedService(provider => provider.GetRequiredService<LocalAiChatService>());
@@ -504,6 +508,7 @@ public static class ServerApplication
         application.MapCaseEndpoints();
         application.MapCaseModelFileEndpoints();
         application.MapCaseOperationCamSetupEndpoints();
+        application.MapCasePictureEndpoints();
         application.MapAdministrativeSetupEndpoints();
         application.MapPlanningDeletionEndpoints();
         application.MapOrderEndpoints();

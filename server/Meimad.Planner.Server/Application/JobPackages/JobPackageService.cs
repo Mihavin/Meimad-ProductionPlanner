@@ -32,12 +32,16 @@ internal sealed class JobPackageService
     private readonly TimeProvider timeProvider;
     private readonly TimelineProjectionService timelineService;
 
+    private readonly Cases.CasePictureStore? pictureStore;
+
     public JobPackageService(
         IJobPackageRepository repository,
         EInkOptions options,
         TimeProvider timeProvider,
-        TimelineProjectionService timelineService)
+        TimelineProjectionService timelineService,
+        Cases.CasePictureStore? pictureStore = null)
     {
+        this.pictureStore = pictureStore;
         this.repository = repository;
         this.options = options;
         this.timeProvider = timeProvider;
@@ -187,7 +191,11 @@ internal sealed class JobPackageService
 
         if (includePreview && !string.IsNullOrWhiteSpace(context.PreviewPath))
         {
-            var previewPath = ResolvePreviewPath(context.WorkingFolderPath, context.PreviewPath);
+            // A picture stored on the Server is the Case's own copy; a link must stay inside the Working Folder.
+            var previewPath = context.PreviewPath.StartsWith(Persistence.SqliteJobPackageRepository.StoredPictureMarker, StringComparison.Ordinal)
+                ? pictureStore?.PathOf(context.PreviewPath[Persistence.SqliteJobPackageRepository.StoredPictureMarker.Length..])
+                    ?? throw new JobPackageValidationException("previewPath", "The Case picture stored on the Server is missing; upload it again.")
+                : ResolvePreviewPath(context.WorkingFolderPath, context.PreviewPath);
             EnsureExtension(previewPath, PreviewExtensions, "previewPath");
             var logicalPath = JobPackageValidator.SafeLogicalPath(
                 $"preview/{Path.GetFileName(previewPath)}",

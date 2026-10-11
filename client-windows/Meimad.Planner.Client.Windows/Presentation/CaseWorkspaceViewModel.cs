@@ -846,7 +846,83 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public string Revision { get => revision; set => SetField(ref revision, value); }
     public string Customer { get => customer; set => SetField(ref customer, value); }
     public string CustomerReference { get => customerReference; set => SetField(ref customerReference, value); }
-    public string PreviewPath { get => previewPath; set => SetField(ref previewPath, value); }
+    public string PreviewPath { get => previewPath; set { if (SetField(ref previewPath, value)) OnPropertyChanged(nameof(PictureStatus)); } }
+
+    private CasePictureInfo? storedPicture;
+
+    /// <summary>Where the Case picture is kept: on the Server (schema v115), only as a link, or nowhere.</summary>
+    public string PictureStatus => storedPicture is { } picture
+        ? $"Stored on the Server: {picture.FileName} ({Math.Max(1, picture.SizeBytes / 1024):N0} KB)"
+        : string.IsNullOrWhiteSpace(PreviewPath)
+            ? "No picture. Use Browse Picture… or Snapshot in the 3D view."
+            : $"Link only (not stored on the Server yet): {PreviewPath}";
+
+    public bool HasStoredPicture => storedPicture is not null;
+
+    private void SetStoredPicture(CasePictureInfo? picture)
+    {
+        storedPicture = picture;
+        OnPropertyChanged(nameof(PictureStatus));
+        OnPropertyChanged(nameof(HasStoredPicture));
+    }
+
+    /// <summary>
+    /// Stores the picture on the Server (a STEP snapshot or a chosen image file) instead of linking a file. The Case's
+    /// other fields keep any unsaved edits; only its version and picture change.
+    /// </summary>
+    internal async Task UploadPictureAsync(byte[] bytes, string fileName)
+    {
+        if (apiClient is null || !isEditor || SelectedCase is null || entityTag is null)
+        {
+            StatusMessage = "Select a saved Case before storing its picture.";
+            return;
+        }
+        IsBusy = true;
+        try
+        {
+            var resource = await apiClient.UploadCasePictureAsync(SelectedCase.CaseId, fileName, bytes, entityTag, clientId);
+            entityTag = resource.EntityTag;
+            PreviewPath = resource.Value.PreviewPath ?? string.Empty;
+            SelectedCase.Update(resource.Value);
+            SetStoredPicture(await apiClient.GetCasePictureAsync(resource.Value.CaseId));
+            DetailPreview = ToBitmap(bytes);
+            StatusMessage = $"The picture of Case {resource.Value.PartNumber} is stored on the Server.";
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    internal async Task RemovePictureAsync()
+    {
+        if (apiClient is null || !isEditor || SelectedCase is null || entityTag is null || storedPicture is null) return;
+        IsBusy = true;
+        try
+        {
+            var resource = await apiClient.DeleteCasePictureAsync(SelectedCase.CaseId, entityTag, clientId);
+            entityTag = resource.EntityTag;
+            PreviewPath = resource.Value.PreviewPath ?? string.Empty;
+            SelectedCase.Update(resource.Value);
+            SetStoredPicture(null);
+            DetailPreview = null;
+            StatusMessage = $"The picture of Case {resource.Value.PartNumber} was removed.";
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
     public string WorkingFolderPath
     {
         get => workingFolderPath;
@@ -2438,6 +2514,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             SelectedComponentCase = null;
             ComponentDemand.Clear();
             DetailPreview = LoadPreview(await previewTask, resource.Value.PreviewPath);
+            SetStoredPicture(await StoredPictureAsync(caseId));
             selectedDetailsAreStale = false;
             StatusMessage = $"Case {resource.Value.PartNumber} loaded from the Server.";
         }
@@ -2508,6 +2585,18 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    private async Task<CasePictureInfo?> StoredPictureAsync(string caseId)
+    {
+        try
+        {
+            return apiClient is null ? null : await apiClient.GetCasePictureAsync(caseId);
+        }
+        catch (Exception exception) when (IsExpected(exception) || exception is NotSupportedException)
+        {
+            return null;
         }
     }
 

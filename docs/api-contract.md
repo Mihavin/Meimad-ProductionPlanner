@@ -1,5 +1,21 @@
 # API Contract
 
+## Case pictures on the Server (2026-10-11; schema v115)
+
+- `GET /api/v1/cases/{caseId}/picture` returns the stored picture's details:
+  `{ caseId, fileName, mediaType, sizeBytes, sha256, sourceReference, createdAt, createdBy }`.
+  - `404 picture_not_stored` when the Case has none; `404 resource_not_found` for an unknown Case.
+  - Every signed-in user may read it.
+- `PUT /api/v1/cases/{caseId}/picture?name=<file>` stores a raw image body (PNG, JPEG, BMP or GIF, checked by
+  content, at most 20 MB) as the Case picture.
+  - It needs `cases.edit` and `If-Match: "case:{id}:v{n}"`: a missing tag is `428`, a stale one
+    `412 resource_version_stale`.
+  - It clears the Case's picture link, increments the Case version, and returns the Case with its new ETag.
+  - Errors: `picture_format_unsupported` and `picture_empty` (422), `picture_too_large` (413).
+- `DELETE /api/v1/cases/{caseId}/picture` removes it (same permission and tag). It returns the Case;
+  `404 picture_not_stored` when there is none.
+- `GET /api/v1/cases/{caseId}/preview` serves the stored picture when there is one, else the linked file as before.
+
 ## Machine simulation definitions (2026-10-11; schema v114)
 
 The full contract, including the JSON shape, the validation codes and the compilation for the NC engine, is
@@ -639,7 +655,7 @@ Implemented limits are 200 characters for short identity/material fields, 500 fo
 
 The target contract returns Working Folder and Preview paths only to an authorized Windows planning caller and omits them from TV/E-Ink/errors. The current Case read endpoints have no human authentication layer yet, so deployments must not treat them as production-secure until OD-012 is implemented.
 
-`GET /cases/{caseId}/preview` reads the stored path only inside the Server process and returns PNG, JPEG, BMP, or GIF bytes. It returns `404 preview_not_found` when the path is absent or unavailable and `415 preview_format_unsupported` for other extensions. It does not expose the path in error output. The Windows client uses this route for pool and detail thumbnails and does not open the preview file directly.
+`GET /cases/{caseId}/preview` serves the picture stored on the Server (schema v115) when the Case has one; otherwise it reads the stored path only inside the Server process and returns PNG, JPEG, BMP, or GIF bytes. It returns `404 preview_not_found` when the path is absent or unavailable and `415 preview_format_unsupported` for other extensions. It does not expose the path in error output. The Windows client uses this route for pool and detail thumbnails and does not open the preview file directly.
 
 Implemented Case Operation create request:
 

@@ -5249,5 +5249,12 @@
   "Blue": "כחול",
   "Light blue": "תכלת",
   "Teal": "טורקיז",
-  "Green": "ירוק"
+  "Green": "ירוק",
+  "Picture (stored on the Server)": "תמונה (נשמרת בשרת)",
+  "Choose an image; it is uploaded and stored on the Server": "בחרו תמונה; היא תועלה ותישמר בשרת",
+  "Linked model files load automatically when the Case is selected (primary part model first; stock and fixtures are drawn translucent). Left-drag rotates, right-drag pans, the wheel zooms, and Fit resets the framing. Snapshot stores the current view as the Case picture on the Server.": "קובצי המודל המקושרים נטענים אוטומטית כשנבחר Case (קודם מודל החלק הראשי; חומר הגלם וההתקנים מוצגים שקופים למחצה). גרירה שמאלית מסובבת, גרירה ימנית מזיזה, הגלגלת מגדילה, ו-Fit מאפס את המסגור. Snapshot שומר את התצוגה הנוכחית כתמונת ה-Case בשרת.",
+  "Remove the Case picture stored on the Server?": "להסיר את תמונת ה-Case השמורה בשרת?",
+  "Case picture": "תמונת Case",
+  "No picture. Use Browse Picture… or Snapshot in the 3D view.": "אין תמונה. השתמשו ב-Browse Picture… או ב-Snapshot בתצוגת התלת-ממד.",
+  "Select a saved Case before storing its picture.": "בחרו Case שמור לפני שמירת התמונה שלו."
 }

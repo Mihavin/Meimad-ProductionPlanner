@@ -496,8 +496,16 @@ internal static class CaseEndpoints
         HttpContext httpContext,
         CaseService service,
         ServerFilePathResolver pathResolver,
+        Meimad.Planner.Server.Persistence.SqliteCasePictureRepository pictures,
+        CasePictureStore pictureStore,
         CancellationToken cancellationToken)
     {
+        // The picture stored on the Server (schema v115) wins over the Case's picture link.
+        if (await pictures.GetAsync(caseId, cancellationToken) is { } stored && pictureStore.PathOf(stored) is { } storedPath)
+        {
+            return Results.File(storedPath, stored.MediaType, enableRangeProcessing: true);
+        }
+
         var plannerCase = await service.GetByIdAsync(caseId, cancellationToken);
         var previewPath = plannerCase?.PreviewPath is null
             ? null

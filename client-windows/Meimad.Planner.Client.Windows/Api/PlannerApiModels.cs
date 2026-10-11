@@ -66,6 +66,17 @@ internal sealed record PlannerCase(
 
 internal sealed record CaseResource(PlannerCase Value, string EntityTag);
 
+/// <summary>A Case picture stored on the Server (schema v115); <see cref="SourceReference"/> is the link it was copied from.</summary>
+internal sealed record CasePictureInfo(
+    string CaseId,
+    string FileName,
+    string MediaType,
+    long SizeBytes,
+    string Sha256,
+    string? SourceReference,
+    DateTimeOffset CreatedAt,
+    string? CreatedBy);
+
 /// <summary>A CAD file (STEP part model, STL stock, fixture, ...) linked to a Case by path.</summary>
 internal sealed record CaseModelFile(
     string CaseModelFileId,

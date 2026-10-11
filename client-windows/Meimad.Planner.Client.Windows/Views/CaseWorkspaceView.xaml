@@ -187,11 +187,14 @@
                                     </DockPanel>
                                 </StackPanel>
                                 <StackPanel Style="{StaticResource FormField}">
-                                    <TextBlock Text="Picture Path (server-readable path only)" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock Text="Picture (stored on the Server)" Style="{StaticResource FieldLabel}"/>
                                     <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="Remove" Click="RemovePicture_Click"
+                                                IsEnabled="{Binding HasStoredPicture}" Margin="6,0,0,0" />
                                         <Button DockPanel.Dock="Right" Content="Browse Picture…" Click="BrowsePicture_Click"
-                                                IsEnabled="{Binding CanEditUnlockedFields}" Margin="8,0,0,0" />
-                                        <TextBox Text="{Binding PreviewPath}" IsReadOnly="{Binding IsUnlockedFieldsReadOnly}"/>
+                                                IsEnabled="{Binding CanEditUnlockedFields}" Margin="8,0,0,0"
+                                                ToolTip="Choose an image; it is uploaded and stored on the Server" />
+                                        <TextBlock Text="{Binding PictureStatus}" TextWrapping="Wrap" VerticalAlignment="Center" />
                                     </DockPanel>
                                 </StackPanel>
                                 <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Notes}" IsReadOnly="{Binding IsUnlockedFieldsReadOnly}" AcceptsReturn="True" MinHeight="90" TextWrapping="Wrap"/></StackPanel>
@@ -351,7 +354,7 @@
                                 </Border>
                             </Grid>
                             <TextBlock Grid.Row="2" Margin="0,8,0,0" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"
-                                       Text="Linked model files load automatically when the Case is selected (primary part model first; stock and fixtures are drawn translucent). Left-drag rotates, right-drag pans, the wheel zooms, and Fit resets the framing. Snapshot saves a PNG and places its path in the Case picture field; press Save Case to commit that change." />
+                                       Text="Linked model files load automatically when the Case is selected (primary part model first; stock and fixtures are drawn translucent). Left-drag rotates, right-drag pans, the wheel zooms, and Fit resets the framing. Snapshot stores the current view as the Case picture on the Server." />
                         </Grid>
                         </ScrollViewer>
                     </TabItem>

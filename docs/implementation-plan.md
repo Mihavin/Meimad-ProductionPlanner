@@ -1,5 +1,38 @@
 # Implementation Plan
 
+## Case pictures on the Server and Z: links (2026-10-11; implemented locally)
+
+**Found:**
+- Planning Board cards, for example TNK1105650-008, showed no picture when the Case picture was a `Z:\…` link.
+  The office PCs map `\\192.168.0.240\data` as Z:, but the Server service has no Z: and only a J: drive mapping,
+  so it returned 404.
+- The board then relied on the viewing PC to read the link.
+- On the live data there were 17 `Z:` picture links, 6 working folders and 9 model files. Two picture links point
+  to folders, not images, and one to a missing file.
+
+**Implemented:**
+- Schema v115 `case_pictures`, `CasePictureStore` (content-checked PNG/JPEG/BMP/GIF up to 20 MB below the release
+  root, in the recovery set) and `GET/PUT/DELETE /api/v1/cases/{caseId}/picture`.
+- `GET …/preview`, the TV dashboard and job packages prefer the stored picture.
+- `CasePictureCopyService` copies every readable linked picture once, after startup.
+- The Case Workspace uploads a chosen picture or the STEP snapshot (no file link), shows where the picture is kept,
+  and can remove it.
+- Migration v115 adds the `Z:\` alias on the `\\192.168.0.240\data` installation and converts the Z: links.
+
+**Verified locally:**
+- `CasePictureTests`: upload, stale tag, permission, bad content, served bytes, recovery set and removal; copying a
+  readable link without changing the Case, and the copy surviving the link; v115 conversion only on that root, with
+  J: untouched.
+- `CaseWorkspaceViewModelTests`: upload keeps unsaved edits, the next save uses the new version, and removal works.
+- A read-only run of the live Case links through v115: no `Z:` link left, and TNK1105650-008 resolves to an existing
+  `\\192.168.0.240\data\…` file.
+
+**Open:**
+- J: links (41 pictures) still rely on the Server's `J:` → `\\M-Matehet-SRV\DATA` mapping.
+- Machine pictures remain Server-local paths.
+- Whether the Server account can read `\\192.168.0.240\data` is confirmed only by the copy service's log after
+  installation.
+
 ## Stock removal and stock reference fixes, Designer color palette (2026-10-11; implemented locally)
 
 **Found:** a diagnostic run of every cutting point of the largest Server releases (O2000, 2000, 1002, 3000, 7000, O1000)

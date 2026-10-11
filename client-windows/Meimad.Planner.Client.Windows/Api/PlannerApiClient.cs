@@ -314,6 +314,15 @@ internal interface IPlannerApiClient : IDisposable
         string caseId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>The Case picture stored on the Server, or null when the Case has none there.</summary>
+    Task<CasePictureInfo?> GetCasePictureAsync(string caseId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    /// <summary>Stores <paramref name="bytes"/> (PNG, JPEG, BMP or GIF) as the Case picture on the Server; returns the changed Case.</summary>
+    Task<CaseResource> UploadCasePictureAsync(string caseId, string fileName, byte[] bytes, string entityTag, string clientId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    Task<CaseResource> DeleteCasePictureAsync(string caseId, string entityTag, string clientId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<PlannerMachine> CreateMachineAsync(
         MachineCreate create,
         string clientId,
@@ -1487,6 +1496,35 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             EditGenerationHeader,
             editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
         request.Content = JsonContent.Create(create);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        var value = await ReadSuccessAsync<PlannerCase>(response, cancellationToken);
+        return new CaseResource(value, RequiredEntityTag(response));
+    }
+
+    public async Task<CasePictureInfo?> GetCasePictureAsync(string caseId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync($"api/v1/cases/{Uri.EscapeDataString(caseId)}/picture", cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        return await ReadSuccessAsync<CasePictureInfo>(response, cancellationToken);
+    }
+
+    public async Task<CaseResource> UploadCasePictureAsync(
+        string caseId, string fileName, byte[] bytes, string entityTag, string clientId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put,
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/picture?name={Uri.EscapeDataString(Path.GetFileName(fileName))}", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Content = new ByteArrayContent(bytes);
+        request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        var value = await ReadSuccessAsync<PlannerCase>(response, cancellationToken);
+        return new CaseResource(value, RequiredEntityTag(response));
+    }
+
+    public async Task<CaseResource> DeleteCasePictureAsync(string caseId, string entityTag, string clientId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Delete, $"api/v1/cases/{Uri.EscapeDataString(caseId)}/picture", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         var value = await ReadSuccessAsync<PlannerCase>(response, cancellationToken);
         return new CaseResource(value, RequiredEntityTag(response));

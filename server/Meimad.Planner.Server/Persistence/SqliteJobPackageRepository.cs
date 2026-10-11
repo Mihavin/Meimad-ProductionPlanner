@@ -9,6 +9,9 @@ namespace Meimad.Planner.Server.Persistence;
 
 internal sealed class SqliteJobPackageRepository : IJobPackageRepository
 {
+    /// <summary>Marks a Case picture stored on the Server (schema v115): the rest is its path below the release root.</summary>
+    internal const string StoredPictureMarker = "meimad-case-picture:";
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly SqliteDatabase database;
 
@@ -108,7 +111,8 @@ internal sealed class SqliteJobPackageRepository : IJobPackageRepository
         command.CommandText = $"""
             SELECT cases.id, cases.version, cases.part_number, cases.name,
                    cases.revision, cases.customer, {SqliteNetworkFolderSettings.ResolveSql("cases.working_folder_path")},
-                   {SqliteNetworkFolderSettings.ResolveSql("cases.preview_reference")},
+                   COALESCE((SELECT '{StoredPictureMarker}' || case_pictures.stored_relative_path FROM case_pictures WHERE case_pictures.case_id = cases.id),
+                            {SqliteNetworkFolderSettings.ResolveSql("cases.preview_reference")}),
                    production_batches.id, production_batches.version,
                    production_batches.batch_number, production_batches.planned_quantity,
                    batch_operations.id, batch_operations.version,

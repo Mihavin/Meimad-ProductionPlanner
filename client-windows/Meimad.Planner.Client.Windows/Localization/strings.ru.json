@@ -5249,5 +5249,12 @@
   "Blue": "Синий",
   "Light blue": "Голубой",
   "Teal": "Бирюзовый",
-  "Green": "Зелёный"
+  "Green": "Зелёный",
+  "Picture (stored on the Server)": "Изображение (хранится на сервере)",
+  "Choose an image; it is uploaded and stored on the Server": "Выберите изображение; оно будет загружено и сохранено на сервере",
+  "Linked model files load automatically when the Case is selected (primary part model first; stock and fixtures are drawn translucent). Left-drag rotates, right-drag pans, the wheel zooms, and Fit resets the framing. Snapshot stores the current view as the Case picture on the Server.": "Связанные файлы моделей загружаются автоматически при выборе Case (сначала основная модель детали; заготовка и приспособления полупрозрачны). Левая кнопка вращает, правая сдвигает, колесо масштабирует, Fit сбрасывает вид. Snapshot сохраняет текущий вид как изображение Case на сервере.",
+  "Remove the Case picture stored on the Server?": "Удалить изображение Case, сохранённое на сервере?",
+  "Case picture": "Изображение Case",
+  "No picture. Use Browse Picture… or Snapshot in the 3D view.": "Нет изображения. Используйте Browse Picture… или Snapshot в 3D-виде.",
+  "Select a saved Case before storing its picture.": "Выберите сохранённый Case перед сохранением его изображения."
 }

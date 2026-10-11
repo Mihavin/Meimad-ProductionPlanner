@@ -430,7 +430,7 @@ Refresh the Planning Board, check that you are still signed in, and retry once. 
 
 ### Picture is missing
 
-Verify that the Case preview or machine picture path is inside an allowed Server-managed location and that the Server account can read it. Refresh the Case or TV Dashboard after correcting the file.
+Case pictures are stored on the Server: in Case → details, **Browse Picture…** uploads the chosen image, and **Snapshot** in the 3D model view uploads the current view (no file is saved). **Remove** deletes it. A picture that is still only a link is copied to the Server automatically once the Server can read it (shortly after the Server starts). If a picture is still missing, verify that the Case preview or machine picture path is inside an allowed Server-managed location and that the Server account can read it. Refresh the Case or TV Dashboard after correcting the file.
 
 ## 9. Safe operating rules
 

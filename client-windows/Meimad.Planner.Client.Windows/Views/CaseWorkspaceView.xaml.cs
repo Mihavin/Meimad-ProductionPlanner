@@ -531,32 +531,11 @@ public partial class CaseWorkspaceView : UserControl
 
         var safePartNumber = string.Concat((viewModel.PartNumber ?? "case")
             .Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
-        var dialog = new SaveFileDialog
-        {
-            Title = "Save STEP snapshot as the Case image",
-            Filter = "PNG image|*.png",
-            DefaultExt = ".png",
-            AddExtension = true,
-            FileName = $"{safePartNumber}-step-preview.png",
-            OverwritePrompt = true
-        }.Localized();
-        if (!string.IsNullOrWhiteSpace(viewModel.WorkingFolderPath)
-            && Directory.Exists(viewModel.WorkingFolderPath))
-        {
-            dialog.InitialDirectory = viewModel.WorkingFolderPath;
-        }
-        if (dialog.ShowDialog() != true)
-        {
-            return;
-        }
-
         try
         {
-            StepViewer.SaveSnapshot(dialog.FileName);
-            viewModel.SetPreviewSelection(dialog.FileName);
-            LocalizedMessageBox.Show(
-                "The PNG was saved and selected as the Case picture. Press Save Case to commit the picture path.",
-                "STEP snapshot", MessageBoxButton.OK, MessageBoxImage.Information);
+            // The snapshot is stored on the Server as the Case picture, not saved as a file link.
+            var png = StepViewer.SnapshotPng();
+            _ = viewModel.UploadPictureAsync(png, $"{safePartNumber}-step-preview.png");
         }
         catch (Exception exception) when (exception is IOException
             or UnauthorizedAccessException
@@ -680,9 +659,28 @@ public partial class CaseWorkspaceView : UserControl
         {
             dialog.InitialDirectory = pictureStart;
         }
-        if (dialog.ShowDialog() == true)
+        if (dialog.ShowDialog() != true) return;
+        byte[] bytes;
+        try
         {
-            viewModel.SetPreviewSelection(dialog.FileName);
+            bytes = File.ReadAllBytes(dialog.FileName);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            LocalizedMessageBox.Show(exception.Message, "Case picture", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        // The chosen image is uploaded and stored on the Server, not linked.
+        _ = viewModel.UploadPictureAsync(bytes, Path.GetFileName(dialog.FileName));
+    }
+
+    private void RemovePicture_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is CaseWorkspaceViewModel viewModel
+            && LocalizedMessageBox.Show(Window.GetWindow(this), "Remove the Case picture stored on the Server?", "Case picture",
+                MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel) == MessageBoxResult.OK)
+        {
+            _ = viewModel.RemovePictureAsync();
         }
     }
 

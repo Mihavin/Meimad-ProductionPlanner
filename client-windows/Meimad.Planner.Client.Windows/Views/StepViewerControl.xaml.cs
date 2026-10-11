@@ -1356,7 +1356,21 @@ public partial class StepViewerControl : UserControl
 
     // ---------------------------------------------------------------- snapshot
 
+    /// <summary>The current view as PNG bytes.</summary>
+    public byte[] SnapshotPng()
+    {
+        using var stream = new MemoryStream();
+        WriteSnapshot(stream);
+        return stream.ToArray();
+    }
+
     public void SaveSnapshot(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+        WriteSnapshot(stream);
+    }
+
+    private void WriteSnapshot(Stream stream)
     {
         if (!HasModel)
         {
@@ -1370,7 +1384,6 @@ public partial class StepViewerControl : UserControl
         bitmap.Render(ViewerRoot);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
         encoder.Save(stream);
     }
 

@@ -27,6 +27,40 @@ public sealed class CaseWorkspaceViewModelTests
     }
 
     [Fact]
+    public async Task A_snapshot_or_chosen_picture_is_stored_on_the_Server_and_keeps_unsaved_edits()
+    {
+        var api = new FakeApiClient(CreateCase() with { PreviewPath = @"Z:\parts\PN-100\old.png" });
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(7));
+        await viewModel.EnsureLoadedAsync();
+        await viewModel.SelectCaseAsync(viewModel.Cases.Single());
+        Assert.Contains("Link only", viewModel.PictureStatus, StringComparison.Ordinal);
+        Assert.False(viewModel.HasStoredPicture);
+        viewModel.Notes = "Unsaved note";
+
+        var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+        await viewModel.UploadPictureAsync(png, "PN-100-step-preview.png");
+
+        Assert.Equal(png, api.LastPictureBytes);
+        Assert.Equal("PN-100-step-preview.png", api.LastPictureName);
+        Assert.Equal("\"case:case-1:v1\"", api.LastPictureEntityTag);
+        Assert.True(viewModel.HasStoredPicture);
+        Assert.Contains("Stored on the Server: PN-100-step-preview.png", viewModel.PictureStatus, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, viewModel.PreviewPath);
+        Assert.Equal("Unsaved note", viewModel.Notes);
+        Assert.NotNull(viewModel.DetailPreview);
+
+        // The next save is based on the Case version the upload produced.
+        await viewModel.SaveAsync();
+        Assert.Equal("\"case:case-1:v2\"", api.LastEntityTag);
+        Assert.Null(api.LastUpdate!.PreviewPath);
+
+        await viewModel.RemovePictureAsync();
+        Assert.False(viewModel.HasStoredPicture);
+        Assert.Contains("No picture", viewModel.PictureStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task A_case_loaded_after_sign_in_enables_the_browse_buttons_once_loading_ends()
     {
         var api = new FakeApiClient(CreateCase());
@@ -990,6 +1024,31 @@ public sealed class CaseWorkspaceViewModelTests
             [new PlannerPostprocessorReleaseStatus("post-1", "Doosan 3X", true, "missing", null, null)],
             []);
         internal GCodeReleaseCreate? LastGCodeReleaseCreate { get; private set; }
+        internal byte[]? LastPictureBytes { get; private set; }
+        internal string? LastPictureName { get; private set; }
+        internal string? LastPictureEntityTag { get; private set; }
+        private CasePictureInfo? picture;
+
+        public Task<CasePictureInfo?> GetCasePictureAsync(string caseId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(picture);
+
+        public Task<CaseResource> UploadCasePictureAsync(
+            string caseId, string fileName, byte[] bytes, string entityTag, string clientId, CancellationToken cancellationToken = default)
+        {
+            LastPictureBytes = bytes;
+            LastPictureName = fileName;
+            LastPictureEntityTag = entityTag;
+            picture = new CasePictureInfo(caseId, fileName, "image/png", bytes.Length, new string('a', 64), null, DateTimeOffset.UtcNow, "planner");
+            plannerCase = plannerCase with { PreviewPath = null, Version = plannerCase.Version + 1 };
+            return Task.FromResult(new CaseResource(plannerCase, $"\"case:{caseId}:v{plannerCase.Version}\""));
+        }
+
+        public Task<CaseResource> DeleteCasePictureAsync(string caseId, string entityTag, string clientId, CancellationToken cancellationToken = default)
+        {
+            picture = null;
+            plannerCase = plannerCase with { Version = plannerCase.Version + 1 };
+            return Task.FromResult(new CaseResource(plannerCase, $"\"case:{caseId}:v{plannerCase.Version}\""));
+        }
 
         public Task<IReadOnlyList<PlannerCase>> ListCasesAsync(
             CaseQuery query,

@@ -1,5 +1,28 @@
 # Data Model
 
+## Case pictures on the Server (schema v115, 2026-10-11)
+
+`case_pictures` holds at most one picture per Case (`case_id` primary key, cascade with the Case):
+- `file_name`, `media_type` (`image/png`, `image/jpeg`, `image/bmp` or `image/gif`, checked by content), `file_size`
+  (at most 20 MB) and `file_hash` (SHA-256 hex);
+- `stored_relative_path`: below the G-code release root, `case-pictures/<case>/<sha256>.<ext>`, so the recovery set
+  backs it up and restores it with the releases;
+- `source_reference`: the picture link it was copied from, or null for an upload;
+- `created_at`, `created_by`.
+
+A stored picture wins over the link in `cases.preview_reference` everywhere (Planning Board, Case pool, TV, job
+packages):
+- An upload or removal changes the Case's version and clears its link.
+- A copy made by the Server from a readable link (`CasePictureCopyService`, after startup) keeps the link as the
+  source and changes no Case data.
+
+The triggers advance the all-input and non-planning revisions only.
+
+The factory maps its network root `\\192.168.0.240\data` as `Z:` on office PCs, and the Server service has no such
+drive. On an installation with exactly that root, the migration adds `Z:\` as a network-folder alias. It stores every
+`Z:\…` Case working folder, picture link and model-file path relative to the root, as saving the alias under Setup →
+Network folder does, so they are served as `\\192.168.0.240\data\…`. Other installations are unchanged.
+
 ## Machine simulation definitions (schema v114, 2026-10-11)
 
 The full contract is `docs/machine-simulation-definition.md`.
