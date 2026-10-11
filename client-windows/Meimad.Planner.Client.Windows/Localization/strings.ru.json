@@ -5232,5 +5232,22 @@
   "View along +Y": "Вид вдоль +Y",
   "View along −X": "Вид вдоль −X",
   "View along −Z": "Вид вдоль −Z",
-  "Fit the machine in the view (F)": "Вписать станок в вид (F)"
+  "Fit the machine in the view (F)": "Вписать станок в вид (F)",
+  "Color palette": "Палитра цветов",
+  "Click a color for the selected mesh, or for every mesh of the component when no mesh is selected.": "Щёлкните цвет для выбранной сетки или для всех сеток компонента, если сетка не выбрана.",
+  "Machine grey": "Серый станочный",
+  "Light grey": "Светло-серый",
+  "White": "Белый",
+  "Dark grey": "Тёмно-серый",
+  "Black": "Чёрный",
+  "Bronze": "Бронза",
+  "Brown": "Коричневый",
+  "Safety yellow": "Сигнальный жёлтый",
+  "Orange": "Оранжевый",
+  "Red": "Красный",
+  "Purple": "Фиолетовый",
+  "Blue": "Синий",
+  "Light blue": "Голубой",
+  "Teal": "Бирюзовый",
+  "Green": "Зелёный"
 }

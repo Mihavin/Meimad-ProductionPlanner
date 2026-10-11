@@ -5232,5 +5232,22 @@
   "View along +Y": "מבט לאורך ‎+Y",
   "View along −X": "מבט לאורך ‎−X",
   "View along −Z": "מבט לאורך ‎−Z",
-  "Fit the machine in the view (F)": "התאמת המכונה לתצוגה (F)"
+  "Fit the machine in the view (F)": "התאמת המכונה לתצוגה (F)",
+  "Color palette": "לוח צבעים",
+  "Click a color for the selected mesh, or for every mesh of the component when no mesh is selected.": "לחצו על צבע עבור הרשת הנבחרת, או עבור כל רשתות הרכיב כשלא נבחרה רשת.",
+  "Machine grey": "אפור מכונה",
+  "Light grey": "אפור בהיר",
+  "White": "לבן",
+  "Dark grey": "אפור כהה",
+  "Black": "שחור",
+  "Bronze": "ארד",
+  "Brown": "חום",
+  "Safety yellow": "צהוב בטיחות",
+  "Orange": "כתום",
+  "Red": "אדום",
+  "Purple": "סגול",
+  "Blue": "כחול",
+  "Light blue": "תכלת",
+  "Teal": "טורקיז",
+  "Green": "ירוק"
 }

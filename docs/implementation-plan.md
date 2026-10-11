@@ -1,5 +1,35 @@
 # Implementation Plan
 
+## Stock removal and stock reference fixes, Designer color palette (2026-10-11; implemented locally)
+
+**Found:** a diagnostic run of every cutting point of the largest Server releases (O2000, 2000, 1002, 3000, 7000, O1000)
+through the engine and the material core showed one systematic miss. Centre drills and chamfer tools that Cimatron
+writes with their tip diameter (`DIAM. 0.01 MERCUZ_10`, `DIAM. 0.1 MERKUZ 10 X 90*`, `DIAM. 0.01 FAZA 6`) cut as
+0.01 mm cones, so chamfer passes left the material. The simulation also dropped tool point and taper angles.
+
+**Implemented:**
+- Material removal:
+  - `MeimadMaterial.coneBody`: a cone tool whose radius is below 0.5 mm cuts with the first size of at least 1 in its
+    name. Block, tool, offset and length words are ignored; an angle written with `*` or `°` sets the point or
+    taper angle (default 90°). A `FAZA`/chamfer name makes it a chamfer mill.
+  - The worker passes the description and the angles.
+  - The stock note lists such tools, and a cutting tool without a diameter is reported.
+  - Tool data, compensation and the Tool Room are unchanged.
+- Stock reference:
+  - Work offsets are matched by label for every form (G54.1 P1, G110, G154 P1, G15 H1), not only G54–G59.
+  - *From toolpath* subtracts the shift to the chosen offset.
+  - The card states what the stock is measured from, and warns when the chosen or the program's offset has no
+    values.
+- Machine Designer: a 16-color palette with names (tooltip and accessible name). It applies to the selected mesh,
+  else to every mesh of the component; swatches are shown in the mesh list and beside the color field.
+
+**Verified locally:** `MaterialRemovalCoreTests` (cone body and chamfer cut) and `MachineDesignerTests` (palette).
+The diagnostic over the six releases leaves no uncut point beyond one grid cell. The full client suite passes (502).
+Not verified in the WPF window on the factory PCs.
+
+**Open:** which stock-reference case the owner saw is not confirmed. The diagnostic programs all draw in G54 with no
+offset values, where the shift is zero.
+
 ## Machine Designer and mini-VMID (PRD `docs/prd-machine-designer-mini-vmid.md`; 2026-10-11; implemented locally)
 
 **Implemented:**

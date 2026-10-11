@@ -37,6 +37,37 @@ public sealed class MaterialRemovalCoreTests : IDisposable
     }
 
     [Fact]
+    public void Centre_drills_and_chamfer_tools_given_as_their_tip_diameter_cut_with_the_body_size_from_their_name()
+    {
+        // Cimatron writes the tip diameter of a centre drill or chamfer tool ("DIAM. 0.01 MERCUZ_10"):
+        // a 0.01 mm cone removes nothing, so the chamfer pass along an edge left the material.
+        var result = Run("""
+            const spot = M.coneBody({ radius: 0.05, type: "spot-drill" }, "N18 T3  DIAM. 0.1   MERKUZ 10 X 90*");
+            const mercuz = M.coneBody({ radius: 0.005, type: "spot-drill" }, "N84 T40  DIAM. 0.01   MERCUZ_8");
+            const faza = M.coneBody({ radius: 0.005, type: "other" }, "N27 T35  DIAM. 0.01   FAZA 6");
+            const real = M.coneBody({ radius: 5, type: "spot-drill" }, "SPOT 10");
+            const endMill = M.coneBody({ radius: 0.005, type: "end-mill" }, "FIN 12");
+            const s = M.createMillStock({ minX: 0, maxX: 20, minY: 0, maxY: 20, minZ: -10, maxZ: 0 }, 0.5);
+            // A 90 degree chamfer pass 2 mm deep along y = 10: the cone opens 2 mm to each side at the top.
+            M.cutMillSegment(s, [{ x: 2, y: 10, z: -2 }, { x: 18, y: 10, z: -2 }], spot);
+            const at = (x, y) => s.top[Math.round(y / s.cell) * s.nx + Math.round(x / s.cell)];
+            return { spot, mercuz, faza, real, endMill, centre: at(10, 10), side: at(10, 11), edge: at(10, 12), beyond: at(10, 13) };
+            """);
+        Assert.Equal(5, result.GetProperty("spot").GetProperty("radius").GetDouble());
+        Assert.Equal(90, result.GetProperty("spot").GetProperty("pointAngle").GetDouble());
+        Assert.True(result.GetProperty("spot").GetProperty("bodyFromName").GetBoolean());
+        Assert.Equal(4, result.GetProperty("mercuz").GetProperty("radius").GetDouble());
+        Assert.Equal(3, result.GetProperty("faza").GetProperty("radius").GetDouble());
+        Assert.Equal("chamfer-mill", result.GetProperty("faza").GetProperty("type").GetString());
+        Assert.False(result.GetProperty("real").TryGetProperty("bodyFromName", out _));
+        Assert.Equal(0.005, result.GetProperty("endMill").GetProperty("radius").GetDouble());
+        Assert.Equal(-2, result.GetProperty("centre").GetDouble(), 3);
+        Assert.Equal(-1, result.GetProperty("side").GetDouble(), 3);
+        Assert.Equal(0, result.GetProperty("edge").GetDouble(), 3);
+        Assert.Equal(0, result.GetProperty("beyond").GetDouble(), 3);
+    }
+
+    [Fact]
     public void Ball_mills_and_ramps_follow_the_edge_geometry_and_a_tilted_end_mill_cuts_with_its_lead()
     {
         var result = Run("""

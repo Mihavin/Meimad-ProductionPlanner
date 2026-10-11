@@ -27,6 +27,9 @@ internal sealed record DesignerTemplateOption(string? Id, string Name)
     public override string ToString() => Name;
 }
 
+/// <summary>A palette color for meshes; the name is the swatch's tooltip and accessible name.</summary>
+internal sealed record DesignerPaletteColor(string Hex, string Name);
+
 /// <summary>
 /// The Machine Designer (PRD docs/prd-machine-designer-mini-vmid.md, schema v114): edits one Machine's simulation
 /// definition — the component tree at the all-axes-zero pose, joints, mounts, meshes, magazine and timing — as a
@@ -94,6 +97,8 @@ internal sealed partial class MachineDesignerViewModel : DesignerObservable
         ZeroAllCommand = new AsyncCommand(() => { ZeroAll(); return Task.CompletedTask; });
         LoadTemplateCommand = new AsyncCommand(() => { LoadComponentsFromTemplate(); return Task.CompletedTask; },
             () => CanEdit && SelectedTemplate?.Id is not null);
+        SetMeshColorCommand = new AsyncCommand<DesignerPaletteColor>(color => { SetMeshColor(color?.Hex); return Task.CompletedTask; },
+            color => CanEdit && color is not null && (SelectedMesh is not null || SelectedNode?.Meshes.Count > 0));
     }
 
     /// <summary>Raised when the 3D view must be redrawn (structure, placement or meshes changed).</summary>
@@ -127,6 +132,16 @@ internal sealed partial class MachineDesignerViewModel : DesignerObservable
     public AsyncCommand RemoveMeshCommand { get; }
     public AsyncCommand ZeroAllCommand { get; }
     public AsyncCommand LoadTemplateCommand { get; }
+    public AsyncCommand<DesignerPaletteColor> SetMeshColorCommand { get; }
+
+    /// <summary>Mesh colors offered as swatches; any #RRGGBB can still be typed.</summary>
+    public IReadOnlyList<DesignerPaletteColor> Palette { get; } =
+    [
+        new("#9AA4AE", "Machine grey"), new("#C0C6CC", "Steel"), new("#D9DDE1", "Light grey"), new("#F2F2F2", "White"),
+        new("#5C6670", "Dark grey"), new("#2B2F33", "Black"), new("#B87333", "Bronze"), new("#8D6E63", "Brown"),
+        new("#E8B923", "Safety yellow"), new("#E07B24", "Orange"), new("#D9534F", "Red"), new("#6A4C93", "Purple"),
+        new("#1E5AA8", "Blue"), new("#4FA3D9", "Light blue"), new("#00897B", "Teal"), new("#2E7D32", "Green")
+    ];
 
     public bool IsDirty { get => isDirty; private set { if (Set(ref isDirty, value)) OnPropertyChanged(nameof(VersionText)); } }
 
@@ -155,6 +170,7 @@ internal sealed partial class MachineDesignerViewModel : DesignerObservable
             if (previous is not null) previous.IsSelected = false;
             if (value is not null) value.IsSelected = true;
             SelectedMesh = null;
+            SetMeshColorCommand.RaiseCanExecuteChanged();
             RemoveNodeCommand.RaiseCanExecuteChanged();
             ImportMeshCommand.RaiseCanExecuteChanged();
             OnPropertyChanged(nameof(HasSelectedNode));
@@ -171,6 +187,7 @@ internal sealed partial class MachineDesignerViewModel : DesignerObservable
         set
         {
             if (!Set(ref selectedMesh, value)) return;
+            SetMeshColorCommand.RaiseCanExecuteChanged();
             RemoveMeshCommand.RaiseCanExecuteChanged();
             ImportLegacyMeshCommand.RaiseCanExecuteChanged();
         }
@@ -747,6 +764,14 @@ internal sealed partial class MachineDesignerViewModel : DesignerObservable
             await File.WriteAllBytesAsync(path, bytes);
         assetPaths[asset.AssetId] = path;
         assetProblems.Remove(asset.AssetId);
+    }
+
+    /// <summary>The selected mesh takes the color; with no mesh selected, every mesh of the selected component does.</summary>
+    internal void SetMeshColor(string? hex)
+    {
+        if (!CanEdit || string.IsNullOrWhiteSpace(hex)) return;
+        var meshes = SelectedMesh is { } mesh ? [mesh] : SelectedNode?.Meshes.ToArray() ?? [];
+        foreach (var target in meshes) target.Color = hex;
     }
 
     private void RemoveSelectedMesh()

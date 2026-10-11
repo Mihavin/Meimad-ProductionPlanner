@@ -243,7 +243,33 @@
                         <Button Content="Remove" Command="{Binding RemoveMeshCommand}" />
                     </StackPanel>
                     <ListBox DockPanel.Dock="Top" ItemsSource="{Binding SelectedNode.Meshes}" SelectedItem="{Binding SelectedMesh}" MinHeight="70" MaxHeight="140"
-                             DisplayMemberPath="Name" AutomationProperties.Name="Meshes" />
+                             AutomationProperties.Name="Meshes">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Width="14" Height="12" Margin="0,0,6,0" Background="{Binding Color}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
+                                    <TextBlock Text="{Binding Name}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <StackPanel DockPanel.Dock="Top" Margin="0,8,0,4">
+                        <TextBlock Text="Color palette" Style="{StaticResource FieldLabel}" />
+                        <ItemsControl ItemsSource="{Binding Palette}" AutomationProperties.Name="Color palette">
+                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type md:DesignerPaletteColor}">
+                                    <Button Command="{Binding DataContext.SetMeshColorCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            CommandParameter="{Binding}" ToolTip="{Binding Name}" AutomationProperties.Name="{Binding Name}"
+                                            Width="28" Height="24" Margin="0,0,4,4" Padding="2">
+                                        <Border Background="{Binding Hex}" BorderBrush="#66000000" BorderThickness="1" />
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="Click a color for the selected mesh, or for every mesh of the component when no mesh is selected."
+                                   Style="{StaticResource Hint}" />
+                    </StackPanel>
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel DataContext="{Binding SelectedMesh}" IsEnabled="{Binding DataContext.CanEdit, RelativeSource={RelativeSource AncestorType=Window}}">
                             <TextBlock Text="{Binding Source}" Style="{StaticResource Hint}" />
@@ -255,7 +281,12 @@
                             <ContentControl Content="{Binding Rotation}" />
                             <UniformGrid Columns="3">
                                 <StackPanel Margin="0,0,6,0"><TextBlock Text="Scale" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding Scale, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
-                                <StackPanel Margin="0,0,6,0"><TextBlock Text="Color (#RRGGBB)" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding Color, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
+                                <StackPanel Margin="0,0,6,0"><TextBlock Text="Color (#RRGGBB)" Style="{StaticResource FieldLabel}" />
+                                    <DockPanel>
+                                        <Border DockPanel.Dock="Left" Width="18" Margin="0,0,4,0" Background="{Binding Color}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
+                                        <TextBox Text="{Binding Color, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
+                                    </DockPanel>
+                                </StackPanel>
                                 <StackPanel><TextBlock Text="Opacity (0–1)" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding Opacity, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
                             </UniformGrid>
                             <CheckBox Content="Visible" IsChecked="{Binding Visible}" Margin="0,8,0,0" />

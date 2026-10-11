@@ -35,6 +35,7 @@
     exportNext: byId("meimadStockExportNext"),
     exportAs: byId("meimadStockExportAs"),
     note: byId("meimadStockNote"),
+    reference: byId("meimadStockReference"),
     runButton: byId("runButton"),
     toolFilter: byId("toolFilter")
   };
@@ -158,20 +159,52 @@
     elements.offset.value = [...elements.offset.options].some((option) => option.value === current) ? current : "G54";
   }
 
-  // The shift from the drawing frame (the program's own work offset) to the chosen offset.
+  // Work offset labels as the program writes them ("G54.1 P1", "G54.1P1", "G154 P1", "G110", "G15 H1").
+  const sameOffset = (a, b) => String(a || "").toUpperCase().replace(/\s+/g, "") === String(b || "").toUpperCase().replace(/\s+/g, "");
+
+  // A work offset's machine position on one axis: the value saved under Home offsets, the program's
+  // initial variable, else the machine default (MRZP). `known` is false for the default.
+  function offsetValue(label, axis) {
+    const table = model?.workOffsetTable;
+    const row = (table?.rows || []).find((candidate) => sameOffset(candidate.label, label));
+    const entry = row?.values?.[axis];
+    if (Number.isFinite(entry?.saved)) return { value: entry.saved, known: true };
+    if (Number.isFinite(entry?.initial)) return { value: entry.initial, known: true };
+    const fallback = table?.defaults?.[axis];
+    return { value: Number.isFinite(fallback) ? fallback : 0, known: false, row: Boolean(row) };
+  }
+
+  // The shift from the drawing frame (the first work offset the program selects; every toolpath point
+  // is relative to it) to the work offset the stock is measured from.
   function offsetShift() {
     if (!model || model.kind === "lathe") return { x: 0, y: 0, z: 0 };
-    const table = model.workOffsetTable;
-    const frameLabel = String(model.frame?.label || "").match(/G5\d(?:\.\d+ ?P\d+)?/)?.[0];
-    const value = (label, axis) => {
-      const row = (table?.rows || []).find((candidate) => candidate.label === label);
-      const entry = row?.values?.[axis];
-      const number_ = Number.isFinite(entry?.saved) ? entry.saved : Number.isFinite(entry?.initial) ? entry.initial : table?.defaults?.[axis];
-      return Number.isFinite(number_) ? number_ : 0;
-    };
+    const frameLabel = model.frame?.label;
     const target = elements.offset.value || "G54";
-    if (!table || !frameLabel || target === frameLabel) return { x: 0, y: 0, z: 0 };
-    return { x: value(target, "X") - value(frameLabel, "X"), y: value(target, "Y") - value(frameLabel, "Y"), z: value(target, "Z") - value(frameLabel, "Z") };
+    if (!model.workOffsetTable || !frameLabel || sameOffset(target, frameLabel)) return { x: 0, y: 0, z: 0 };
+    const axis = (name) => offsetValue(target, name).value - offsetValue(frameLabel, name).value;
+    return { x: axis("X"), y: axis("Y"), z: axis("Z") };
+  }
+
+  // Says what the stock is measured from, so a stock placed on an offset without values is not mistaken
+  // for one placed on the real fixture.
+  function describeReference() {
+    if (!elements.reference) return;
+    if (!model || model.kind === "lathe") {
+      elements.reference.textContent = "";
+      return;
+    }
+    const target = elements.offset.value || "G54";
+    const frameLabel = model.frame?.label || "G54";
+    if (sameOffset(target, frameLabel)) {
+      elements.reference.textContent = `Measured from ${target}, the program zero (the work offset the toolpath is drawn in).`;
+      return;
+    }
+    const unknown = ["X", "Y", "Z"].filter((axis) => !offsetValue(target, axis).known || !offsetValue(frameLabel, axis).known);
+    const shift = offsetShift();
+    const fixed = (value) => (Math.abs(value) < 5e-4 ? "0" : value.toFixed(3).replace(/\.?0+$/, ""));
+    elements.reference.textContent = unknown.length
+      ? `⚠ ${target} or ${frameLabel} has no values here (${unknown.join(", ")}), so ${target} is placed by the machine default. Enter both under Home offsets, or measure the stock from ${frameLabel}.`
+      : `Measured from ${target}: X${fixed(shift.x)} Y${fixed(shift.y)} Z${fixed(shift.z)} from the program zero ${frameLabel}.`;
   }
 
   function cutBounds() {
@@ -200,6 +233,12 @@
       return;
     }
     const margin = Math.max(1, (bounds.maxX - bounds.minX) * 0.05);
+    // The toolpath is in the program zero; the fields are measured from the chosen offset.
+    const shift = offsetShift();
+    for (const [low, high, axis] of [["minX", "maxX", "x"], ["minY", "maxY", "y"], ["minZ", "maxZ", "z"]]) {
+      if (Number.isFinite(bounds[low])) bounds[low] -= shift[axis];
+      if (Number.isFinite(bounds[high])) bounds[high] -= shift[axis];
+    }
     if (model.kind === "lathe") {
       const od = Math.ceil((bounds.maxX + margin) * 2);
       const frontZ = Math.max(0, bounds.maxZ);
@@ -215,7 +254,9 @@
       setNumber("boxMinY", Math.floor((Number.isFinite(bounds.minY) ? bounds.minY : 0) - margin));
       setNumber("boxMaxY", Math.ceil((Number.isFinite(bounds.maxY) ? bounds.maxY : 0) + margin));
       setNumber("boxMinZ", Math.floor(bounds.minZ - 1));
-      setNumber("boxMaxZ", Math.max(0, Math.ceil(bounds.maxZ)) === 0 && bounds.maxZ <= 0 ? 0 : Math.ceil(bounds.maxZ));
+      // The part top: Z0 of the chosen offset, or the highest cut when the program cuts above it.
+      const top = -shift.z;
+      setNumber("boxMaxZ", bounds.maxZ <= top ? Math.round(top * 1000) / 1000 : Math.ceil(bounds.maxZ));
     }
     refreshTypeFields();
     applyStock();
@@ -297,10 +338,35 @@
     });
   }
 
+  // Mill tools whose cut differs from the program's tool data: cone tools cut with the body size their
+  // name gives (CAM posts write the tip diameter), and cutting tools with no usable diameter.
+  function toolNotes() {
+    const sized = [];
+    const missing = [];
+    if (!model || model.kind === "lathe" || !window.MeimadMaterial?.coneBody) return { sized, missing };
+    const tools = toolsByNumber();
+    const seen = new Set();
+    for (const segment of compact) {
+      if (!segment.cutting || seen.has(segment.tool)) continue;
+      seen.add(segment.tool);
+      const definition = tools[segment.tool] || {};
+      const radius = Number.isFinite(segment.toolRadius) && segment.toolRadius > 0
+        ? segment.toolRadius
+        : Number.isFinite(definition.diameter) ? definition.diameter / 2 : 0;
+      const cutter = window.MeimadMaterial.coneBody({ radius, type: segment.toolType || definition.type }, definition.description);
+      if (cutter.bodyFromName) sized.push(`T${segment.tool} Ø${(cutter.radius * 2).toFixed(1)}`);
+      else if (!(cutter.radius >= 0.05)) missing.push(`T${segment.tool}`);
+    }
+    return { sized, missing };
+  }
+
   function toolsByNumber() {
     const tools = {};
     for (const tool of model?.toolDefinitions || []) {
-      tools[tool.number] = { diameter: tool.diameter, cornerRadius: tool.cornerRadius, type: tool.type, tip: tool.tip, width: tool.width, length: tool.length };
+      tools[tool.number] = {
+        diameter: tool.diameter, cornerRadius: tool.cornerRadius, type: tool.type, tip: tool.tip, width: tool.width, length: tool.length,
+        pointAngle: tool.pointAngle, taperAngle: tool.taperAngle, description: tool.description
+      };
     }
     return tools;
   }
@@ -387,8 +453,13 @@
     const data = event.data || {};
     if (data.type === "ready") {
       workerReady = true;
+      const notes = toolNotes();
       elements.note.textContent = `Stock grid: ${data.cells.toLocaleString()} cells at ${Number(data.resolution).toFixed(3)} mm` +
-        (tiltedMoves ? ` · ${tiltedMoves} tilted-axis cutting move(s)` : "");
+        (tiltedMoves ? ` · ${tiltedMoves} tilted-axis cutting move(s)` : "") +
+        (notes.sized.length ? ` · Cut with the body size from the tool name: ${notes.sized.join(", ")}` : "");
+      if (notes.missing.length) {
+        status(`No diameter for ${notes.missing.join(", ")}: their paths remove almost no material. Enter the diameter in the tool table.`, "warning");
+      }
       followPlayback();
       return;
     }
@@ -682,6 +753,7 @@
   function applyStock() {
     readForm();
     refreshTypeFields();
+    describeReference();
     if (!model) return;
     if (elements.toggle.checked) {
       removeOutline();
@@ -766,6 +838,7 @@
   elements.toggle.addEventListener("change", applyStock);
   elements.resolution.addEventListener("change", () => { if (elements.toggle.checked) applyStock(); });
   elements.type.addEventListener("change", refreshTypeFields);
+  elements.offset.addEventListener("change", describeReference);
   elements.apply.addEventListener("click", applyStock);
   elements.save.addEventListener("click", saveStock);
   elements.fromToolpath.addEventListener("click", stockFromToolpath);

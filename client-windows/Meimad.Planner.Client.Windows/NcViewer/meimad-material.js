@@ -190,6 +190,43 @@
     return 0;
   }
 
+  // CAM posts give a centre/spot drill's or chamfer tool's *tip* diameter as its diameter
+  // ("DIAM. 0.01 MERCUZ_10", "DIAM. 0.1 MERKUZ 10 X 90*", "DIAM. 0.01 FAZA 6"), and a cone that
+  // narrow removes nothing. Such a tool cuts with the body size (and angle) its name gives: the first
+  // size of at least 1 in the name, an angle written with * or °. Other tools are returned unchanged.
+  const CONE_TYPES = /spot|center|chamfer|countersink|engraver/;
+  const CONE_NAMES = /MER[CK]UZ|FAZA|SPOT|CENT(?:ER|RE)|CHAMFER|COUNTERSINK|\bCSK\b/;
+  function coneBody(tool, description) {
+    const type = String((tool && tool.type) || "");
+    const text = String(description || "").toUpperCase().replace(/_/g, " ");
+    const named = CONE_NAMES.exec(text);
+    const cone = CONE_TYPES.test(type);
+    if (!tool || (tool.radius || 0) >= 0.5 || !(cone || ((!type || type === "other" || type === "end-mill") && named))) return tool;
+    let size;
+    let angle;
+    // Block, tool, offset and length words and the CAM tip diameter are not the body size.
+    const name = text.replace(/DIA(?:M|METER)?\.?\s*[\d.]+/g, " ").replace(/\b[NTHL]\s*=?\s*\d+(?:\.\d+)?\b/g, " ");
+    for (const match of name.matchAll(/(\d+(?:\.\d+)?)\s*([*°]|DEG)?/g)) {
+      const value = Number(match[1]);
+      if (match[2]) {
+        if (angle === undefined && value > 0 && value < 180) angle = value;
+      } else if (size === undefined && value >= 1) {
+        size = value;
+      }
+    }
+    if (!size) return tool;
+    const chamfer = /chamfer|countersink/.test(type) || (!cone && named && /FAZA|CHAMFER|COUNTERSINK|CSK/.test(named[0]));
+    const result = { ...tool, radius: size / 2, bodyFromName: true };
+    if (chamfer) {
+      result.type = /countersink/.test(type) ? type : "chamfer-mill";
+      if (angle && !(tool.taperAngle > 0)) result.taperAngle = angle / 2;
+    } else {
+      if (!cone) result.type = "spot-drill";
+      if (!(tool.pointAngle > 0)) result.pointAngle = angle || 90;
+    }
+    return result;
+  }
+
   function isFlat(tool) {
     const type = tool.type || "end-mill";
     return !(type === "ball-mill" || (type === "bull-nose-mill" && tool.cornerRadius > 0)
@@ -943,6 +980,7 @@
 
   return {
     clampResolution,
+    coneBody,
     createMillStock,
     createLatheStock,
     cutMillSegment,

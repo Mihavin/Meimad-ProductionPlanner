@@ -246,6 +246,41 @@ public sealed class MachineDesignerTests : IDisposable
         Assert.True(legacy.IsLegacy);
     }
 
+    [Fact]
+    public void A_palette_color_goes_to_the_selected_mesh_or_to_every_mesh_of_the_component()
+    {
+        var definition = Trunnion();
+        definition = definition with
+        {
+            Nodes = definition.Nodes.Select(node => node.Id == "x-table"
+                ? node with { Models = [new MachineModel { AssetId = new string('a', 32), Name = "Table" }, new MachineModel { AssetId = new string('b', 32), Name = "Vise" }] }
+                : node).ToArray()
+        };
+        var viewModel = new MachineDesignerViewModel(new FakeDesignerApi(definition), "client-1", Machine(), canEdit: true, new FakeHost());
+        viewModel.Populate(definition);
+        viewModel.SelectedNode = viewModel.Nodes.Single(node => node.Id == "x-table");
+        var red = viewModel.Palette.Single(color => color.Name == "Red");
+        var blue = viewModel.Palette.Single(color => color.Name == "Blue");
+
+        Assert.True(viewModel.SetMeshColorCommand.CanExecute(red));
+        viewModel.SetMeshColor(red.Hex);
+        Assert.All(viewModel.SelectedNode!.Meshes, mesh => Assert.Equal(red.Hex, mesh.Color));
+        viewModel.SelectedMesh = viewModel.SelectedNode.Meshes[1];
+        viewModel.SetMeshColor(blue.Hex);
+        Assert.Equal([red.Hex, blue.Hex], viewModel.SelectedNode.Meshes.Select(mesh => mesh.Color));
+        Assert.True(viewModel.IsDirty);
+        Assert.Equal(blue.Hex, viewModel.BuildDefinition(out _).Node("x-table")!.Models[1].Color);
+        Assert.DoesNotContain(MachineSimulationValidator.Validate(viewModel.BuildDefinition(out _)), issue => issue.Code == "invalid_color");
+
+        // Read-only, or a component without meshes: nothing to color.
+        viewModel.SelectedNode = viewModel.Nodes.Single(node => node.Id == "base");
+        Assert.False(viewModel.SetMeshColorCommand.CanExecute(red));
+        var readOnly = new MachineDesignerViewModel(new FakeDesignerApi(definition), "client-1", Machine(), canEdit: false, new FakeHost());
+        readOnly.Populate(definition);
+        readOnly.SelectedNode = readOnly.Nodes.Single(node => node.Id == "x-table");
+        Assert.False(readOnly.SetMeshColorCommand.CanExecute(red));
+    }
+
     // ----- GLB ------------------------------------------------------------------------------------
 
     [Fact]

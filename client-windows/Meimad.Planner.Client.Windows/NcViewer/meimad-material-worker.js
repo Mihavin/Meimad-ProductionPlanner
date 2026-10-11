@@ -42,14 +42,14 @@ function toolFor(segment) {
   // The body a tilted tool sweeps: the tool table's length, else the program's tool length offset.
   const length = Number(definition.length) > 0 ? Number(definition.length)
     : Number(segment.toolLength) > 0 ? Number(segment.toolLength) : undefined;
-  return {
+  return Material.coneBody({
     radius,
     type: segment.toolType || definition.type || "end-mill",
     cornerRadius: Number(segment.toolCornerRadius) || Number(definition.cornerRadius) || 0,
     pointAngle: definition.pointAngle,
     taperAngle: definition.taperAngle,
     length
-  };
+  }, definition.description);
 }
 
 let filterTool = "all";
