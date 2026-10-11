@@ -68,6 +68,29 @@ public sealed class MaterialRemovalCoreTests : IDisposable
     }
 
     [Fact]
+    public void The_automatic_grid_follows_the_smallest_tool_and_a_tool_smaller_than_a_cell_still_cuts_its_path()
+    {
+        var result = Run("""
+            const small = M.autoMillResolution(500, 1.5);     // a D3 tool: 0.9 mm cells
+            const tiny = M.autoMillResolution(500, 0.2);      // never finer than 1/800 of the stock
+            const large = M.autoMillResolution(500, 20);      // never coarser than 1/400 of the stock
+            const unknown = M.autoMillResolution(500, undefined);
+            // A 0.4 mm engraving tool on a 1 mm grid, its path between grid points: the crossed cells go.
+            const s = M.createMillStock({ minX: 0, maxX: 20, minY: 0, maxY: 20, minZ: -10, maxZ: 0 }, 1);
+            M.cutMillSegment(s, [{ x: 2, y: 10.5, z: -1 }, { x: 18, y: 10.5, z: -1 }], { radius: 0.2, type: "end-mill" });
+            const at = (x, y) => s.top[y * s.nx + x];
+            return { small, tiny, large, unknown, below: at(10, 10), above: at(10, 11), away: at(10, 12) };
+            """);
+        Assert.Equal(0.9, result.GetProperty("small").GetDouble(), 6);
+        Assert.Equal(500.0 / 800, result.GetProperty("tiny").GetDouble(), 6);
+        Assert.Equal(500.0 / 400, result.GetProperty("large").GetDouble(), 6);
+        Assert.Equal(1, result.GetProperty("unknown").GetDouble(), 6);
+        Assert.Equal(-1, result.GetProperty("below").GetDouble());
+        Assert.Equal(-1, result.GetProperty("above").GetDouble());
+        Assert.Equal(0, result.GetProperty("away").GetDouble());
+    }
+
+    [Fact]
     public void Ball_mills_and_ramps_follow_the_edge_geometry_and_a_tilted_end_mill_cuts_with_its_lead()
     {
         var result = Run("""

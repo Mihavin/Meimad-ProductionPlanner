@@ -1,5 +1,24 @@
 # Implementation Plan
 
+## Material removal grid and stock shading (2026-10-11; implemented locally)
+
+**Found:** with the cone-tool fix (0.1.205), a diagnostic of every cutting point of the largest Server releases
+(O2000, 2000, 1002, 3000 including 61,052 tilted Doosan B90 moves, O1000) leaves no tool position inside material.
+The automatic grid was 1/300 of the stock (1.9 mm on 2000.cnc), so a slot of a small tool was one cell wide and showed
+as a faint groove. The cut stock had one color, so floors, the top and the one-cell walls looked alike.
+
+**Implemented:**
+- `MeimadMaterial.autoMillResolution`: with Resolution empty, the cell is 0.6 of the smallest cutting tool's radius,
+  within 1/800 to 1/400 of the stock.
+- `cutMillPiece` removes at least the cells a path crosses (half a cell diagonal).
+- The stock mesh has per-vertex depth colors (grey top and sides, cyan to violet by depth), faceted shading and a
+  fill light.
+
+**Verified locally:** `MaterialRemovalCoreTests` (automatic grid, sub-cell tool path) and the shading rendered in
+headless Chrome. Not verified in the NC viewer window on the factory PCs.
+
+**Open:** no released lathe program with cutting moves was available to check lathe removal.
+
 ## Case pictures on the Server and Z: links (2026-10-11; implemented locally)
 
 **Found:**

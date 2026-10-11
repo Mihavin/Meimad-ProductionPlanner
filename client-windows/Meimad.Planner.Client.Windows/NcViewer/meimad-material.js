@@ -23,6 +23,16 @@
     return Number.isFinite(resolution) && resolution > 0 ? Math.max(0.02, Math.min(10, resolution)) : fallback;
   }
 
+  // The automatic mill grid: fine enough that the smallest cutting tool's slot is several cells wide
+  // (at most 0.6 of its radius), no finer than 1/800 of the stock (the mesh stays light enough to redraw
+  // while cutting) and no coarser than 1/400 of it.
+  function autoMillResolution(span, smallestToolRadius) {
+    const size = Number.isFinite(span) && span > 0 ? span : 100;
+    const radius = Number(smallestToolRadius);
+    const fromTool = Number.isFinite(radius) && radius > 0 ? radius * 0.6 : size / 500;
+    return Math.max(0.05, Math.min(5, Math.max(size / 800, Math.min(size / 400, fromTool))));
+  }
+
   function emptyDirty() {
     return { min: Infinity, max: -Infinity };
   }
@@ -250,7 +260,8 @@
   // One straight motion of the tip from a to b: every grid point within the swept capsule takes
   // the lowest height of the cutting edge over the part of the motion that covers it.
   function cutMillPiece(stock, a, b, tool) {
-    const radius = Math.max(tool.radius || 0, stock.cell * 0.5);
+    // A tool smaller than the grid still removes every cell its path crosses (half a cell diagonal).
+    const radius = Math.max(tool.radius || 0, stock.cell * Math.SQRT1_2);
     const shaped = { ...tool, radius };
     const flat = isFlat(tool);
     const cell = stock.cell;
@@ -980,6 +991,7 @@
 
   return {
     clampResolution,
+    autoMillResolution,
     coneBody,
     createMillStock,
     createLatheStock,

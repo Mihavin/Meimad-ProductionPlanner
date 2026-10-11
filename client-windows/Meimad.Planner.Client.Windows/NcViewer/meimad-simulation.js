@@ -338,6 +338,27 @@
     });
   }
 
+  // An empty Resolution field: a mill grid sized from the stock and the smallest cutting tool, so narrow
+  // slots and small tools show; a lathe keeps the engine's own automatic cell.
+  function autoResolution(stock, stl) {
+    if (!model || model.kind === "lathe" || !window.MeimadMaterial?.autoMillResolution) return undefined;
+    const extent = stl ? window.MeimadMaterial.bounds(stl) : stock;
+    if (!extent || !Number.isFinite(extent.maxX)) return undefined;
+    const span = Math.max(extent.maxX - extent.minX, extent.maxY - extent.minY);
+    const tools = toolsByNumber();
+    let smallest = Infinity;
+    for (const segment of compact) {
+      if (!segment.cutting) continue;
+      const definition = tools[segment.tool] || {};
+      const radius = Number.isFinite(segment.toolRadius) && segment.toolRadius > 0
+        ? segment.toolRadius
+        : Number.isFinite(definition.diameter) ? definition.diameter / 2 : 0;
+      const cutter = window.MeimadMaterial.coneBody({ radius, type: segment.toolType || definition.type }, definition.description);
+      if (cutter.radius >= 0.05 && cutter.radius < smallest) smallest = cutter.radius;
+    }
+    return window.MeimadMaterial.autoMillResolution(span, Number.isFinite(smallest) ? smallest : undefined);
+  }
+
   // Mill tools whose cut differs from the program's tool data: cone tools cut with the body size their
   // name gives (CAM posts write the tip diameter), and cutting tools with no usable diameter.
   function toolNotes() {
@@ -434,11 +455,12 @@
     worker.onmessage = onWorkerMessage;
     worker.onerror = (event) => status(`Material removal stopped: ${event.message || "worker error"}`, "error");
     const stl = definition.type === "stl" && model.kind !== "lathe" ? stlPositions : undefined;
+    const stockDefinition = stockForWorker();
     worker.postMessage({
       type: "init",
       kind: model.kind,
-      stock: stockForWorker(),
-      resolution: Number(elements.resolution.value) || undefined,
+      stock: stockDefinition,
+      resolution: Number(elements.resolution.value) || autoResolution(stockDefinition, stl),
       tools: toolsByNumber(),
       segments: compact,
       filterTool: filterTool,
@@ -455,6 +477,7 @@
       workerReady = true;
       const notes = toolNotes();
       elements.note.textContent = `Stock grid: ${data.cells.toLocaleString()} cells at ${Number(data.resolution).toFixed(3)} mm` +
+        (model && model.kind !== "lathe" ? " · grey: untouched top, cyan to violet: deeper cuts" : "") +
         (tiltedMoves ? ` · ${tiltedMoves} tilted-axis cutting move(s)` : "") +
         (notes.sized.length ? ` · Cut with the body size from the tool name: ${notes.sized.join(", ")}` : "");
       if (notes.missing.length) {
@@ -511,10 +534,13 @@
     }
     lights = new THREE.Group();
     lights.name = "meimad-lights";
-    const hemisphere = new THREE.HemisphereLight(0xffffff, 0x2a3038, 0.9);
-    const key = new THREE.DirectionalLight(0xffffff, 0.75);
+    const hemisphere = new THREE.HemisphereLight(0xffffff, 0x2a3038, 0.55);
+    const key = new THREE.DirectionalLight(0xffffff, 1.05);
     key.position.set(1, -0.6, 1.4);
-    lights.add(hemisphere, key);
+    // A weaker light from the other side so walls facing away from the key light still read.
+    const fill = new THREE.DirectionalLight(0xffffff, 0.4);
+    fill.position.set(-1, 0.8, 0.6);
+    lights.add(hemisphere, key, fill);
     hooks.scene.add(lights);
   }
 
@@ -524,19 +550,77 @@
     ensureLights();
     if (!mesh) {
       const geometry = new THREE.BufferGeometry();
-      const material = new THREE.MeshStandardMaterial({ color: 0xb9c2cc, roughness: 0.75, metalness: 0.15, side: THREE.DoubleSide });
+      // Faceted, with a color per vertex (depthColors) so cut floors and walls stand apart from the top.
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xffffff, vertexColors: true, flatShading: true, roughness: 0.7, metalness: 0.1, side: THREE.DoubleSide
+      });
       mesh = new THREE.Mesh(geometry, material);
       mesh.renderOrder = 1;
       mesh.frustumCulled = false;
       hooks.contentRoot.add(mesh);
     }
     mesh.geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    mesh.geometry.setAttribute("color", new THREE.BufferAttribute(depthColors(positions, kind), 3));
     mesh.geometry.computeVertexNormals();
     mesh.geometry.computeBoundingSphere();
     mesh.visible = true;
     mesh.userData.kind = kind;
     removeOutline();
     hooks.upstream.render();
+  }
+
+  // Mill: the untouched top grey, cuts from light cyan (shallow) to violet (deep) by their depth below the
+  // stock top. Lathe: one light steel color (the shape reads from the faceted shading).
+  function depthColors(positions, kind) {
+    const colors = new Float32Array(positions.length);
+    let top = -Infinity;
+    let bottom = Infinity;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let index = 0; index + 2 < positions.length; index += 3) {
+      const x = positions[index];
+      const y = positions[index + 1];
+      const z = positions[index + 2];
+      if (z > top) top = z;
+      if (z < bottom) bottom = z;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    // The stock's own side faces are not cuts: their vertices lie on the outer rectangle.
+    const edge = Math.max(1e-4, Math.max(maxX - minX, maxY - minY) * 1e-6);
+    const onSide = (x, y) => x - minX < edge || maxX - x < edge || y - minY < edge || maxY - y < edge;
+    const range = Math.max(1e-6, top - bottom);
+    const untouched = Math.max(0.02, range * 0.002);
+    for (let index = 0; index + 2 < positions.length; index += 3) {
+      let r = 0.73, g = 0.76, b = 0.80;
+      if (kind !== "lathe" && !onSide(positions[index], positions[index + 1])) {
+        const depth = top - positions[index + 2];
+        if (depth > untouched) {
+          const t = Math.min(1, depth / range);
+          // HSL hue 190 deg (cyan) to 275 deg (violet), lighter when shallow.
+          const hue = (190 + 85 * t) / 360;
+          const lightness = 0.66 - 0.24 * t;
+          const saturation = 0.55;
+          const q = lightness < 0.5 ? lightness * (1 + saturation) : lightness + saturation - lightness * saturation;
+          const p = 2 * lightness - q;
+          const channel = (h) => {
+            const x = h < 0 ? h + 1 : h > 1 ? h - 1 : h;
+            if (x < 1 / 6) return p + (q - p) * 6 * x;
+            if (x < 1 / 2) return q;
+            if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
+            return p;
+          };
+          r = channel(hue + 1 / 3);
+          g = channel(hue);
+          b = channel(hue - 1 / 3);
+        }
+      }
+      colors[index] = r;
+      colors[index + 1] = g;
+      colors[index + 2] = b;
+    }
+    return colors;
   }
 
   function removeMesh() {
