@@ -90,7 +90,7 @@
     hooks.scene.add(lights);
   }
 
-  function meshObject(positions, color, opacity) {
+  function meshObject(positions, color, opacity, wireframe) {
     const THREE = hooks.THREE;
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
@@ -103,6 +103,7 @@
       side: THREE.DoubleSide,
       transparent,
       opacity,
+      wireframe: Boolean(wireframe),
       depthWrite: !transparent
     });
     const mesh = new THREE.Mesh(geometry, material);
@@ -185,7 +186,7 @@
         if (model !== requested || generation !== machineDrawGeneration) return;
         const placed = core.placeOnNode(positions, entry, scaleOf());
         const opacity = Number.isFinite(entry.opacity) ? entry.opacity : 1;
-        group.add(meshObject(placed, colorOf(entry.color, 0x9aa4ae), opacity));
+        group.add(meshObject(placed, colorOf(entry.color, 0x9aa4ae), opacity, entry.wireframe));
         // The node's placeholder box makes way for the real model.
         for (const child of group.children) if (!child.userData[MESH_TAG]) child.visible = false;
       } catch (error) {

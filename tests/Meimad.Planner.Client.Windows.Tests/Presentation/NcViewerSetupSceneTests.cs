@@ -88,56 +88,6 @@ public sealed class NcViewerSetupSceneTests : IDisposable
     }
 
     [Fact]
-    public void Machine_model_rows_validate_like_the_server_and_round_trip()
-    {
-        var row = new NcViewerMachineModelRow
-        {
-            Node = " table ",
-            Path = @"C:\machines\vf3\table.stl",
-            OffsetZ = "-25.5",
-            RotationZ = "90",
-            Color = "#a0b0c0",
-            Opacity = "0.75"
-        };
-        Assert.True(row.TryCreate(out var model, out _));
-        Assert.Equal("table", model!.Node);
-        Assert.Equal(-25.5, model.OffsetMm!.Z);
-        Assert.Equal(90, model.RotationDeg!.Z);
-        Assert.Equal("#A0B0C0", model.Color);
-        Assert.Equal(0.75, model.Opacity);
-        var back = NcViewerMachineModelRow.From(model);
-        Assert.Equal("-25.5", back.OffsetZ);
-        Assert.Equal("0.75", back.Opacity);
-
-        Assert.False(new NcViewerMachineModelRow { Path = @"C:\a.stl" }.TryCreate(out _, out var node));
-        Assert.Contains("node", node, StringComparison.Ordinal);
-        Assert.False(new NcViewerMachineModelRow { Node = "base", Path = @"C:\a.step" }.TryCreate(out _, out var extension));
-        Assert.Contains(".stl", extension, StringComparison.Ordinal);
-        Assert.False(new NcViewerMachineModelRow { Node = "base", Path = @"relative\a.stl" }.TryCreate(out _, out _));
-        Assert.False(new NcViewerMachineModelRow { Node = "base", Path = @"C:\a.stl", RotationX = "400" }.TryCreate(out _, out _));
-        Assert.False(new NcViewerMachineModelRow { Node = "base", Path = @"C:\a.stl", OffsetY = "1,5" }.TryCreate(out _, out _));
-        Assert.False(new NcViewerMachineModelRow { Node = "base", Path = @"C:\a.stl", Opacity = "0" }.TryCreate(out _, out _));
-        Assert.False(new NcViewerMachineModelRow { Node = "base", Path = @"C:\a.stl", Color = "grey" }.TryCreate(out _, out _));
-    }
-
-    [Fact]
-    public void Installed_machine_definitions_name_their_kinematic_nodes()
-    {
-        var root = Path.Combine(folder, "engine");
-        Directory.CreateDirectory(Path.Combine(root, "machines"));
-        Directory.CreateDirectory(Path.Combine(root, "meimad", "machines"));
-        System.IO.File.WriteAllText(Path.Combine(root, "machines", "a.json"),
-            """{ "id": "test-mill", "kinematics": { "nodes": [ { "id": "base" }, { "id": "table" } ] } }""");
-        // A Meimad definition of the same id replaces the vendored one, as in the engine registry.
-        System.IO.File.WriteAllText(Path.Combine(root, "meimad", "machines", "b.json"),
-            """{ "id": "test-mill", "kinematics": { "nodes": [ { "id": "base" }, { "id": "x-saddle" }, { "id": "spindle" } ] } }""");
-
-        Assert.Equal(["base", "x-saddle", "spindle"], NcViewerMachineNodes.For("test-mill", root));
-        Assert.Empty(NcViewerMachineNodes.For("unknown", root));
-        Assert.Empty(NcViewerMachineNodes.For(null, root));
-    }
-
-    [Fact]
     public void Work_cs_form_accepts_cimatron_values_and_rejects_bad_input()
     {
         var form = new OperationCamSetupViewModel

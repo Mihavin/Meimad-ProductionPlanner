@@ -78,11 +78,6 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string machineExecutionMode = "MANUAL";
     private string machineNcDialect = "HAAS_NGC";
     private string machineToolDiameterOffsetKind = "RADIUS";
-    private NcViewerMachineOption selectedNcViewerMachine = NcViewerMachineOption.Auto;
-    private string machineUsableToolPositions = string.Empty;
-    private string machineRapidRateMillimetersPerMinute = string.Empty;
-    private string machineToolChangeTimeSeconds = string.Empty;
-    private string machineTimeFactor = "1";
     private string haasHost = string.Empty;
     private string haasMacAddress = string.Empty;
     private CncAdapterDefinition? selectedCncAdapter;
@@ -241,7 +236,6 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         NewMachineCommand = new AsyncCommand(BeginNewMachineAsync, CanManage);
         SaveMachineCommand = new AsyncCommand(SaveMachineAsync, CanSaveMachine);
         DeactivateMachineCommand = new AsyncCommand(DeactivateSelectedMachineAsync, CanDeactivateMachine);
-        RemoveMachineModelCommand = new AsyncCommand(RemoveSelectedMachineModelAsync, () => SelectedMachineNcViewerModel is not null);
         DeleteMachineCommand = new AsyncCommand(DeleteSelectedMachineAsync, CanDeleteMachine);
         LoadHaasConfigurationCommand = new AsyncCommand(LoadHaasConfigurationAsync, CanReadHaas);
         SaveHaasConfigurationCommand = new AsyncCommand(SaveHaasConfigurationAsync, CanManageHaas);
@@ -366,70 +360,22 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public AsyncCommand ClearMasterCalendarCommand { get; }
     public AsyncCommand NewMachineCommand { get; }
     public AsyncCommand SaveMachineCommand { get; }
-    public AsyncCommand RemoveMachineModelCommand { get; }
-
     /// <summary>
-    /// NC viewer 3D models: STL files drawn on the kinematic nodes of this Machine's NC viewer
-    /// machine, saved with the Machine (Server schema v113).
+    /// The Machine's published simulation definition values (Machine Designer, schema v114): the NC viewer machine,
+    /// magazine and timing. Setup shows them read-only; only the Machine Designer changes them.
     /// </summary>
-    public ObservableCollection<NcViewerMachineModelRow> MachineNcViewerModels { get; } = [];
-    private NcViewerMachineModelRow? selectedMachineNcViewerModel;
-    public NcViewerMachineModelRow? SelectedMachineNcViewerModel
-    {
-        get => selectedMachineNcViewerModel;
-        set
-        {
-            if (SetField(ref selectedMachineNcViewerModel, value)) RemoveMachineModelCommand.RaiseCanExecuteChanged();
-        }
-    }
-    /// <summary>The kinematic nodes of the selected NC viewer machine (a node can also be typed).</summary>
-    public IReadOnlyList<string> MachineNodeChoices => NcViewerMachineNodes.For(SelectedNcViewerMachine.Id);
+    public string MachineSimulationSummary => editingMachineId is null || SelectedMachine is not { } machine
+        ? "Save the Machine, then open the Machine Designer to define its kinematics, 3D meshes, tool magazine and timing."
+        : string.Create(CultureInfo.InvariantCulture,
+            $"NC viewer machine: {machine.NcViewerMachine ?? "automatic detection"} · usable tool positions: {machine.UsableToolPositions?.ToString(CultureInfo.InvariantCulture) ?? "unknown"} · tool change: {Optional(machine.ToolChangeTimeSeconds, "s")} · rapid rate: {Optional(machine.RapidRateMillimetersPerMinute, "mm/min")} · time factor: {machine.MachineTimeFactor.ToString("0.###", CultureInfo.InvariantCulture)}");
 
-    /// <summary>Adds an STL (from Browse) on the machine's first moving node, or on the base.</summary>
-    internal void AddMachineModel(string path)
-    {
-        var nodes = MachineNodeChoices;
-        var row = new NcViewerMachineModelRow
-        {
-            Path = path,
-            Node = nodes.FirstOrDefault(node => node.Contains("table", StringComparison.OrdinalIgnoreCase))
-                ?? nodes.FirstOrDefault()
-                ?? string.Empty
-        };
-        MachineNcViewerModels.Add(row);
-        SelectedMachineNcViewerModel = row;
-        StatusMessage = "3D model added. Check its node and placement, then save the Machine.";
-    }
+    private static string Optional(double? value, string unit) =>
+        value is { } number ? $"{number.ToString("0.###", CultureInfo.InvariantCulture)} {unit}" : "unknown";
 
-    private Task RemoveSelectedMachineModelAsync()
-    {
-        if (SelectedMachineNcViewerModel is { } row) MachineNcViewerModels.Remove(row);
-        SelectedMachineNcViewerModel = null;
-        return Task.CompletedTask;
-    }
+    /// <summary>The session the Machine Designer window uses.</summary>
+    internal IPlannerApiClient? ApiClient => apiClient;
 
-    private bool TryMachineNcViewerModels(out IReadOnlyList<NcViewerMachineModel> models, out string error)
-    {
-        var result = new List<NcViewerMachineModel>();
-        foreach (var row in MachineNcViewerModels)
-        {
-            if (!row.TryCreate(out var model, out error))
-            {
-                models = [];
-                return false;
-            }
-            result.Add(model!);
-        }
-        if (result.Count > 32)
-        {
-            models = [];
-            error = "A Machine can have at most 32 NC viewer 3D models.";
-            return false;
-        }
-        models = result;
-        error = string.Empty;
-        return true;
-    }
+    internal string ClientId => clientId;
     public AsyncCommand DeactivateMachineCommand { get; }
     public AsyncCommand DeleteMachineCommand { get; }
     public AsyncCommand LoadHaasConfigurationCommand { get; }
@@ -652,25 +598,6 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     /// <summary>Whether the control keeps cutter (D) offsets as radius or diameter values; the Offset Loader writes measured values accordingly.</summary>
     public string MachineToolDiameterOffsetKind { get => machineToolDiameterOffsetKind; set => SetField(ref machineToolDiameterOffsetKind, value); }
     public IReadOnlyList<string> MachineToolDiameterOffsetKinds { get; } = ["RADIUS", "DIAMETER"];
-    /// <summary>
-    /// NC viewer machine: the NC engine definition (Mazak Variaxis i-500, Okuma Genos L200E-M,
-    /// Haas ST-25Y, Haas VF-3SS, generic FANUC 0i-MC mills, ...) the NC viewer and the Server
-    /// cycle-time analysis interpret this Machine's programs with. "Auto-detect" leaves the choice
-    /// to the engine. The list is the catalog installed with this client's NC engine.
-    /// </summary>
-    public NcViewerMachineOption SelectedNcViewerMachine
-    {
-        get => selectedNcViewerMachine;
-        set
-        {
-            if (SetField(ref selectedNcViewerMachine, value ?? NcViewerMachineOption.Auto)) OnPropertyChanged(nameof(MachineNodeChoices));
-        }
-    }
-    public ObservableCollection<NcViewerMachineOption> NcViewerMachines { get; } = new(NcViewerMachineOption.Installed());
-    public string MachineUsableToolPositions { get => machineUsableToolPositions; set => SetField(ref machineUsableToolPositions, value); }
-    public string MachineRapidRateMillimetersPerMinute { get => machineRapidRateMillimetersPerMinute; set => SetField(ref machineRapidRateMillimetersPerMinute, value); }
-    public string MachineToolChangeTimeSeconds { get => machineToolChangeTimeSeconds; set => SetField(ref machineToolChangeTimeSeconds, value); }
-    public string MachineTimeFactor { get => machineTimeFactor; set => SetField(ref machineTimeFactor, value); }
     public string MachineFormHeading => editingMachineId is null ? "New machine" : "Edit machine";
     public ObservableCollection<CncAdapterDefinition> CncAdapters { get; } = [];
     private CncAdapterDefinition? SelectedCncAdapter
@@ -1346,14 +1273,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineExecutionMode = "MANUAL";
         MachineNcDialect = "HAAS_NGC";
         MachineToolDiameterOffsetKind = "RADIUS";
-        SelectedNcViewerMachine = NcViewerMachineOption.Auto;
-        MachineNcViewerModels.Clear();
-        SelectedMachineNcViewerModel = null;
-        MachineUsableToolPositions = string.Empty;
-        MachineRapidRateMillimetersPerMinute = string.Empty;
-        MachineToolChangeTimeSeconds = string.Empty;
-        MachineTimeFactor = "1";
         ResetHaasForm();
+        OnPropertyChanged(nameof(MachineSimulationSummary));
         RebuildMachinePostprocessors([]);
         OnPropertyChanged(nameof(MachineFormHeading));
         StatusMessage = "Enter the Machine master data.";
@@ -1372,17 +1293,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             return;
         }
 
-        if (!TryCreateMachineValues(MachineIsActive, out var values))
-        {
-            StatusMessage = "Use positive capacity and rapid-rate values, non-negative tool-change seconds, and a Machine time factor greater than zero.";
-            return;
-        }
-        if (!TryMachineNcViewerModels(out var ncViewerModels, out var modelError))
-        {
-            StatusMessage = modelError;
-            return;
-        }
-        values = values! with { NcViewerModels = ncViewerModels };
+        var values = CreateMachineValues(MachineIsActive);
         var savedId = editingMachineId;
         var succeeded = false;
         IsBusy = true;
@@ -1424,7 +1335,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         if (!CanDeactivateMachine()) return;
         var machine = SelectedMachine!;
         PopulateMachineForm(machine);
-        if (!TryCreateMachineValues(false, out var values)) return;
+        var values = CreateMachineValues(false);
         if (await TryMutationAsync(async () =>
             {
                 await apiClient!.UpdateMachineAsync(
@@ -2722,31 +2633,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineExecutionMode = value.ExecutionMode;
         MachineNcDialect = value.NcDialect;
         MachineToolDiameterOffsetKind = value.ToolDiameterOffsetKind;
-        SelectedNcViewerMachine = FindNcViewerMachine(value.NcViewerMachine);
-        MachineNcViewerModels.Clear();
-        foreach (var model in value.NcViewerModels ?? []) MachineNcViewerModels.Add(NcViewerMachineModelRow.From(model));
-        SelectedMachineNcViewerModel = null;
-        MachineUsableToolPositions = value.UsableToolPositions?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-        MachineRapidRateMillimetersPerMinute = value.RapidRateMillimetersPerMinute?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-        MachineToolChangeTimeSeconds = value.ToolChangeTimeSeconds?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-        MachineTimeFactor = value.MachineTimeFactor.ToString(CultureInfo.InvariantCulture);
+        OnPropertyChanged(nameof(MachineSimulationSummary));
         RebuildMachinePostprocessors(value.SupportedPostprocessorIds ?? []);
         ResetHaasForm();
         OnPropertyChanged(nameof(MachineFormHeading));
-    }
-
-    /// <summary>
-    /// The list entry for a stored NC viewer machine. An id this client's engine does not have
-    /// (older client than the Server) is kept as a marked entry so saving does not clear it.
-    /// </summary>
-    private NcViewerMachineOption FindNcViewerMachine(string? id)
-    {
-        if (string.IsNullOrWhiteSpace(id)) return NcViewerMachineOption.Auto;
-        var known = NcViewerMachines.FirstOrDefault(option => option.Id == id);
-        if (known is not null) return known;
-        var missing = new NcViewerMachineOption(id, $"{id} (not installed with this client)");
-        NcViewerMachines.Add(missing);
-        return missing;
     }
 
     private void PopulateHaasConfiguration(HaasConnectionSettings value)
@@ -2923,30 +2813,15 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         }
     }
 
-    private bool TryCreateMachineValues(bool active, out MachineCreate? value)
+    /// <summary>
+    /// The Machine values Setup edits. Magazine, timing, the NC viewer machine and its 3D models belong to the
+    /// Machine's simulation definition (Machine Designer): an update repeats the Machine's current values, which the
+    /// Server accepts unchanged, and a new Machine starts without them.
+    /// </summary>
+    private MachineCreate CreateMachineValues(bool active)
     {
-        value = null;
-        if (!TryParseOptionalPositiveInt(MachineUsableToolPositions, out var usableTools)
-            || !TryParseOptionalPositiveDouble(
-                MachineRapidRateMillimetersPerMinute,
-                allowZero: false,
-                out var rapidRate)
-            || !TryParseOptionalPositiveDouble(
-                MachineToolChangeTimeSeconds,
-                allowZero: true,
-                out var toolChangeSeconds)
-            || !double.TryParse(
-                MachineTimeFactor,
-                NumberStyles.Float,
-                CultureInfo.InvariantCulture,
-                out var timeFactor)
-            || !double.IsFinite(timeFactor)
-            || timeFactor <= 0)
-        {
-            return false;
-        }
-
-        value = new MachineCreate(
+        var current = editingMachineId is null ? null : SelectedMachine;
+        return new MachineCreate(
             MachineNumber,
             MachineName,
             SelectedMachineTypeForMachine?.Name ?? MachineProcessType,
@@ -2962,14 +2837,13 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             MachinePostprocessors.Where(option => option.IsSelected)
                 .Select(option => option.PostprocessorId)
                 .ToArray(),
-            usableTools,
-            rapidRate,
-            toolChangeSeconds,
-            timeFactor,
+            current?.UsableToolPositions,
+            current?.RapidRateMillimetersPerMinute,
+            current?.ToolChangeTimeSeconds,
+            current?.MachineTimeFactor ?? 1.0,
             MachineNcDialect,
-            SelectedNcViewerMachine.Id,
+            current?.NcViewerMachine,
             MachineToolDiameterOffsetKind);
-        return true;
     }
 
     private IReadOnlyList<string> SelectedWorkdays()

@@ -1,5 +1,76 @@
 # Implementation Plan
 
+## Machine Designer and mini-VMID (PRD `docs/prd-machine-designer-mini-vmid.md`; 2026-10-11; implemented locally)
+
+**Implemented:**
+- Slice A, contract, migration and tests:
+  - `docs/machine-simulation-definition.md`;
+  - the shared model, validator, kinematics and compiler (`shared/Meimad.Planner.NcEngine/MachineDefinitions`);
+  - engine runtime registration (`NcEngineRuntime.UseMachines`);
+  - schema v114 `machine_simulation_definitions` and `machine_simulation_assets`, with a backfill that publishes
+    every Machine's current values unchanged;
+  - the definition and asset endpoints, the published list, and the single write path (Machine PATCH refuses changed
+    owned fields);
+  - recovery-set inclusion of the mesh files.
+- Slice B, Machine Designer window:
+  - tree, inspector tabs, 3D view, jog and *Zero all*;
+  - Save draft, Validate, Publish and Reload, with read-only mode and stale-change messages;
+  - Setup → Machines no longer edits the NC viewer machine, magazine, timing or 3D models; it shows a read-only
+    summary and the *Open Machine Designer…* button.
+- Slice C, geometry:
+  - GLB/STL upload with content checks and hash de-duplication; STEP tessellated on the client;
+  - GLB reading on the client (node transforms, metres to mm, Draco/meshopt refused);
+  - per-mesh color, opacity, visibility, wireframe, scale and collisionParticipation;
+  - missing or bad meshes listed as errors with the primitive kept.
+- Slice D, NC viewer: compiled definitions registered and selected per Machine, definition meshes drawn on their
+  nodes, physical axis labels, and "Machine collisions not checked" in the Axes card.
+- Slice E: the Setup STL-row editor and the Setup NC-viewer-machine list are removed, docs are updated, and he/ru
+  catalogs are extended.
+
+**Verified locally (2026-10-11):**
+- `MachineSimulationDefinitionTests` (16), shared library:
+  - C# kinematics: X = −100 and A = +30 transforms and nested A→C order;
+  - the C# evaluator equals `CncKinematics` on the compiled chain;
+  - every validation rule;
+  - every installed machine round-trips through `FromTemplate`/`Compile` with an identical engine chain and MRZP;
+  - Mazak A→B;
+  - runtime registration analyzes like the template;
+  - a rejected definition leaves the installed machines.
+- `MachineSimulationApiTests`: initial definition; draft versus publish; projection and estimates; stale and 428;
+  invalid publish; refused new path; permissions and sign-in; assets (dedupe, type and content checks, per-Machine
+  isolation, recovery set, publish with `asset_missing`); the published list.
+- `MachineSimulationDefinitionMigrationTests`: backfill of a Mazak with models, a manual Machine and a lathe;
+  unchanged Machine rows; checks; cascade; non-planning revision.
+- Updated tests: `MachineApiTests`, `MachineNcViewerModelApiTests` and `GCodeReleaseApiTests` now publish timing
+  through the definition.
+- `MachineDesignerTests` (10), client:
+  - page kinematics equal to C#; editor round trip; dirty, number and jog behaviour;
+  - save with tag, publish confirmation and the stale message;
+  - read-only mode; add/remove/start-from-template;
+  - scene mesh URLs and errors; GLB reading; compiled selection and registration; mesh scale.
+- Updated tests: `SetupViewModelTests` and `HaasSetupViewTests`.
+- Full suites:
+  - Server: 1439 passed, 5 skipped, before the published-list endpoint was added; the Machine simulation tests were
+    rerun after it.
+  - Client: 500 passed.
+- The designer page was rendered in headless Chrome with a scripted scene (Haas VF-3SS).
+
+**Not verified:** the designer and the viewer inside the WPF WebView2 on the factory PCs, real GLB exports of the
+machine models, and any physical position (all carried-over positions are flagged unverified).
+
+**Decisions (reversible, owner to confirm):**
+- Node frames carry no rotation in schema v1 (rotated CAD parts are aligned per mesh).
+- A tool-mount rotation is not allowed. A workpiece-mount rotation is display-only.
+- The compiled machine is shifted so the tool mount at zero is the machine origin. The workpiece mount becomes the
+  engine MRZP.
+- Legacy file paths may be kept but never added.
+- Mesh files live below the release root so the recovery set covers them.
+- Server NC analysis stays on the template, because the stored analysis is machine-independent.
+- Machine create still accepts the owned values as the first definition. The Windows form no longer sends them.
+- No machine collision solver: `collisionParticipation` and `ignoredPairs` are stored for a later solver.
+- The PRD asks the linear-axis editor to require speeds. A missing rapid rate is a warning, so machines whose
+  installed definition states none can still be published.
+
 ## Real machine kinematics for machine models (2026-10-10; implemented locally)
 
 **Implemented:** `haas-vf-3ss`, `fanuc-0i-mc-vmc-3axis` and `fanuc-0i-mc-vmc-4axis-a` model the table axes physically (`y-saddle` Y and `x-table` X with negative directions under the workpiece, `column` fixed, `z-head` Z); the engine and the Server evaluate the chain with rotary values only, so their results do not change. `meimad-machine-frame.js` sets the part frame to the workpiece mount at all joints just before each draw (the captured renderer emits `beforeRender`), so a travelling table carries the toolpath, stock and fixtures. **Verified:** the NC engine and machine Server tests, `NcViewerAxesAndSceneCoreTests` (tool tip stays on the toolpath while the table moves), full client suite. **Not verified:** the drawn view in WebView2.

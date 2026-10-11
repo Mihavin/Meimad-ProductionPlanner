@@ -14,7 +14,9 @@ public sealed class LocalizationCatalogTests
     // names, control-panel tokens, axis letters and units.
     private static readonly HashSet<string> UntranslatedXamlLiterals = new(StringComparer.Ordinal)
     {
-        "English", "עברית", "Русский", "MEIMAD", "Meimad Production Planner", "SHA-256"
+        "English", "עברית", "Русский", "MEIMAD", "Meimad Production Planner", "SHA-256",
+        // Axis letters of coordinate fields (Machine Designer) are names, not text.
+        "X", "Y", "Z"
     };
 
     private static readonly XNamespace Presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";

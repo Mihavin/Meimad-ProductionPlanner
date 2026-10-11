@@ -54,7 +54,9 @@ internal sealed class SignInMiddleware(RequestDelegate next)
         if (OpenPrefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             || (HttpMethods.IsGet(context.Request.Method)
                 && Kitaron.KitaronConnectionEndpoints.IsLocalRequest(context)
-                && LocalReadPrefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))))
+                && LocalReadPrefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                // Machine definitions and meshes are not part of the upgrade comparison.
+                && !path.Contains("/simulation-", StringComparison.OrdinalIgnoreCase)))
         {
             await next(context);
             return;

@@ -277,6 +277,9 @@ public static class ServerApplication
         builder.Services.AddSingleton<MaterialReconciliationService>();
         builder.Services.AddSingleton<IMachineRepository, SqliteMachineRepository>();
         builder.Services.AddSingleton<MachineService>();
+        builder.Services.AddSingleton<IMachineSimulationRepository, SqliteMachineSimulationRepository>();
+        builder.Services.AddSingleton<MachineSimulationService>();
+        builder.Services.AddSingleton<MachineSimulationAssetStore>();
         builder.Services.AddSingleton<IMachineDowntimeRepository, SqliteMachineDowntimeRepository>();
         builder.Services.AddSingleton<MachineDowntimeService>();
         builder.Services.AddSingleton<IMachineTypeRepository, SqliteMachineTypeRepository>();
@@ -523,6 +526,7 @@ public static class ServerApplication
         application.MapLocalAiPilotEndpoints();
         application.MapLocalCorpusEndpoints();
         application.MapMachineEndpoints();
+        application.MapMachineSimulationEndpoints();
         application.MapCncEndpoints();
         application.MapCncVerificationEndpoints();
         application.MapHaasEndpoints();

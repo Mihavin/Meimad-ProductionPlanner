@@ -749,7 +749,7 @@ public sealed class MachineApiTests
     }
 
     [Fact]
-    public async Task Machine_NC_viewer_machine_round_trips_and_must_be_an_installed_engine_definition()
+    public async Task Machine_NC_viewer_machine_is_published_by_the_definition_and_must_be_an_installed_engine_definition()
     {
         await RunWithServerAsync(async (application, client) =>
         {
@@ -769,36 +769,52 @@ public sealed class MachineApiTests
             Assert.Equal(HttpStatusCode.UnprocessableEntity, rejectedGrammar.StatusCode);
             Assert.Contains("invalid_nc_viewer_machine", await rejectedGrammar.Content.ReadAsStringAsync(), StringComparison.Ordinal);
 
-            // A well-formed id must exist in the NC engine catalog installed with the Server.
-            using var unknown = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
-            { Content = JsonContent.Create(new { ncViewerMachine = "no-such-machine" }) };
-            unknown.Headers.IfMatch.Add(new EntityTagHeaderValue(created.Headers.ETag!.Tag));
-            using var rejectedUnknown = await client.SendAsync(unknown);
-            Assert.Equal(HttpStatusCode.UnprocessableEntity, rejectedUnknown.StatusCode);
-            var unknownBody = await rejectedUnknown.Content.ReadAsStringAsync();
+            // A created Machine's id must exist in the NC engine catalog installed with the Server.
+            using var unknown = await client.PostAsJsonAsync("/api/v1/machines", new
+            {
+                number = "M-UNKNOWN", name = "Unknown viewer machine", processType = "mill", capabilities = Array.Empty<string>(),
+                workingCalendarId = "calendar-1", isActive = true, displayEnabled = true, ncViewerMachine = "no-such-machine"
+            });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, unknown.StatusCode);
+            var unknownBody = await unknown.Content.ReadAsStringAsync();
             Assert.Contains("unknown_nc_viewer_machine", unknownBody, StringComparison.Ordinal);
             Assert.Contains("mazak-variaxis-i-500", unknownBody, StringComparison.Ordinal);
 
+            // The NC viewer machine is the definition's template: PATCH may repeat it but not change it.
             using var change = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
             { Content = JsonContent.Create(new { ncViewerMachine = "haas-vf-3ss" }) };
             change.Headers.IfMatch.Add(new EntityTagHeaderValue(created.Headers.ETag!.Tag));
-            using var changed = await client.SendAsync(change);
-            Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
-            using var changedJson = JsonDocument.Parse(await changed.Content.ReadAsStringAsync());
-            Assert.Equal("haas-vf-3ss", changedJson.RootElement.GetProperty("ncViewerMachine").GetString());
+            using var refused = await client.SendAsync(change);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+            Assert.Contains("machine_definition_owned_field", await refused.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+            using var repeat = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
+            { Content = JsonContent.Create(new { name = "Renamed", ncViewerMachine = (string?)null }) };
+            repeat.Headers.IfMatch.Add(new EntityTagHeaderValue(created.Headers.ETag!.Tag));
+            using var repeated = await client.SendAsync(repeat);
+            Assert.Equal(HttpStatusCode.OK, repeated.StatusCode);
 
+            // Publishing a template that is not installed is refused; an installed one becomes the Machine's value.
+            var current = await Machines.MachineSimulationTestApi.GetAsync(client, id);
+            var draft = current["draft"]!.AsObject();
+            draft["template"] = "no-such-machine";
+            using (var saved = await Machines.MachineSimulationTestApi.PutDraftAsync(client, id, current["etag"]!.GetValue<string>(), draft))
+            {
+                Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+                Assert.Contains("template_not_installed", await saved.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+                using var notPublished = await Machines.MachineSimulationTestApi.PublishAsync(client, id, saved.Headers.ETag!.Tag);
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, notPublished.StatusCode);
+                Assert.Contains("machine_definition_invalid", await notPublished.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+            }
+            await Machines.MachineSimulationTestApi.ChangeAndPublishAsync(client, id, definition => definition["template"] = "haas-vf-3ss");
             using var listed = await client.GetAsync("/api/v1/machines");
             using var listedJson = JsonDocument.Parse(await listed.Content.ReadAsStringAsync());
             var item = listedJson.RootElement.GetProperty("items").EnumerateArray()
                 .Single(machine => machine.GetProperty("machineId").GetString() == id);
             Assert.Equal("haas-vf-3ss", item.GetProperty("ncViewerMachine").GetString());
 
-            // "auto" and null both mean automatic detection.
-            using var clear = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
-            { Content = JsonContent.Create(new { ncViewerMachine = "auto" }) };
-            clear.Headers.IfMatch.Add(new EntityTagHeaderValue(changed.Headers.ETag!.Tag));
-            using var cleared = await client.SendAsync(clear);
-            Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+            // No template means automatic detection.
+            await Machines.MachineSimulationTestApi.ChangeAndPublishAsync(client, id, definition => definition.Remove("template"));
+            using var cleared = await client.GetAsync($"/api/v1/machines/{id}");
             using var clearedJson = JsonDocument.Parse(await cleared.Content.ReadAsStringAsync());
             Assert.Equal(JsonValueKind.Null, clearedJson.RootElement.GetProperty("ncViewerMachine").ValueKind);
         });

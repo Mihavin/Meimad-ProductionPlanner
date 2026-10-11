@@ -1977,10 +1977,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             ? []
             : await NcViewer.NcViewerRequests.MachinesAsync(client, CancellationToken.None);
         var dialect = NcViewer.NcViewerDialects.Resolve(machines, null, SelectedReleasePostprocessor?.PostprocessorId);
-        var viewerMachine = NcViewer.NcViewerMachines.Resolve(machines, null, SelectedReleasePostprocessor?.PostprocessorId);
         var scene = client is null
             ? null
             : await NcViewer.NcViewerScenes.ForOperationAsync(client, caseId, operationId, null, machines, context);
+        var viewerMachine = NcViewer.NcViewerMachines.Resolve(machines, null, SelectedReleasePostprocessor?.PostprocessorId, scene?.Compiled);
 
         NcTextDocument document;
         string name;

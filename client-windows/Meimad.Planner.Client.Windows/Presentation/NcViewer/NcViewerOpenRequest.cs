@@ -163,17 +163,23 @@ internal static class NcViewerMachines
     /// machine configured on the Machines that support the postprocessor (Machines left on
     /// auto-detect do not count as a disagreement); otherwise null (the engine detects).
     /// </summary>
-    internal static string? Resolve(IReadOnlyList<PlannerMachine> machines, string? machineId, string? postprocessorId)
+    internal static string? Resolve(
+        IReadOnlyList<PlannerMachine> machines, string? machineId, string? postprocessorId,
+        IReadOnlyList<NcViewerCompiledMachine>? compiled = null)
     {
+        // A Machine with a published Machine Designer definition is interpreted as that definition.
+        string? Selection(PlannerMachine machine) =>
+            compiled?.FirstOrDefault(value => value.MachineId == machine.MachineId)?.CompiledId
+            ?? Normalize(machine.NcViewerMachine);
         if (machineId is not null
             && machines.FirstOrDefault(machine => machine.MachineId == machineId) is { } machine)
         {
-            return Normalize(machine.NcViewerMachine);
+            return Selection(machine);
         }
         if (postprocessorId is null) return null;
         var selections = machines
             .Where(value => value.SupportedPostprocessorIds?.Contains(postprocessorId, StringComparer.Ordinal) == true)
-            .Select(value => Normalize(value.NcViewerMachine))
+            .Select(Selection)
             .OfType<string>()
             .Distinct(StringComparer.Ordinal)
             .ToArray();

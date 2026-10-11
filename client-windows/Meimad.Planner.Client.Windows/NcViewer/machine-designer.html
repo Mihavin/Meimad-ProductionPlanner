@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'">
+  <title>Machine Designer</title>
+  <style>
+    :root {
+      --bg: #0c1118;
+      --surface: rgba(18, 26, 36, 0.92);
+      --border: #405064;
+      --text: #e8eff6;
+      --muted: #9eafc1;
+      --accent: #6adee1;
+      --warning: #f0b429;
+      --danger: #ff7b72;
+      color-scheme: dark;
+    }
+    :root[data-workbench-theme="light"] {
+      --bg: #edf0f1;
+      --surface: rgba(255, 255, 255, 0.94);
+      --border: #b9c3c8;
+      --text: #1d2a33;
+      --muted: #52606d;
+      --accent: #0b7d80;
+      --warning: #8a5a00;
+      --danger: #b42318;
+      color-scheme: light;
+    }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 12px/1.4 "Segoe UI", sans-serif; }
+    #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    .panel { position: absolute; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 6px 9px; }
+    #readout { top: 8px; left: 8px; max-width: 60%; }
+    #readout .axes { font-family: Consolas, monospace; font-size: 13px; }
+    #readout .note { color: var(--muted); margin-top: 3px; }
+    #readout .warning { color: var(--warning); margin-top: 3px; }
+    #tools { top: 8px; right: 8px; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: 45%; }
+    #tools button { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 3px; padding: 3px 8px; font: inherit; cursor: pointer; }
+    #tools button:hover, #tools button:focus-visible { border-color: var(--accent); outline: none; }
+    #tools label { display: flex; align-items: center; gap: 3px; margin-left: 4px; }
+    #problems { bottom: 8px; left: 8px; right: 8px; max-height: 30%; overflow: auto; color: var(--danger); }
+    #problems:empty { display: none; }
+    #problems div::before { content: "⚠ "; }
+    #legend { bottom: 8px; right: 8px; color: var(--muted); }
+    #problems:not(:empty) ~ #legend { display: none; }
+  </style>
+</head>
+<body>
+  <canvas id="view" aria-label="Machine 3D view"></canvas>
+  <div id="readout" class="panel" role="status">
+    <div id="axes" class="axes" translate="no">All axes 0</div>
+    <div id="calibration" class="warning" hidden></div>
+    <div class="note"><span aria-hidden="true">⚠ </span><span data-i18n>Machine collisions not checked.</span></div>
+  </div>
+  <div id="tools" class="panel">
+    <button type="button" data-view="iso" title="Isometric view" data-i18n data-i18n-title>Iso</button>
+    <button type="button" data-view="front" title="View along +Y" data-i18n data-i18n-title>Front</button>
+    <button type="button" data-view="right" title="View along −X" data-i18n data-i18n-title>Right</button>
+    <button type="button" data-view="top" title="View along −Z" data-i18n data-i18n-title>Top</button>
+    <button type="button" id="fit" title="Fit the machine in the view (F)" data-i18n data-i18n-title>Fit</button>
+    <label><input type="checkbox" id="showMeshes" checked> <span data-i18n>Meshes</span></label>
+    <label><input type="checkbox" id="showPrimitives" checked> <span data-i18n>Boxes</span></label>
+  </div>
+  <div id="problems" class="panel" role="alert"></div>
+  <div id="legend" class="panel" data-i18n>Click a component to select it · drag to rotate · right-drag to pan · wheel to zoom · ▲ tool mount · XYZ workpiece mount</div>
+  <script src="./meimad-material.js"></script>
+  <script src="./meimad-scene-core.js"></script>
+  <script src="./meimad-designer-core.js"></script>
+  <script type="module" src="./meimad-designer.js"></script>
+</body>
+</html>

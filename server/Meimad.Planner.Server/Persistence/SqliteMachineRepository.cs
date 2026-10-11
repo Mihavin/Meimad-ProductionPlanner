@@ -127,6 +127,15 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             transaction,
             machine,
             cancellationToken);
+        // The created Machine's values become its first (published) simulation definition, the single write path from now on.
+        var stored = Stored(machine, paths);
+        await SqliteMachineSimulationRepository.InsertInitialAsync(
+            connection, transaction, machine.MachineId,
+            MachineSimulationDefinitions.Initial(
+                machine.MachineId, machine.Name, machine.NcViewerMachine, machine.UsableToolPositions,
+                machine.RapidRateMillimetersPerMinute, machine.ToolChangeTimeSeconds, machine.MachineTimeFactor,
+                stored.NcViewerModels),
+            machine.CreatedAt, actor, cancellationToken);
         await SqliteNcCycleEstimateStore.RecalculateForMachineAsync(
             connection, transaction, machine.MachineId, machine.UpdatedAt,
             actor, "machine_created", cancellationToken);

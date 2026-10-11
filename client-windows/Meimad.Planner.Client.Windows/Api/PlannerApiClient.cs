@@ -532,6 +532,26 @@ internal interface IPlannerApiClient : IDisposable
         throw new NotSupportedException();
     Task DeleteCaseOperationCamSetupAsync(string caseId, string caseOperationId, string entityTag, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
+
+    /// <summary>The Machine's simulation definition (draft, published copy, issues) with its entity tag.</summary>
+    Task<MachineSimulationResource> GetMachineSimulationAsync(string machineId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    /// <summary>Saves the draft (If-Match the draft's entity tag); issues are returned, not enforced.</summary>
+    Task<MachineSimulationResource> SaveMachineSimulationDraftAsync(string machineId, Meimad.Planner.NcEngine.MachineDefinitions.MachineSimulationDefinition draft, string entityTag, string clientId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    Task<IReadOnlyList<MachineSimulationIssueDto>> ValidateMachineSimulationAsync(string machineId, Meimad.Planner.NcEngine.MachineDefinitions.MachineSimulationDefinition definition, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    /// <summary>Publishes the saved draft; the Server refuses a definition with errors.</summary>
+    Task<MachineSimulationResource> PublishMachineSimulationAsync(string machineId, string entityTag, string clientId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    Task<IReadOnlyList<PublishedMachineSimulation>> ListPublishedMachineSimulationsAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    Task<IReadOnlyList<MachineSimulationAssetDto>> ListMachineSimulationAssetsAsync(string machineId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    Task<MachineSimulationAssetDto> UploadMachineSimulationAssetAsync(string machineId, string fileName, Stream content, string clientId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    Task<byte[]> DownloadMachineSimulationAssetAsync(string machineId, string assetId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
     Task DeleteCaseModelFileAsync(string caseId, string caseModelFileId, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
     Task DeleteOrderAsync(string orderId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -2814,6 +2834,72 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+    }
+
+    private static string MachineSimulationPath(string machineId) =>
+        $"api/v1/machines/{Uri.EscapeDataString(machineId)}/simulation-definition";
+
+    public async Task<MachineSimulationResource> GetMachineSimulationAsync(string machineId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(MachineSimulationPath(machineId), cancellationToken);
+        var value = await ReadSuccessAsync<MachineSimulationRecordDto>(response, cancellationToken);
+        return new MachineSimulationResource(value, RequiredEntityTag(response));
+    }
+
+    public async Task<MachineSimulationResource> SaveMachineSimulationDraftAsync(
+        string machineId, Meimad.Planner.NcEngine.MachineDefinitions.MachineSimulationDefinition draft, string entityTag,
+        string clientId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, MachineSimulationPath(machineId), clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Content = new StringContent(draft.ToJson(), Encoding.UTF8, "application/json");
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        var saved = await ReadSuccessAsync<MachineSimulationRecordDto>(response, cancellationToken);
+        return new MachineSimulationResource(saved, RequiredEntityTag(response));
+    }
+
+    public async Task<IReadOnlyList<MachineSimulationIssueDto>> ValidateMachineSimulationAsync(
+        string machineId, Meimad.Planner.NcEngine.MachineDefinitions.MachineSimulationDefinition definition,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = new StringContent(definition.ToJson(), Encoding.UTF8, "application/json");
+        using var response = await httpClient.PostAsync(MachineSimulationPath(machineId) + "/validate", content, cancellationToken);
+        return (await ReadSuccessAsync<MachineSimulationIssueList>(response, cancellationToken)).Issues;
+    }
+
+    public async Task<MachineSimulationResource> PublishMachineSimulationAsync(
+        string machineId, string entityTag, string clientId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, MachineSimulationPath(machineId) + "/publish", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        var published = await ReadSuccessAsync<MachineSimulationRecordDto>(response, cancellationToken);
+        return new MachineSimulationResource(published, RequiredEntityTag(response));
+    }
+
+    public Task<IReadOnlyList<PublishedMachineSimulation>> ListPublishedMachineSimulationsAsync(CancellationToken cancellationToken = default) =>
+        ReadListAsync<PublishedMachineSimulation>("api/v1/machines/simulation-definitions", cancellationToken);
+
+    public Task<IReadOnlyList<MachineSimulationAssetDto>> ListMachineSimulationAssetsAsync(string machineId, CancellationToken cancellationToken = default) =>
+        ReadListAsync<MachineSimulationAssetDto>($"api/v1/machines/{Uri.EscapeDataString(machineId)}/simulation-assets", cancellationToken);
+
+    public async Task<MachineSimulationAssetDto> UploadMachineSimulationAssetAsync(
+        string machineId, string fileName, Stream content, string clientId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post,
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/simulation-assets?name={Uri.EscapeDataString(Path.GetFileName(fileName))}",
+            clientId);
+        request.Content = new StreamContent(content);
+        request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<MachineSimulationAssetDto>(response, cancellationToken);
+    }
+
+    public async Task<byte[]> DownloadMachineSimulationAssetAsync(string machineId, string assetId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/simulation-assets/{Uri.EscapeDataString(assetId)}/content", cancellationToken);
+        return await ReadBytesSuccessAsync(response, cancellationToken);
     }
 
     public Task DeleteCaseModelFileAsync(string caseId, string caseModelFileId, string clientId, long generation, CancellationToken token = default) =>

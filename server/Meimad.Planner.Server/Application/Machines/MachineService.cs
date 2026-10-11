@@ -115,6 +115,7 @@ internal sealed class MachineService
             Select(command.ToolDiameterOffsetKind, current.ToolDiameterOffsetKind),
             // Present ncViewerModels replace the whole list; absent ones keep the stored list.
             Select(command.NcViewerModels, MachineNcViewerModels.ToInputs(current.NcViewerModels))));
+        RequireDefinitionOwnedFieldsUnchanged(command, values, current);
         if (command.NcViewerMachine.IsSpecified) RequireInstalledNcViewerMachine(values.NcViewerMachine);
         if (!string.Equals(values.NcDialect, current.NcDialect, StringComparison.Ordinal)
             && verification is not null)
@@ -166,6 +167,32 @@ internal sealed class MachineService
             saved.ExecutionMode,
             saved.SupportedPostprocessorIds?.Count ?? 0);
         return saved;
+    }
+
+    /// <summary>
+    /// Magazine, timing, the NC viewer machine and the NC viewer models are projections of the Machine's published
+    /// simulation definition (schema v114): only the Machine Designer changes them. A PATCH may repeat the current value
+    /// (older clients send the whole form) but never change it.
+    /// </summary>
+    private static void RequireDefinitionOwnedFieldsUnchanged(UpdateMachineCommand command, ValidatedMachineValues values, Machine current)
+    {
+        var issues = new List<MachineValidationIssue>();
+        void Check(bool specified, bool changed, string field)
+        {
+            if (specified && changed)
+                issues.Add(new MachineValidationIssue(field, "machine_definition_owned_field",
+                    $"{field} is part of the Machine's simulation definition; change it in the Machine Designer and publish the definition."));
+        }
+        Check(command.UsableToolPositions.IsSpecified, values.UsableToolPositions != current.UsableToolPositions, "usableToolPositions");
+        Check(command.RapidRateMillimetersPerMinute.IsSpecified,
+            values.RapidRateMillimetersPerMinute != current.RapidRateMillimetersPerMinute, "rapidRateMillimetersPerMinute");
+        Check(command.ToolChangeTimeSeconds.IsSpecified, values.ToolChangeTimeSeconds != current.ToolChangeTimeSeconds, "toolChangeTimeSeconds");
+        Check(command.MachineTimeFactor.IsSpecified, values.MachineTimeFactor != current.MachineTimeFactor, "machineTimeFactor");
+        Check(command.NcViewerMachine.IsSpecified,
+            !string.Equals(values.NcViewerMachine, current.NcViewerMachine, StringComparison.Ordinal), "ncViewerMachine");
+        Check(command.NcViewerModels.IsSpecified,
+            MachineNcViewerModels.Serialize(values.NcViewerModels) != MachineNcViewerModels.Serialize(current.NcViewerModels), "ncViewerModels");
+        if (issues.Count > 0) throw new MachineValidationException(issues);
     }
 
     private static MachineValues ToValues(CreateMachineCommand command) => new(

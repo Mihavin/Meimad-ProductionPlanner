@@ -171,7 +171,10 @@ internal sealed record NcViewerMachineModel(
     PlannerXyz? OffsetMm = null,
     PlannerXyz? RotationDeg = null,
     string? Color = null,
-    double? Opacity = null);
+    double? Opacity = null,
+    // Machine Designer meshes only (schema v114); never part of the Machine API.
+    [property: JsonIgnore] double? Scale = null,
+    [property: JsonIgnore] bool Wireframe = false);
 
 /// <summary>
 /// The Operation's Cimatron setup (schema v113): the Work CS of its NC programs in the part-model
@@ -190,6 +193,48 @@ internal sealed record CaseOperationCamSetup(
     string? UpdatedBy = null);
 
 internal sealed record CaseOperationCamSetupResource(CaseOperationCamSetup Value, string EntityTag);
+
+/// <summary>A validation finding of a Machine simulation definition; <c>error</c> blocks publishing.</summary>
+internal sealed record MachineSimulationIssueDto(string Path, string Code, string Message, string Severity)
+{
+    internal bool IsError => Severity == "error";
+}
+
+/// <summary>
+/// A Machine's simulation definition (schema v114, Machine Designer): the draft being edited and the published copy
+/// the NC viewer, the Planner and NC analysis use, with the draft's validation issues.
+/// </summary>
+internal sealed record MachineSimulationRecordDto(
+    string MachineId,
+    Meimad.Planner.NcEngine.MachineDefinitions.MachineSimulationDefinition Draft,
+    int DraftVersion,
+    Meimad.Planner.NcEngine.MachineDefinitions.MachineSimulationDefinition? Published,
+    int PublishedVersion,
+    DateTimeOffset? PublishedAt,
+    string? PublishedBy,
+    DateTimeOffset UpdatedAt,
+    string? UpdatedBy,
+    bool HasUnpublishedChanges,
+    IReadOnlyList<MachineSimulationIssueDto> Issues);
+
+internal sealed record MachineSimulationResource(MachineSimulationRecordDto Value, string EntityTag);
+
+internal sealed record MachineSimulationIssueList(IReadOnlyList<MachineSimulationIssueDto> Issues);
+
+/// <summary>A Machine mesh in the Server asset store, referred to by its id.</summary>
+internal sealed record MachineSimulationAssetDto(
+    string AssetId,
+    string FileName,
+    string MediaType,
+    long SizeBytes,
+    string Sha256,
+    DateTimeOffset CreatedAt,
+    string? CreatedBy);
+
+internal sealed record PublishedMachineSimulation(
+    string MachineId,
+    int PublishedVersion,
+    Meimad.Planner.NcEngine.MachineDefinitions.MachineSimulationDefinition Published);
 
 internal sealed record CaseOperationCamSetupWrite(
     string Source,

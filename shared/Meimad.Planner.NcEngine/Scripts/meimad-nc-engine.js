@@ -82,21 +82,37 @@ const isOkuma = (machine) => machine?.controlDefinition?.translation === OKUMA_O
 const CUTTING_KINDS = new Set(["feed", "arc-cw", "arc-ccw"]);
 
 let registryCache;
+let runtimeMachineFolders = [];
 let parameterCache;
 let lastPacked = "";
 
+function loadMachines(extraFolders) {
+  return loadRegistry({
+    machineFolders: [path.join(__dirname, "machines"), ...extraFolders.map((name) => path.join(__dirname, name))],
+    controlFolders: [path.join(__dirname, "controls")]
+  });
+}
+
 function registry() {
   if (!registryCache) {
-    const loaded = loadRegistry({
-      machineFolders: [path.join(__dirname, "machines")],
-      controlFolders: [path.join(__dirname, "controls")]
-    });
+    const loaded = loadMachines(runtimeMachineFolders);
     if (loaded.errors.length) {
       throw new Error(`Machine definitions are invalid: ${loaded.errors.join(" | ")}`);
     }
     registryCache = loaded;
   }
   return registryCache;
+}
+
+// Registers the host's in-memory Machine Designer definitions (folders below meimad/). When one is
+// rejected none is registered, so the installed machines keep working; returns the rejections.
+function reloadMachines(json) {
+  const folders = JSON.parse(json || "[]");
+  const loaded = folders.length ? loadMachines(folders) : { errors: [] };
+  registryCache = undefined;
+  runtimeMachineFolders = loaded.errors.length ? [] : folders;
+  registry();
+  return JSON.stringify(loaded.errors);
 }
 
 function machineParameters(text) {
@@ -1381,4 +1397,4 @@ function prepare(requestJson) {
   });
 }
 
-module.exports = { analyze, parsePreview, takePacked, toolTable, toolDefinitionsFromRows, saveToolTable, machines, parseToolTableXml, sanitizeOffsets, prepare };
+module.exports = { analyze, parsePreview, takePacked, toolTable, toolDefinitionsFromRows, saveToolTable, machines, parseToolTableXml, sanitizeOffsets, prepare, reloadMachines };

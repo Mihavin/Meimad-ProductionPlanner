@@ -75,7 +75,7 @@ internal static class NcViewerRequests
             SourceDescription: Describe(release),
             NcDialect: NcViewerDialects.Resolve(machines, machineId, release?.PostprocessorId),
             FormatService: FormatService(api),
-            MachineSelection: NcViewerMachines.Resolve(machines, machineId, release?.PostprocessorId),
+            MachineSelection: NcViewerMachines.Resolve(machines, machineId, release?.PostprocessorId, scene.Compiled),
             ProgramFolders: programFolders,
             OperationToolTable: operationToolTable,
             SubprogramFolder: subprogramFolder,

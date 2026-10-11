@@ -162,7 +162,37 @@ Subprograms a lathe program calls (`M98 P9100`, `G65`, Haas `M97`) are read from
 
 **Axes and travel.** The *Axes* card shows where every machine axis is at the selected row, while you single-step and while playback runs; tick **Show on the 3D view** for a readout in the corner of the toolpath view. Below it, *Travel used by the program* lists the lowest and highest position each axis reaches over the whole program next to the machine's travel. **Outside travel** (✖) gives the amount and the row; click a line to open that row. Untick **Include rapid moves** to check only cutting moves. The positions depend on the work offsets: if the card says an offset has no value, enter the real values under *Home offsets* or *Initial # vars* first.
 
-**Machine models, fixtures and rest material.** In Setup → Machines, under **NC viewer 3D models (STL)**, use **Add STL...** for each machine part (base, table, head, spindle), choose the kinematic **Node** it moves with, and enter its offset (mm), rotation (degrees, about X, then Y, then Z), color and opacity; then **Save machine**. The *Machine & setup* card in the viewer draws them in the Machine view.
+**Machine Designer.** In Setup → Machines select a Machine and click **Open Machine Designer…**. The NC viewer machine,
+the tool magazine, the timing values and the 3D models are changed only here; the Machine form shows them read-only.
+
+1. The tree on the left lists the machine's components (base, column, head, saddle, table, trunnion…) as they stand
+   with **all axes at zero**.
+2. Select a component (in the tree or by clicking it in the 3D view). On **Component** you set:
+   - its parent and its position in the parent at zero (mm);
+   - its joint:
+     - **linear**: the physical axis name, for example X, and the positive direction;
+     - **rotary**: the axis name, the direction and a point on the rotation line;
+   - the travel limits, and a placeholder shape.
+3. **Geometry** → **Import mesh…** stores GLB, STL or STEP files on the Server (STEP is converted to STL on your PC).
+   Set each mesh's position, rotation, scale (25.4 for a model drawn in inches), color, opacity and visibility. A mesh
+   that is still a file path from an older version shows **Store on Server**.
+4. **General** sets the NC viewer machine (controller and cycles) and the axis names the controller uses (A=B on the
+   Mazak). It also sets the tool and workpiece mounts, and whether the zero, the rotary lines and the mounts were
+   checked on the machine. **Start from this installed machine…** fills in the components of a bundled machine as a
+   starting point.
+5. **Timing & Tool Magazine** holds capacity, usable tool positions, tool-change time, rapid rate and time factor.
+   Leave unknown values empty.
+6. Move the jog sliders, or type a value, to check that every part moves the right way; **Zero all** returns to the
+   reference pose.
+7. **Save draft**, **Validate** (errors block publishing, warnings do not; double-click an item to jump to its
+   component), then **Publish**. Only the published definition is used by the NC viewer and by planning.
+
+Machine collisions are **not** checked: the viewer checks axis travel only. Positions taken from a bundled machine are
+placeholders until you verify them on the real machine. Without the setup permission the designer opens read-only (you
+can still jog).
+
+**Machine models, fixtures and rest material.** The *Machine & setup* card in the viewer draws the published Machine
+Designer meshes on their components in the Machine view.
 
 For an Operation machined in Cimatron, open Case → Operations, select the Operation and use the **Cimatron setup** card:
 1. **Import from Cimatron...** links the STL or STEP files exported from Cimatron. Files named `STOCK…` or kept in an `NC\STOCK` folder become rest material, everything else a fixture; **Fixture / rest material** switches a file, **Unlink file** removes the link (the file itself is never changed).

@@ -1,0 +1,318 @@
+<Window Style="{DynamicResource {x:Type Window}}" x:Class="Meimad.Planner.Client.Windows.Views.MachineDesignerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        xmlns:md="clr-namespace:Meimad.Planner.Client.Windows.Presentation.MachineDesigner"
+        Title="{Binding Title}" Icon="/Meimad.Planner.Client.Windows;component/Assets/MeimadPlanner.ico"
+        Width="1500" Height="940" MinWidth="1100" MinHeight="650"
+        WindowStartupLocation="CenterScreen" Background="{DynamicResource CanvasBrush}">
+    <Window.Resources>
+        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="Padding" Value="10,3" />
+        </Style>
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,6,0,2" />
+        </Style>
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Margin" Value="0,12,0,2" />
+        </Style>
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,2,0,4" />
+        </Style>
+        <!-- X, Y and Z of a position, direction or rotation. -->
+        <DataTemplate DataType="{x:Type md:DesignerVector}">
+            <UniformGrid Columns="3">
+                <DockPanel Margin="0,0,4,0"><TextBlock Text="X" Width="14" VerticalAlignment="Center"/><TextBox Text="{Binding X, UpdateSourceTrigger=PropertyChanged, Delay=300}" AutomationProperties.Name="X"/></DockPanel>
+                <DockPanel Margin="0,0,4,0"><TextBlock Text="Y" Width="14" VerticalAlignment="Center"/><TextBox Text="{Binding Y, UpdateSourceTrigger=PropertyChanged, Delay=300}" AutomationProperties.Name="Y"/></DockPanel>
+                <DockPanel><TextBlock Text="Z" Width="14" VerticalAlignment="Center"/><TextBox Text="{Binding Z, UpdateSourceTrigger=PropertyChanged, Delay=300}" AutomationProperties.Name="Z"/></DockPanel>
+            </UniformGrid>
+        </DataTemplate>
+        <BooleanToVisibilityConverter x:Key="Visible" />
+    </Window.Resources>
+    <Grid Margin="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="260" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="400" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Draft workflow -->
+        <DockPanel Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,8" LastChildFill="False">
+            <Button Content="Save draft" Command="{Binding SaveCommand}" ToolTip="Save the draft on the Server; nothing else uses it until it is published" />
+            <Button Content="Validate" Command="{Binding ValidateCommand}" ToolTip="Check the definition with the Server's rules" />
+            <Button Content="Publish" Command="{Binding PublishCommand}" ToolTip="Make the saved draft the definition the NC viewer and the Planner use" />
+            <Button Content="Reload" Command="{Binding ReloadCommand}" />
+            <TextBlock Text="{Binding VersionText}" VerticalAlignment="Center" Margin="12,0,0,0" FontWeight="SemiBold" />
+            <TextBlock Text="Read-only" Visibility="{Binding IsReadOnly, Converter={StaticResource Visible}}"
+                       VerticalAlignment="Center" Margin="12,0,0,0" Foreground="{DynamicResource WarningTextBrush}" FontWeight="Bold" />
+        </DockPanel>
+
+        <!-- Component tree -->
+        <DockPanel Grid.Row="1" Grid.Column="0" Margin="0,0,8,0">
+            <TextBlock DockPanel.Dock="Top" Text="Components (all axes zero)" FontWeight="Bold" Margin="0,0,0,4" />
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,6,0,0">
+                <Button Content="Add" Command="{Binding AddNodeCommand}" ToolTip="Add a component under the selected one" />
+                <Button Content="Remove" Command="{Binding RemoveNodeCommand}" />
+            </StackPanel>
+            <TreeView x:Name="NodeTree" ItemsSource="{Binding RootNodes}" SelectedItemChanged="NodeTree_SelectedItemChanged"
+                      AutomationProperties.Name="Machine components">
+                <TreeView.ItemContainerStyle>
+                    <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                        <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                    </Style>
+                </TreeView.ItemContainerStyle>
+                <TreeView.ItemTemplate>
+                    <HierarchicalDataTemplate DataType="{x:Type md:DesignerNode}" ItemsSource="{Binding Children}">
+                        <TextBlock Text="{Binding Title}" />
+                    </HierarchicalDataTemplate>
+                </TreeView.ItemTemplate>
+            </TreeView>
+        </DockPanel>
+
+        <!-- 3D view and jog -->
+        <Grid Grid.Row="1" Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                <Grid>
+                    <wv2:WebView2 x:Name="Browser" DefaultBackgroundColor="#0F1720" FlowDirection="LeftToRight" />
+                    <TextBlock x:Name="FallbackMessage" Visibility="Collapsed" TextWrapping="Wrap" Margin="16" FontWeight="SemiBold" />
+                </Grid>
+            </Border>
+            <Border Grid.Row="1" Margin="0,8,0,0" Padding="8" Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top" LastChildFill="False">
+                        <TextBlock Text="Jog (physical axis readings)" FontWeight="Bold" VerticalAlignment="Center" />
+                        <Button DockPanel.Dock="Right" Content="Zero all" Command="{Binding ZeroAllCommand}" Margin="0" />
+                    </DockPanel>
+                    <ItemsControl ItemsSource="{Binding Jogs}" MaxHeight="170" Margin="0,4,0,0">
+                        <ItemsControl.Template>
+                            <ControlTemplate><ScrollViewer VerticalScrollBarVisibility="Auto"><ItemsPresenter/></ScrollViewer></ControlTemplate>
+                        </ItemsControl.Template>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type md:DesignerJog}">
+                                <DockPanel Margin="0,2">
+                                    <TextBlock Text="{Binding Axis}" Width="34" FontWeight="Bold" VerticalAlignment="Center" />
+                                    <TextBox DockPanel.Dock="Right" Width="90" Text="{Binding Value, UpdateSourceTrigger=LostFocus, StringFormat=0.###}"
+                                             AutomationProperties.Name="{Binding Axis}" />
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding Unit}" Width="26" VerticalAlignment="Center" Margin="4,0" />
+                                    <Slider Minimum="{Binding Minimum}" Maximum="{Binding Maximum}" Value="{Binding Value}"
+                                            VerticalAlignment="Center" AutomationProperties.Name="{Binding Axis}" />
+                                </DockPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </DockPanel>
+            </Border>
+        </Grid>
+
+        <!-- Inspector -->
+        <TabControl Grid.Row="1" Grid.Column="2" Margin="8,0,0,0">
+            <TabItem Header="General">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="8" IsEnabled="{Binding CanEdit}">
+                        <TextBlock Text="Name" Style="{StaticResource FieldLabel}" />
+                        <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
+                        <TextBlock Text="NC viewer machine (controller and cycles)" Style="{StaticResource FieldLabel}" />
+                        <ComboBox ItemsSource="{Binding Templates}" SelectedItem="{Binding SelectedTemplate}" />
+                        <Button Content="Start from this installed machine…" Command="{Binding LoadTemplateCommand}" HorizontalAlignment="Left" Margin="0,6,0,0"
+                                ToolTip="Replace the components with those of the installed machine; check every position on the real machine afterwards" />
+                        <TextBlock Text="The NC engine interprets programs with this machine's controller; the components below replace its kinematics."
+                                   Style="{StaticResource Hint}" />
+                        <TextBlock Text="Interpreted axis names (physical=programmed)" Style="{StaticResource FieldLabel}" />
+                        <TextBox Text="{Binding InterpreterAxes, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
+                        <TextBlock Text="Example: A=B for a Mazak whose physical A axis is programmed as B. The readout always shows the physical name."
+                                   Style="{StaticResource Hint}" />
+
+                        <TextBlock Text="Mounts" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="Tool mount (spindle gauge line, tool along −Z)" Style="{StaticResource FieldLabel}" />
+                        <ComboBox ItemsSource="{Binding NodeIds}" SelectedItem="{Binding ToolMountNode}" />
+                        <ContentControl Content="{Binding ToolMountPosition}" Margin="0,4,0,0" />
+                        <TextBlock Text="Workpiece mount (where fixtures and the part sit)" Style="{StaticResource FieldLabel}" />
+                        <ComboBox ItemsSource="{Binding NodeIds}" SelectedItem="{Binding WorkpieceMountNode}" />
+                        <ContentControl Content="{Binding WorkpieceMountPosition}" Margin="0,4,0,0" />
+                        <TextBlock Text="Mount positions are in the component's frame (mm) at all axes zero." Style="{StaticResource Hint}" />
+
+                        <TextBlock Text="Calibration" Style="{StaticResource SectionTitle}" />
+                        <CheckBox Content="Reference zero verified on the machine" IsChecked="{Binding ZeroVerified}" Margin="0,4,0,0" />
+                        <CheckBox Content="Rotary axis lines verified" IsChecked="{Binding RotaryLinesVerified}" Margin="0,4,0,0" />
+                        <CheckBox Content="Mounts verified" IsChecked="{Binding MountsVerified}" Margin="0,4,0,0" />
+                        <TextBlock Text="Notes" Style="{StaticResource FieldLabel}" />
+                        <TextBox Text="{Binding CalibrationNotes, UpdateSourceTrigger=PropertyChanged, Delay=300}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="54" />
+
+                        <TextBlock Text="Collisions" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="Component pairs never checked against each other (a/b; c/d)" Style="{StaticResource FieldLabel}" />
+                        <TextBox Text="{Binding IgnoredPairs, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
+                        <TextBlock Text="⚠ Machine collisions are not checked in this release; only axis travel is." Style="{StaticResource Hint}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Component">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid Margin="8">
+                        <TextBlock Text="Select a component in the tree or the 3D view.">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource Hint}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasSelectedNode}" Value="False">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <StackPanel DataContext="{Binding SelectedNode}" IsEnabled="{Binding DataContext.CanEdit, RelativeSource={RelativeSource AncestorType=Window}}">
+                            <TextBlock Text="ID" Style="{StaticResource FieldLabel}" />
+                            <TextBox Text="{Binding Id, UpdateSourceTrigger=LostFocus}" />
+                            <TextBlock Text="Label" Style="{StaticResource FieldLabel}" />
+                            <TextBox Text="{Binding Label, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
+                            <TextBlock Text="Parent" Style="{StaticResource FieldLabel}" />
+                            <ComboBox IsEditable="True" Text="{Binding Parent, UpdateSourceTrigger=LostFocus}"
+                                      ItemsSource="{Binding DataContext.ParentChoices, RelativeSource={RelativeSource AncestorType=Window}}" />
+                            <TextBlock Text="Position in the parent's frame at all axes zero (mm)" Style="{StaticResource FieldLabel}" />
+                            <ContentControl Content="{Binding Position}" />
+
+                            <TextBlock Text="Joint" Style="{StaticResource SectionTitle}" />
+                            <ComboBox ItemsSource="{Binding DataContext.JointTypes, RelativeSource={RelativeSource AncestorType=Window}}" SelectedItem="{Binding JointType}" />
+                            <StackPanel Visibility="{Binding HasJoint, Converter={StaticResource Visible}}">
+                                <TextBlock Text="Physical axis name" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Axis, UpdateSourceTrigger=LostFocus}" />
+                                <TextBlock Text="Positive direction (parent frame)" Style="{StaticResource FieldLabel}" />
+                                <ContentControl Content="{Binding Direction}" />
+                                <StackPanel Visibility="{Binding IsRotary, Converter={StaticResource Visible}}">
+                                    <TextBlock Text="A point on the rotation line (parent frame, mm)" Style="{StaticResource FieldLabel}" />
+                                    <ContentControl Content="{Binding Point}" />
+                                    <CheckBox Content="Continuous (no travel limits)" IsChecked="{Binding Continuous}" Margin="0,6,0,0" />
+                                </StackPanel>
+                                <UniformGrid Columns="2">
+                                    <StackPanel Margin="0,0,6,0"><TextBlock Text="Minimum" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding Min, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
+                                    <StackPanel><TextBlock Text="Maximum" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding Max, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
+                                    <StackPanel Margin="0,0,6,0"><TextBlock Text="Rapid rate" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding RapidRate, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
+                                    <StackPanel><TextBlock Text="Maximum feed" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding MaxFeed, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
+                                    <StackPanel Margin="0,0,6,0"><TextBlock Text="Scale (reading to motion)" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding JointScale, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
+                                    <CheckBox Content="Read as a diameter" IsChecked="{Binding Diameter}" VerticalAlignment="Bottom" Margin="0,0,0,4" />
+                                </UniformGrid>
+                                <TextBlock Text="Limits are signed readings from the reference zero (mm or degrees); zero must lie within them unless you explain why below. Rapid rate and feed: mm/min or deg/min."
+                                           Style="{StaticResource Hint}" />
+                                <TextBlock Text="Why zero is outside the travel (optional)" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding ZeroOutsideReason, UpdateSourceTrigger=PropertyChanged, Delay=300}" TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <TextBlock Text="Placeholder shape" Style="{StaticResource SectionTitle}" />
+                            <ComboBox ItemsSource="{Binding DataContext.PrimitiveShapes, RelativeSource={RelativeSource AncestorType=Window}}" SelectedItem="{Binding Shape}" />
+                            <StackPanel Visibility="{Binding IsBox, Converter={StaticResource Visible}}">
+                                <TextBlock Text="Size (mm)" Style="{StaticResource FieldLabel}" />
+                                <ContentControl Content="{Binding Size}" />
+                            </StackPanel>
+                            <UniformGrid Columns="3" Visibility="{Binding IsCylinder, Converter={StaticResource Visible}}">
+                                <StackPanel Margin="0,0,6,0"><TextBlock Text="Radius" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding Radius, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
+                                <StackPanel Margin="0,0,6,0"><TextBlock Text="Height" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding Height, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
+                                <StackPanel><TextBlock Text="Axis" Style="{StaticResource FieldLabel}" /><ComboBox ItemsSource="{Binding DataContext.CylinderAxes, RelativeSource={RelativeSource AncestorType=Window}}" SelectedItem="{Binding PrimitiveAxis}" /></StackPanel>
+                            </UniformGrid>
+                            <TextBlock Text="Centre (component frame, mm)" Style="{StaticResource FieldLabel}" />
+                            <ContentControl Content="{Binding Center}" />
+                            <TextBlock Text="The shape is drawn while the component has no mesh." Style="{StaticResource Hint}" />
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Geometry">
+                <DockPanel Margin="8">
+                    <TextBlock DockPanel.Dock="Top" Text="{Binding SelectedNode.Title, StringFormat=Meshes of {0}}" FontWeight="Bold" />
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,6,0,6">
+                        <Button Content="Import mesh…" Command="{Binding ImportMeshCommand}" ToolTip="GLB, STL or STEP; the file is stored on the Server" />
+                        <Button Content="Store on Server" Command="{Binding ImportLegacyMeshCommand}" ToolTip="Upload a mesh that is still a file path" />
+                        <Button Content="Remove" Command="{Binding RemoveMeshCommand}" />
+                    </StackPanel>
+                    <ListBox DockPanel.Dock="Top" ItemsSource="{Binding SelectedNode.Meshes}" SelectedItem="{Binding SelectedMesh}" MinHeight="70" MaxHeight="140"
+                             DisplayMemberPath="Name" AutomationProperties.Name="Meshes" />
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel DataContext="{Binding SelectedMesh}" IsEnabled="{Binding DataContext.CanEdit, RelativeSource={RelativeSource AncestorType=Window}}">
+                            <TextBlock Text="{Binding Source}" Style="{StaticResource Hint}" />
+                            <TextBlock Text="Name" Style="{StaticResource FieldLabel}" />
+                            <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
+                            <TextBlock Text="Position in the component frame (mm)" Style="{StaticResource FieldLabel}" />
+                            <ContentControl Content="{Binding Position}" />
+                            <TextBlock Text="Rotation about X, then Y, then Z (degrees)" Style="{StaticResource FieldLabel}" />
+                            <ContentControl Content="{Binding Rotation}" />
+                            <UniformGrid Columns="3">
+                                <StackPanel Margin="0,0,6,0"><TextBlock Text="Scale" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding Scale, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
+                                <StackPanel Margin="0,0,6,0"><TextBlock Text="Color (#RRGGBB)" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding Color, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
+                                <StackPanel><TextBlock Text="Opacity (0–1)" Style="{StaticResource FieldLabel}" /><TextBox Text="{Binding Opacity, UpdateSourceTrigger=PropertyChanged, Delay=300}" /></StackPanel>
+                            </UniformGrid>
+                            <CheckBox Content="Visible" IsChecked="{Binding Visible}" Margin="0,8,0,0" />
+                            <CheckBox Content="Wireframe" IsChecked="{Binding Wireframe}" Margin="0,4,0,0" />
+                            <CheckBox Content="Takes part in collision checks" IsChecked="{Binding CollisionParticipation}" Margin="0,4,0,0" />
+                            <TextBlock Text="Hiding a mesh or making it transparent does not remove it from collision checks. Scale 25.4 shows a model drawn in inches in millimetres; GLB files (metres) are converted automatically."
+                                       Style="{StaticResource Hint}" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </TabItem>
+
+            <TabItem Header="Timing &amp; Tool Magazine">
+                <StackPanel Margin="8" IsEnabled="{Binding CanEdit}">
+                    <TextBlock Text="Tool magazine" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Text="Nominal capacity (pockets)" Style="{StaticResource FieldLabel}" />
+                    <TextBox Text="{Binding NominalCapacity, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
+                    <TextBlock Text="Usable tool positions" Style="{StaticResource FieldLabel}" />
+                    <TextBox Text="{Binding UsablePositions, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
+                    <TextBlock Text="Tool-change time (seconds)" Style="{StaticResource FieldLabel}" />
+                    <TextBox Text="{Binding ToolChangeSeconds, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
+                    <TextBlock Text="Timing" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Text="Rapid rate (mm/min)" Style="{StaticResource FieldLabel}" />
+                    <TextBox Text="{Binding RapidRate, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
+                    <TextBlock Text="Machine time factor" Style="{StaticResource FieldLabel}" />
+                    <TextBox Text="{Binding MachineTimeFactor, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
+                    <TextBlock Text="Leave a value empty when it is not known. Usable tool positions limit which tool tables fit the Machine; tool-change time, rapid rate and the time factor feed the cycle-time estimates used in planning once the definition is published."
+                               Style="{StaticResource Hint}" Margin="0,10,0,0" />
+                    <TextBlock Text="{Binding PublishedSummary}" Style="{StaticResource Hint}" FontWeight="SemiBold" />
+                </StackPanel>
+            </TabItem>
+
+            <TabItem>
+                <TabItem.Header>
+                    <TextBlock Text="{Binding Issues.Count, StringFormat=Validation ({0})}" />
+                </TabItem.Header>
+                <DockPanel Margin="8">
+                    <TextBlock DockPanel.Dock="Top" Text="Errors block publishing; warnings do not. Double-click an item to select its component." Style="{StaticResource Hint}" />
+                    <ListBox x:Name="IssueList" ItemsSource="{Binding Issues}" MouseDoubleClick="IssueList_MouseDoubleClick" AutomationProperties.Name="Validation issues">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,3">
+                                    <TextBlock FontWeight="SemiBold">
+                                        <Run Text="{Binding Severity, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding Path, Mode=OneWay}" />
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap" MaxWidth="350" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="2" Grid.ColumnSpan="3" Margin="0,8,0,0" Padding="8,5" Background="{DynamicResource PanelBrush}"
+                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+            <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" />
+        </Border>
+    </Grid>
+</Window>

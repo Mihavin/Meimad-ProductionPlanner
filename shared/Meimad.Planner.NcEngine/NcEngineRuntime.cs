@@ -87,7 +87,33 @@ public sealed class NcEngineRuntime : IDisposable
 
     public bool IsFaulted { get; private set; }
 
-    public IReadOnlyList<NcEngineMachineSummary> Machines { get; }
+    public IReadOnlyList<NcEngineMachineSummary> Machines { get; private set; }
+
+    /// <summary>
+    /// Registers the compiled Machine Designer definitions (engine machine JSON, ids
+    /// <c>meimad-machine-*</c>) in place of any registered earlier. When the engine rejects one, none is
+    /// registered and its errors are returned; the installed machines always stay available.
+    /// </summary>
+    public IReadOnlyList<string> UseMachines(IEnumerable<string> compiledDefinitions)
+    {
+        ArgumentNullException.ThrowIfNull(compiledDefinitions);
+        var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var json in compiledDefinitions)
+        {
+            using var document = JsonDocument.Parse(json);
+            var id = document.RootElement.TryGetProperty("id", out var value) ? value.GetString() : null;
+            if (string.IsNullOrWhiteSpace(id)) continue;
+            files[id + ".json"] = json;
+        }
+        lock (gate)
+        {
+            fileHost.SetRuntimeMachines(files);
+            var folders = files.Count == 0 ? "[]" : JsonSerializer.Serialize(new[] { NcEngineFileHost.RuntimeMachineFolderName });
+            var errors = Deserialize<IReadOnlyList<string>>(Call("reloadMachines", folders));
+            Machines = Deserialize<IReadOnlyList<NcEngineMachineSummary>>(Call("machines"));
+            return errors;
+        }
+    }
 
     /// <summary>Folders (besides the engine) that subprogram lookup may read on this call.</summary>
     public void SetReadableFolders(IEnumerable<string?> folders) => fileHost.SetAdditionalRoots(folders);

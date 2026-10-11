@@ -1,6 +1,33 @@
 # API Contract
 
+## Machine simulation definitions (2026-10-11; schema v114)
+
+The full contract, including the JSON shape, the validation codes and the compilation for the NC engine, is
+`docs/machine-simulation-definition.md` §4. Every signed-in user may read; writes need `setup.manage`.
+
+| Method and route | Purpose |
+|---|---|
+| `GET /api/v1/machines/{id}/simulation-definition` | Draft, published copy, versions, who/when, `hasUnpublishedChanges` and the draft's `issues`. ETag `"machine-simulation:{id}:v{draftVersion}"`. |
+| `PUT /api/v1/machines/{id}/simulation-definition` | Save the draft (JSON body ≤ 2 MB, `If-Match` required). Issues are returned, not enforced, except that a mesh path not already in the definition is `422 machine_definition_invalid`. Malformed JSON is `400`; a missing tag is `428`; a stale tag is `412 resource_version_stale` with the conflict explanation. |
+| `POST /api/v1/machines/{id}/simulation-definition/validate` | `{ issues }` of the body, with the publish-time checks. |
+| `POST /api/v1/machines/{id}/simulation-definition/publish` | Publish the saved draft (`If-Match` = draft tag). With errors it is `422 machine_definition_invalid` and the issues are in `details`; otherwise it writes the Machine's projected columns and recalculates its cycle estimates when they changed. |
+| `GET /api/v1/machines/simulation-definitions` | `{ items: [{ machineId, publishedVersion, published }] }` for every Machine (the NC viewer). |
+| `POST /api/v1/machines/{id}/simulation-assets?name=<file>` | Upload a raw `.glb` (glTF 2) or `.stl` body ≤ 200 MB. `201 { assetId, fileName, mediaType, sizeBytes, sha256, createdAt, createdBy }`; identical content returns the existing asset. Errors: `unsupported_asset_type`, `invalid_asset_content` and `asset_empty` (422); `asset_too_large` (413). |
+| `GET /api/v1/machines/{id}/simulation-assets` | `{ items }` of the Machine's assets. |
+| `GET /api/v1/machines/{id}/simulation-assets/{assetId}/content` | The file (`model/gltf-binary` or `model/stl`, ETag = SHA-256). An asset of another Machine is `404`. |
+
+Machine `PATCH` refuses a value different from the current one for these fields:
+- `usableToolPositions`, `rapidRateMillimetersPerMinute`, `toolChangeTimeSeconds`, `machineTimeFactor`;
+- `ncViewerMachine`, `ncViewerModels`.
+
+The refusal is `422 validation_failed`, with issue code `machine_definition_owned_field` on that field. These values
+are changed by publishing the simulation definition. Machine create still accepts them as the new Machine's first
+definition.
+
 ## NC viewer geometry (2026-10-10; schema v113)
+
+*Since schema v114 `ncViewerModels` and `ncViewerMachine` are read-only projections of the published Machine simulation
+definition (above); a PATCH may only repeat them.*
 
 **Machine 3D models.** Machine create and PATCH accept, and every Machine representation returns, `ncViewerModels`: an array (at most 32) of `{ "node": string, "path": string, "offsetMm": {"x","y","z"}, "rotationDeg": {"x","y","z"}, "color": "#RRGGBB", "opacity": number }`. Each item is an STL mesh the NC viewer attaches to the kinematic node `node` of the Machine's NC viewer machine definition, placed in that node's frame by rotating about X, then Y, then Z (degrees, extrinsic, R = Rz·Ry·Rx) and then translating by `offsetMm` (mm). Omitted `offsetMm`/`rotationDeg` (or components) are 0, `color` defaults to `#9AA4AE` and is returned upper-case, `opacity` defaults to 1. On create, an omitted or `null` list is `[]`. On PATCH only an array (also `[]`) replaces the whole list; an absent property **or JSON `null`** keeps the stored list (the Windows client patches with its whole Machine record). The usual `If-Match: "machine:{id}:v{n}"`, `428`/`412` and `machines.setup` permission rules apply. Paths are stored relative to the network folder like Case model files and returned resolved. Validation fails with `422 validation_failed`, one detail `{field, code, message}` per problem, `field` such as `ncViewerModels[0].offsetMm.x`:
 

@@ -83,6 +83,26 @@ public sealed class NcEngineMachineCatalog
         return new NcEngineMachineCatalog(definitions);
     }
 
+    /// <summary>
+    /// The raw JSON of one installed machine definition (a Meimad definition replaces a vendored one of the same
+    /// id), for building a Machine simulation definition from a template; null when it is not installed.
+    /// </summary>
+    public static System.Text.Json.Nodes.JsonObject? LoadDefinition(string? id, string? engineRoot = null)
+    {
+        if (!IsIdentifier(id)) return null;
+        var root = Path.GetFullPath(engineRoot ?? NcEngineRuntime.DefaultEngineRoot);
+        System.Text.Json.Nodes.JsonObject? found = null;
+        foreach (var folder in new[] { Path.Combine(root, "machines"), Path.Combine(root, "meimad", "machines") })
+        {
+            foreach (var (element, _) in Documents(folder))
+            {
+                if (Text(element, "id") == id)
+                    found = System.Text.Json.Nodes.JsonNode.Parse(element.GetRawText()) as System.Text.Json.Nodes.JsonObject;
+            }
+        }
+        return found;
+    }
+
     /// <summary>Lower-case letters, digits and hyphens, as the engine registry requires.</summary>
     public static bool IsIdentifier(string? value) =>
         !string.IsNullOrEmpty(value)

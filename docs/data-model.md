@@ -1,6 +1,50 @@
 # Data Model
 
+## Machine simulation definitions (schema v114, 2026-10-11)
+
+The full contract is `docs/machine-simulation-definition.md`.
+
+`machine_simulation_definitions` holds one definition per Machine:
+
+| Column | Meaning |
+|---|---|
+| `machine_id TEXT PRIMARY KEY` | References `machines(id) ON DELETE CASCADE`. |
+| `draft_json` | The definition being edited (a JSON object, checked). Legacy mesh paths in network-folder storage form. |
+| `draft_version` | > 0; the entity tag `"machine-simulation:{id}:v{draft_version}"`. |
+| `published_json`, `published_version` | The copy everything else uses; null exactly when the version is 0. |
+| `published_at`, `published_by`, `updated_at`, `updated_by` | Who published and who saved the draft last, and when. |
+
+`machine_simulation_assets` lists a Machine's uploaded meshes:
+- `id`: 32 lower-case hex characters.
+- `machine_id`: cascades with the Machine.
+- `file_name`.
+- `media_type`: `model/gltf-binary` or `model/stl`.
+- `file_size`.
+- `file_hash`: SHA-256 hex. It is unique per Machine, so identical content is stored once.
+- `stored_relative_path`: below the G-code release root, `machine-assets/<machine>/<sha256>.<ext>`. The recovery set
+  backs it up and restores it with the releases.
+- `created_at`, `created_by`.
+
+The migration gives every Machine a definition built from the following, published as is (draft = published, version
+1), leaving the Machine rows unchanged:
+- its NC viewer machine (components, joints, travel, primitives and mounts of the installed engine definition);
+- its `nc_viewer_models_json` (as legacy mesh paths);
+- its magazine and timing columns.
+
+A Machine created later gets its first definition in the same transaction.
+
+From v114 on, these Machine columns are **projections** written only when a definition is published:
+- `usable_tool_positions`, `rapid_rate_mm_per_min`, `tool_change_time_seconds`, `machine_time_factor`;
+- `nc_viewer_machine` (the template);
+- `nc_viewer_models_json` (the meshes that are still legacy paths).
+
+Machine PATCH may repeat them but not change them. Definitions and assets are not planning inputs: their triggers
+advance the all-input and non-planning revisions only.
+
 ## NC viewer geometry (schema v113, 2026-10-10)
+
+*Since schema v114 `nc_viewer_models_json` and `nc_viewer_machine` are projections of the published Machine simulation
+definition (above).*
 
 `machines.nc_viewer_models_json TEXT NOT NULL DEFAULT '[]'` (checked to be a JSON array; existing Machines get `[]`) lists at most 32 STL meshes the NC viewer draws for the Machine: `[{node, path, offsetMm:{x,y,z}, rotationDeg:{x,y,z}, color, opacity}]`. `node` (1–64 characters) is a kinematic node id of the NC viewer machine definition selected by `nc_viewer_machine` (for example `base`, `table`, `spindle-head`); the mesh is placed in that node's frame by rotating it about X, then Y, then Z (degrees, extrinsic, R = Rz·Ry·Rx) and then translating it by `offsetMm`; units are millimetres. `path` is a full `.stl` path, stored relative to `network_folder_settings.root_path` when it lies under the root or an alias, exactly like `case_model_files.file_path`, and served resolved; a network-folder change rewrites it with the Case links. `color` is `#RRGGBB` stored upper-case (default `#9AA4AE`), `opacity` 0.05–1 (default 1). The JSON is written by System.Text.Json: culture-invariant numbers with `.` as decimal separator. The list is Machine configuration: it changes the Machine `version` like any other Machine field. The Server does not read the STL files.
 

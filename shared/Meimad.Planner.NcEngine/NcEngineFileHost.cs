@@ -18,11 +18,44 @@ public sealed class NcEngineFileHost
     private readonly object gate = new();
     private readonly string engineRoot;
     private IReadOnlyList<string> roots;
+    private readonly string runtimeMachineFolder;
+    private IReadOnlyDictionary<string, string> runtimeMachines = new Dictionary<string, string>();
 
     internal NcEngineFileHost(string engineRoot)
     {
         this.engineRoot = Root(engineRoot);
         roots = [this.engineRoot];
+        runtimeMachineFolder = Path.Combine(this.engineRoot, "meimad", RuntimeMachineFolderName);
+    }
+
+    /// <summary>The in-memory folder (below meimad/) the adapter loads Machine Designer definitions from.</summary>
+    internal const string RuntimeMachineFolderName = "runtime-machines";
+
+    /// <summary>Replaces the in-memory machine definition files (file name to JSON).</summary>
+    internal void SetRuntimeMachines(IReadOnlyDictionary<string, string> files)
+    {
+        var next = files.ToDictionary(
+            entry => Path.Combine(runtimeMachineFolder, entry.Key),
+            entry => entry.Value,
+            StringComparer.OrdinalIgnoreCase);
+        lock (gate) runtimeMachines = next;
+    }
+
+    // The in-memory folder answers before the disk: null when the path is not in it.
+    private bool? RuntimeExists(string full, out string? text, out bool directory)
+    {
+        text = null;
+        directory = false;
+        var trimmed = full.TrimEnd(Path.DirectorySeparatorChar);
+        if (string.Equals(trimmed, runtimeMachineFolder, StringComparison.OrdinalIgnoreCase))
+        {
+            directory = true;
+            return true;
+        }
+        if (!trimmed.StartsWith(runtimeMachineFolder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return null;
+        IReadOnlyDictionary<string, string> current;
+        lock (gate) current = runtimeMachines;
+        return current.TryGetValue(trimmed, out text);
     }
 
     /// <summary>Replaces the non-engine roots (program folder, program memory folders).</summary>
@@ -53,6 +86,7 @@ public sealed class NcEngineFileHost
     public bool Exists(string path)
     {
         var full = Allowed(path);
+        if (full is not null && RuntimeExists(full, out _, out _) is { } known) return known;
         return full is not null && (File.Exists(full) || Directory.Exists(full));
     }
 
@@ -61,6 +95,18 @@ public sealed class NcEngineFileHost
     {
         var full = Allowed(path);
         if (full is null) return string.Empty;
+        if (RuntimeExists(full, out var runtimeText, out var runtimeDirectory) is { } runtime)
+        {
+            return runtime
+                ? JsonSerializer.Serialize(new
+                {
+                    file = !runtimeDirectory,
+                    directory = runtimeDirectory,
+                    size = runtimeText is null ? 0 : Encoding.UTF8.GetByteCount(runtimeText),
+                    mtimeMs = 0
+                })
+                : string.Empty;
+        }
         try
         {
             if (File.Exists(full))
@@ -96,6 +142,7 @@ public sealed class NcEngineFileHost
     public string ReadText(string path)
     {
         var full = Allowed(path);
+        if (full is not null && RuntimeExists(full, out var runtimeText, out _) is not null) return runtimeText ?? string.Empty;
         if (full is null || !File.Exists(full)) return string.Empty;
         try
         {
@@ -130,6 +177,16 @@ public sealed class NcEngineFileHost
     public string ListDirectory(string path)
     {
         var full = Allowed(path);
+        if (full is not null && RuntimeExists(full, out _, out var runtimeDirectory) is not null)
+        {
+            if (!runtimeDirectory) return string.Empty;
+            IReadOnlyDictionary<string, string> current;
+            lock (gate) current = runtimeMachines;
+            return JsonSerializer.Serialize(current.Keys
+                .Select(key => new { name = Path.GetFileName(key), directory = false })
+                .OrderBy(entry => entry.name, StringComparer.Ordinal)
+                .ToArray());
+        }
         if (full is null || !Directory.Exists(full)) return string.Empty;
         try
         {

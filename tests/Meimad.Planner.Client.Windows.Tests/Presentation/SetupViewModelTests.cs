@@ -130,15 +130,9 @@ public sealed class SetupViewModelTests
         viewModel.MachineCapabilitiesText = "probe, high-speed";
         viewModel.MachineExecutionMode = "CNC_GCODE";
         viewModel.MachineNcDialect = "OKUMA_OSP";
-        // The list is the NC engine catalog installed with the client (vendored + Meimad definitions).
-        Assert.Same(NcViewerMachineOption.Auto, viewModel.SelectedNcViewerMachine);
-        viewModel.SelectedNcViewerMachine = viewModel.NcViewerMachines.Single(option => option.Id == "okuma-genos-l200e-m");
         Assert.Equal("RADIUS", viewModel.MachineToolDiameterOffsetKind);
         viewModel.MachineToolDiameterOffsetKind = "DIAMETER";
-        viewModel.MachineUsableToolPositions = "30";
-        viewModel.MachineRapidRateMillimetersPerMinute = "24000";
-        viewModel.MachineToolChangeTimeSeconds = "4.5";
-        viewModel.MachineTimeFactor = "1.15";
+        Assert.Contains("Machine Designer", viewModel.MachineSimulationSummary, StringComparison.Ordinal);
         Assert.Single(viewModel.MachinePostprocessors).IsSelected = true;
 
         await viewModel.SaveMachineAsync();
@@ -148,13 +142,16 @@ public sealed class SetupViewModelTests
         Assert.Equal("5-axis milling", api.LastMachineCreate.ProcessType);
         Assert.Equal("CNC_GCODE", api.LastMachineCreate.ExecutionMode);
         Assert.Equal("OKUMA_OSP", api.LastMachineCreate.NcDialect);
-        Assert.Equal("okuma-genos-l200e-m", api.LastMachineCreate.NcViewerMachine);
         Assert.Equal("DIAMETER", api.LastMachineCreate.ToolDiameterOffsetKind);
         Assert.Equal(["post-default"], api.LastMachineCreate.SupportedPostprocessorIds);
-        Assert.Equal(30, api.LastMachineCreate.UsableToolPositions);
-        Assert.Equal(24000, api.LastMachineCreate.RapidRateMillimetersPerMinute);
-        Assert.Equal(4.5, api.LastMachineCreate.ToolChangeTimeSeconds);
-        Assert.Equal(1.15, api.LastMachineCreate.MachineTimeFactor);
+        // The NC viewer machine, magazine, timing and 3D models belong to the Machine Designer (schema v114):
+        // a new Machine starts without them, and an update repeats the Machine's current values.
+        Assert.Null(api.LastMachineCreate.NcViewerMachine);
+        Assert.Null(api.LastMachineCreate.UsableToolPositions);
+        Assert.Null(api.LastMachineCreate.RapidRateMillimetersPerMinute);
+        Assert.Null(api.LastMachineCreate.ToolChangeTimeSeconds);
+        Assert.Equal(1.0, api.LastMachineCreate.MachineTimeFactor);
+        Assert.Null(api.LastMachineCreate.NcViewerModels);
         var machine = Assert.Single(viewModel.Machines);
         Assert.Equal("M07 — Haas VF-5", machine.DisplayName);
         viewModel.SelectedMachine = machine;
@@ -162,6 +159,10 @@ public sealed class SetupViewModelTests
         await viewModel.SaveMachineAsync();
 
         Assert.Equal("Haas VF-5 updated", api.LastMachineUpdate?.Name);
+        Assert.Equal(machine.UsableToolPositions, api.LastMachineUpdate!.UsableToolPositions);
+        Assert.Equal(machine.MachineTimeFactor, api.LastMachineUpdate.MachineTimeFactor);
+        Assert.Equal(machine.NcViewerMachine, api.LastMachineUpdate.NcViewerMachine);
+        Assert.Null(api.LastMachineUpdate.NcViewerModels);
         Assert.Equal($"\"machine:{machine.MachineId}:v1\"", api.LastMachineEntityTag);
         await viewModel.DeactivateSelectedMachineAsync();
 

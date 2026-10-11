@@ -75,7 +75,7 @@ public sealed class MachineNcViewerModelApiTests
     }
 
     [Fact]
-    public async Task Patch_replaces_the_list_only_when_an_array_is_sent()
+    public async Task Patch_may_repeat_but_never_change_the_models_owned_by_the_definition()
     {
         await RunAsync(async (application, client) =>
         {
@@ -85,39 +85,30 @@ public sealed class MachineNcViewerModelApiTests
             using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
             var id = createdJson.RootElement.GetProperty("machineId").GetString()!;
             var tag = created.Headers.ETag!.Tag;
+            var sameList = createdJson.RootElement.GetProperty("ncViewerModels").GetRawText();
 
-            // Absent: unchanged.
+            // Absent, JSON null (screens that do not edit models) and the same list leave it unchanged.
             (tag, var absent) = await PatchAsync(client, id, tag, """{"name":"Renamed"}""");
             Assert.Equal("table", Assert.Single(absent.GetProperty("ncViewerModels").EnumerateArray()).GetProperty("node").GetString());
-
-            // JSON null, as the Windows client sends from screens that do not edit models: unchanged.
             (tag, var nulled) = await PatchAsync(client, id, tag, """{"name":"Renamed again","ncViewerModels":null}""");
             Assert.Equal("Renamed again", nulled.GetProperty("name").GetString());
-            Assert.Equal("table", Assert.Single(nulled.GetProperty("ncViewerModels").EnumerateArray()).GetProperty("node").GetString());
+            (tag, _) = await PatchAsync(client, id, tag, $$"""{"ncViewerModels":{{sameList}}}""");
 
-            // An array replaces the whole list.
-            (tag, var replaced) = await PatchAsync(client, id, tag,
-                """{"ncViewerModels":[{"node":"spindle-head","path":"D:\\models\\head.stl"},{"node":"base","path":"D:\\models\\base.stl","opacity":0.05}]}""");
-            var replacedModels = replaced.GetProperty("ncViewerModels").EnumerateArray().ToArray();
-            Assert.Equal(["spindle-head", "base"], replacedModels.Select(model => model.GetProperty("node").GetString()));
-            Assert.Equal(0.05, replacedModels[1].GetProperty("opacity").GetDouble());
-
-            // [] clears it.
-            (tag, var cleared) = await PatchAsync(client, id, tag, """{"ncViewerModels":[]}""");
-            Assert.Equal(0, cleared.GetProperty("ncViewerModels").GetArrayLength());
-
-            // Wrong JSON shape is a request error; the stale ETag rule still applies.
-            using (var wrongShape = Patch(id, tag, """{"ncViewerModels":[{"node":"base","path":"C:\\a.stl","scale":2}]}"""))
-            using (var rejected = await client.SendAsync(wrongShape))
+            // A different list is the Machine Designer's to publish.
+            using (var changed = Patch(id, tag, """{"ncViewerModels":[]}"""))
+            using (var refused = await client.SendAsync(changed))
             {
-                Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
-                Assert.Contains("invalid_type", await rejected.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+                await AssertIssueAsync(refused, "ncViewerModels", "machine_definition_owned_field");
             }
-            using (var stale = Patch(id, created.Headers.ETag!.Tag, """{"ncViewerModels":[]}"""))
-            using (var staleResponse = await client.SendAsync(stale))
-            {
-                Assert.Equal(HttpStatusCode.PreconditionFailed, staleResponse.StatusCode);
-            }
+
+            // The created models are the definition's meshes (legacy paths until imported) and its projection.
+            var definition = await MachineSimulationTestApi.GetAsync(client, id);
+            var model = definition["published"]!["nodes"]!.AsArray()
+                .SelectMany(node => node!["models"]?.AsArray() ?? new System.Text.Json.Nodes.JsonArray())
+                .Single();
+            Assert.Equal(@"\\factory\machines\VF3\table.STL", model!["legacyPath"]!.GetValue<string>());
+            Assert.Equal(0.6, model["opacity"]!.GetValue<double>());
+            Assert.Contains(definition["issues"]!.AsArray(), issue => issue!["code"]!.GetValue<string>() == "legacy_path");
         });
     }
 

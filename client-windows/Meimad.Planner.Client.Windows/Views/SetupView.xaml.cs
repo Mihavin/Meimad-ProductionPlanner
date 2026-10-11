@@ -37,18 +37,24 @@ public partial class SetupView : UserControl
         }
     }
 
-    private void AddMachineModel_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// The Machine Designer of the selected Machine (read-only without the setup permission). Publishing changes the
+    /// Machine's values shown here, so the list is refreshed when the designer closes.
+    /// </summary>
+    private void OpenMachineDesigner_Click(object sender, RoutedEventArgs e)
     {
-        if (DataContext is not SetupViewModel viewModel) return;
-        var dialog = new OpenFileDialog
+        if (DataContext is not SetupViewModel { SelectedMachine: { } machine, ApiClient: { } api } viewModel)
         {
-            Title = "Choose machine STL files",
-            Filter = "STL models|*.stl|All files|*.*",
-            CheckFileExists = true,
-            Multiselect = true
-        }.Localized();
-        if (dialog.ShowDialog() != true) return;
-        foreach (var path in dialog.FileNames) viewModel.AddMachineModel(path);
+            LocalizedMessageBox.Show(Window.GetWindow(this), "Select a saved Machine first.", "Machine Designer");
+            return;
+        }
+        var window = MachineDesignerWindow.Open(api, viewModel.ClientId, machine, viewModel.IsEditor, Window.GetWindow(this));
+        window.Closed += async (_, _) =>
+        {
+            var machineId = machine.MachineId;
+            await viewModel.RefreshAsync();
+            viewModel.SelectedMachine = viewModel.Machines.FirstOrDefault(value => value.MachineId == machineId) ?? viewModel.SelectedMachine;
+        };
     }
 
     private async void BrowseLegacyWorkbook_Click(object sender, RoutedEventArgs e)

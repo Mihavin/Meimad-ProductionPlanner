@@ -89,15 +89,19 @@
     return transformPositions(positions, inverse, before, scale, shift);
   }
 
-  /** A machine model's STL into its kinematic node's frame (program units). */
+  /**
+   * A machine model's STL into its kinematic node's frame (program units): scaled by the mesh's own
+   * scale (Machine Designer alignment, e.g. 25.4 for a model drawn in inches), rotated, then moved.
+   */
   function placeOnNode(positions, model, scale) {
     const factor = Number.isFinite(scale) && scale > 0 ? scale : 1;
+    const meshScale = model && Number.isFinite(model.scale) && model.scale > 0 ? model.scale : 1;
     const offset = vector(model && model.offsetMm);
     return transformPositions(
       positions,
       rotationMatrix(model && model.rotationDeg),
       { x: 0, y: 0, z: 0 },
-      factor,
+      factor * meshScale,
       { x: offset.x * factor, y: offset.y * factor, z: offset.z * factor });
   }
 

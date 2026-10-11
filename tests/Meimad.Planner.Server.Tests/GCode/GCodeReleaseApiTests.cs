@@ -416,15 +416,13 @@ public sealed class GCodeReleaseApiTests
                 configure.Content = JsonContent.Create(new
                 {
                     executionMode = "CNC_GCODE",
-                    supportedPostprocessorIds = new[] { "post-a" },
-                    usableToolPositions = 20,
-                    rapidRateMillimetersPerMinute = 12000,
-                    toolChangeTimeSeconds = 5,
-                    machineTimeFactor = 1.1
+                    supportedPostprocessorIds = new[] { "post-a" }
                 });
                 using var configured = await client.SendAsync(configure);
                 configured.EnsureSuccessStatusCode();
             }
+            // Magazine and timing are published through the Machine's simulation definition.
+            await Machines.MachineSimulationTestApi.SetTimingAsync(client, "machine-1", 20, 12000, 5, 1.1);
 
             var fifteenTools = Encoding.UTF8.GetBytes("tool,position\n" + string.Join("\n",
                 Enumerable.Range(1, 15).Select(number => $"T{number},{number}")) + "\n");
@@ -684,18 +682,8 @@ public sealed class GCodeReleaseApiTests
             var machineTwo = await BoardOperationAsync(client, "machine-2");
             Assert.Equal(81d, machineTwo.GetProperty("planningCycleTimePerPartSeconds").GetDouble(), 6);
 
-            using (var patch = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/machines/machine-2"))
-            {
-                patch.Headers.TryAddWithoutValidation("If-Match", "\"machine:machine-2:v1\"");
-                patch.Content = JsonContent.Create(new
-                {
-                    rapidRateMillimetersPerMinute = 6000,
-                    toolChangeTimeSeconds = 4,
-                    machineTimeFactor = 1.2
-                });
-                using var updated = await client.SendAsync(patch);
-                updated.EnsureSuccessStatusCode();
-            }
+            // Publishing new timing recalculates the Machine's cycle estimates.
+            await Machines.MachineSimulationTestApi.SetTimingAsync(client, "machine-2", 30, 6000, 4, 1.2);
 
             var recalculated = await BoardOperationAsync(client, "machine-2");
             Assert.Equal(82.8d, recalculated.GetProperty("planningCycleTimePerPartSeconds").GetDouble(), 6);

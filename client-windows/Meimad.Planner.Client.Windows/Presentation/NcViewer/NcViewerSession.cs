@@ -67,6 +67,7 @@ internal sealed class NcViewerSession : IDisposable
     private bool synchronizeToolsQueued;
     private bool disposed;
     private readonly NcViewerSetupScene scene;
+    private volatile string? registrationWarning;
     private readonly List<NcViewerSceneFile> importedFiles = [];
     private readonly Dictionary<string, string> meshPaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> meshTokens = new(StringComparer.OrdinalIgnoreCase);
@@ -942,6 +943,7 @@ internal sealed class NcViewerSession : IDisposable
 
     private static ParseOutcome Parse(NcEngineRuntime runtime, ParseSnapshot snapshot, bool synchronizeTools)
     {
+        snapshot = Effective(runtime, snapshot);
         runtime.SetReadableFolders(snapshot.ReadableFolders);
         var table = snapshot.ToolTable;
         var source = snapshot.ToolTableSource;
@@ -1010,7 +1012,14 @@ internal sealed class NcViewerSession : IDisposable
         });
         SendDocumentState();
         SendDecorations();
-        if (machineOverride is not null && summary.Machine is { } active && active.Id != machineOverride)
+        if (registrationWarning is { } registration)
+        {
+            SendStatus(registration, "warning");
+            registrationWarning = null;
+            return;
+        }
+        if (machineOverride is not null && summary.Machine is { } active && active.Id != machineOverride
+            && !scene.Compiled.Any(machine => machine.CompiledId == machineOverride && machine.Template == active.Id))
         {
             // The configured NC viewer machine is not installed with this client's engine.
             SendStatus($"NC viewer machine '{machineOverride}' is not installed with this client; the preview uses {active.Name} ({summary.SelectionReason ?? "detected"}).", "warning");
@@ -1035,7 +1044,8 @@ internal sealed class NcViewerSession : IDisposable
             toolTableSource,
             directory,
             readable,
-            operationToolTable);
+            operationToolTable,
+            scene.Compiled.ToDictionary(machine => machine.CompiledId, machine => machine.Template, StringComparer.Ordinal));
     }
 
     private static JsonElement? FallbackToolTable(NcEngineRuntime runtime, ParseSnapshot snapshot, List<string>? warnings = null)
@@ -1271,6 +1281,8 @@ internal sealed class NcViewerSession : IDisposable
                 rotationDeg = new { x = model.RotationDeg?.X ?? 0, y = model.RotationDeg?.Y ?? 0, z = model.RotationDeg?.Z ?? 0 },
                 color = model.Color ?? "#9AA4AE",
                 opacity = model.Opacity ?? 1,
+                scale = model.Scale ?? 1,
+                wireframe = model.Wireframe,
                 meshUrl = MeshUrlPrefix + MeshToken(model.Path)
             }).ToArray(),
             StringComparer.Ordinal);
@@ -1309,7 +1321,36 @@ internal sealed class NcViewerSession : IDisposable
 
     // ----- engine -------------------------------------------------------------------------------
 
-    private NcEngineRuntime StartEngine() => engineFactory();
+    private NcEngineRuntime StartEngine() => Registered(engineFactory());
+
+    /// <summary>
+    /// Registers the Machines' published Machine Designer definitions (compiled engine machines) with a new engine.
+    /// A definition the engine rejects leaves only the installed machines; the program is then interpreted with the
+    /// definition's template and the page is told why.
+    /// </summary>
+    private NcEngineRuntime Registered(NcEngineRuntime runtime)
+    {
+        if (scene.Compiled.Count == 0) return runtime;
+        try
+        {
+            var errors = runtime.UseMachines(scene.Compiled.Select(machine => machine.CompiledJson));
+            registrationWarning = errors.Count == 0
+                ? null
+                : $"The Machine Designer definitions could not be used by the NC engine ({string.Join("; ", errors.Take(3))}); their templates are used.";
+        }
+        catch (Exception exception) when (exception is NcEngineException or JsonException)
+        {
+            registrationWarning = $"The Machine Designer definitions could not be used by the NC engine ({exception.Message}); their templates are used.";
+        }
+        return runtime;
+    }
+
+    /// <summary>A compiled Machine the engine did not register is interpreted as its template.</summary>
+    private static ParseSnapshot Effective(NcEngineRuntime runtime, ParseSnapshot snapshot) =>
+        snapshot.Templates.TryGetValue(snapshot.MachineSelection, out var template)
+            && !runtime.Machines.Any(machine => machine.Id == snapshot.MachineSelection)
+            ? snapshot with { MachineSelection = template ?? NcEngineInfo.AutoMachine }
+            : snapshot;
 
     private async Task<NcEngineRuntime> EnsureEngineAsync()
     {
@@ -1330,7 +1371,7 @@ internal sealed class NcViewerSession : IDisposable
         if (engine.IsFaulted)
         {
             engine.Dispose();
-            engine = engineFactory();
+            engine = Registered(engineFactory());
         }
         return engine;
     }
@@ -1600,7 +1641,8 @@ internal sealed class NcViewerSession : IDisposable
         string ToolTableSource,
         string? DocumentDirectory,
         IReadOnlyList<string?> ReadableFolders,
-        NcViewerOperationToolTable? OperationToolTable);
+        NcViewerOperationToolTable? OperationToolTable,
+        IReadOnlyDictionary<string, string?> Templates);
 
     private sealed record ParseOutcome(NcEnginePreviewResult Result, JsonElement? ToolTable, string? ToolTableSource);
 }

@@ -17,13 +17,19 @@ internal static class RecoveryDatabase
         await using var command = sql.CreateCommand();
         command.CommandText = "PRAGMA user_version";
         var schema = Convert.ToInt32(await command.ExecuteScalarAsync(token));
-        command.CommandText = """
+        command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'machine_simulation_assets'";
+        // Machine meshes (schema v114) are stored below the release root like the releases.
+        var machineAssets = Convert.ToInt32(await command.ExecuteScalarAsync(token)) == 1
+            ? "UNION ALL SELECT 'gcode/' || stored_relative_path,file_size,file_hash FROM machine_simulation_assets"
+            : string.Empty;
+        command.CommandText = $"""
             SELECT 'gcode/' || stored_relative_path,file_size,file_hash FROM gcode_releases
             UNION ALL SELECT 'gcode/' || stored_relative_path,file_size,file_hash FROM tool_table_releases
             UNION ALL SELECT 'gcode/' || stored_relative_path,file_size,file_hash FROM gcode_release_subprograms
             UNION ALL SELECT 'production/' || stored_relative_path,file_size,file_hash FROM production_package_artifacts
             UNION ALL SELECT 'production/' || manifest_relative_path,NULL,manifest_hash FROM production_packages
-            UNION ALL SELECT 'eink/' || storage_relative_path,byte_length,sha256 FROM eink_package_files;
+            UNION ALL SELECT 'eink/' || storage_relative_path,byte_length,sha256 FROM eink_package_files
+            {machineAssets};
             """;
         var files = new Dictionary<string, RecoveryReference>(StringComparer.OrdinalIgnoreCase);
         await using (var reader = await command.ExecuteReaderAsync(token))

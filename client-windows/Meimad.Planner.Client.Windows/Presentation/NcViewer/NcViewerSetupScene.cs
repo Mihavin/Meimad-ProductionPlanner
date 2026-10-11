@@ -15,16 +15,22 @@ internal sealed record NcViewerSceneFile(string Name, string Path, string Kind);
 /// What the NC viewer draws around the toolpath: the Machine 3D models of every NC viewer machine
 /// (keyed by viewer machine id, so the page's own machine choice picks the matching set), and the
 /// opened Operation's Cimatron Work CS with its fixture and rest-material files.
+/// <paramref name="CompiledMachines"/> are the Machines' published Machine Designer definitions
+/// (schema v114) compiled for the engine; their meshes are in <paramref name="MachineModels"/>
+/// under the compiled machine id.
 /// </summary>
 internal sealed record NcViewerSetupScene(
     string? OperationTitle,
     CaseOperationCamSetup? WorkCs,
     IReadOnlyList<NcViewerSceneFile> Files,
-    IReadOnlyDictionary<string, IReadOnlyList<NcViewerMachineModel>> MachineModels)
+    IReadOnlyDictionary<string, IReadOnlyList<NcViewerMachineModel>> MachineModels,
+    IReadOnlyList<NcViewerCompiledMachine>? CompiledMachines = null)
 {
     internal static NcViewerSetupScene Empty { get; } = new(null, null, [], new Dictionary<string, IReadOnlyList<NcViewerMachineModel>>());
 
-    internal bool IsEmpty => WorkCs is null && Files.Count == 0 && MachineModels.Count == 0;
+    internal IReadOnlyList<NcViewerCompiledMachine> Compiled => CompiledMachines ?? [];
+
+    internal bool IsEmpty => WorkCs is null && Files.Count == 0 && MachineModels.Count == 0 && Compiled.Count == 0;
 }
 
 /// <summary>Builds the NC viewer's setup scene from Server data.</summary>
@@ -80,7 +86,17 @@ internal static class NcViewerScenes
         {
             // No files: the machine models are still drawn.
         }
-        return new NcViewerSetupScene(operationTitle, workCs, files, MachineModels(machines, machineId));
+        var compiled = await NcViewerMachineDefinitions.LoadAsync(api, cancellationToken: cancellationToken);
+        return new NcViewerSetupScene(operationTitle, workCs, files, WithCompiledModels(MachineModels(machines, machineId), compiled), compiled);
+    }
+
+    /// <summary>The template-keyed models plus each compiled Machine's meshes under its compiled id.</summary>
+    internal static IReadOnlyDictionary<string, IReadOnlyList<NcViewerMachineModel>> WithCompiledModels(
+        IReadOnlyDictionary<string, IReadOnlyList<NcViewerMachineModel>> models, IReadOnlyList<NcViewerCompiledMachine> compiled)
+    {
+        var result = new Dictionary<string, IReadOnlyList<NcViewerMachineModel>>(models, StringComparer.Ordinal);
+        foreach (var machine in compiled.Where(machine => machine.Models.Count > 0)) result[machine.CompiledId] = machine.Models;
+        return result;
     }
 
     /// <summary>The fixture and rest-material ("stock") files linked to one Operation, in list order.</summary>
@@ -125,16 +141,19 @@ internal static class NcViewerMeshes
     private const int MaximumTriangles = 4_000_000;
 
     internal static bool IsSupported(string path) =>
-        Path.GetExtension(path).ToLowerInvariant() is ".stl" or ".stp" or ".step";
+        Path.GetExtension(path).ToLowerInvariant() is ".stl" or ".stp" or ".step" or ".glb";
 
     internal static byte[] ReadAsStl(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) throw new FileNotFoundException("The model file was not found.", path);
-        if (!IsSupported(path)) throw new InvalidDataException("Only STL and STEP models can be shown.");
+        if (!IsSupported(path)) throw new InvalidDataException("Only STL, STEP and GLB models can be shown.");
         if (new FileInfo(path).Length > MaximumFileBytes) throw new InvalidDataException("The model file is larger than 200 MB.");
-        return string.Equals(Path.GetExtension(path), ".stl", StringComparison.OrdinalIgnoreCase)
-            ? File.ReadAllBytes(path)
-            : ToBinaryStl(StepSolidMeshLoader.LoadMesh(path));
+        return Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".stl" => File.ReadAllBytes(path),
+            ".glb" => GlbMeshReader.ReadAsStl(File.ReadAllBytes(path)),
+            _ => ToBinaryStl(StepSolidMeshLoader.LoadMesh(path))
+        };
     }
 
     /// <summary>Binary STL of a tessellated model (normals left zero; the page recomputes them).</summary>
