@@ -533,9 +533,9 @@ public partial class CaseWorkspaceView : UserControl
             .Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
         try
         {
-            // The snapshot is stored on the Server as the Case picture, not saved as a file link.
+            // The snapshot goes to the Working Folder's _MeimadPlanner folder and to the Server as the Case picture.
             var png = StepViewer.SnapshotPng();
-            _ = viewModel.UploadPictureAsync(png, $"{safePartNumber}-step-preview.png");
+            _ = viewModel.SaveSnapshotAsync(png, $"{safePartNumber}-step-preview.png");
         }
         catch (Exception exception) when (exception is IOException
             or UnauthorizedAccessException

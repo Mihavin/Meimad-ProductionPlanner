@@ -462,6 +462,27 @@ public sealed class NcViewerSessionTests : IDisposable
     });
 
     [Fact]
+    public void The_3d_view_background_is_saved_with_the_viewer_settings_and_bad_colors_keep_the_previous_value() => SingleThread.Run(async () =>
+    {
+        var ui = new FakeUi();
+        var store = new NcViewerSettingsStore(Path.Combine(folder, "settings.json"));
+        using var session = new NcViewerSession(Request(readOnly: false), ui, store);
+
+        var initial = await ui.InvokeAsync(session, "getSettings");
+        Assert.Equal("gradient", initial.GetProperty("backgroundMode").GetString());
+        Assert.Equal("#33475B", initial.GetProperty("backgroundTop").GetString());
+
+        var saved = await ui.InvokeAsync(session, "saveSettings", new { backgroundMode = "solid", backgroundTop = "#ffeedd", backgroundBottom = "#123456" });
+        Assert.Equal("solid", saved.GetProperty("backgroundMode").GetString());
+        Assert.Equal("#FFEEDD", saved.GetProperty("backgroundTop").GetString());
+        Assert.Equal("#123456", store.Load().BackgroundBottom);
+
+        await ui.InvokeAsync(session, "saveSettings", new { backgroundMode = "plaid", backgroundTop = "red", backgroundBottom = "#12345" });
+        var kept = store.Load();
+        Assert.Equal(("gradient", "#FFEEDD", "#123456"), (kept.BackgroundMode, kept.BackgroundTop, kept.BackgroundBottom));
+    });
+
+    [Fact]
     public void Dialect_comes_from_the_machine_or_from_all_machines_of_the_postprocessor()
     {
         PlannerMachine Machine(string id, string dialect, params string[] posts) => new(

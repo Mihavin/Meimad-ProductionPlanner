@@ -7,7 +7,8 @@
   (at most 20 MB) and `file_hash` (SHA-256 hex);
 - `stored_relative_path`: below the G-code release root, `case-pictures/<case>/<sha256>.<ext>`, so the recovery set
   backs it up and restores it with the releases;
-- `source_reference`: the picture link it was copied from, or null for an upload;
+- `source_reference`: the picture link it was copied from, the Working Folder file a STEP snapshot was also saved as
+  (`_MeimadPlanner\<part>-step-preview.png`), or null;
 - `created_at`, `created_by`.
 
 A stored picture wins over the link in `cases.preview_reference` everywhere (Planning Board, Case pool, TV, job

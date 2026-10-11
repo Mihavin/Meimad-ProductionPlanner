@@ -41,17 +41,28 @@ export function createToolpathViewer(options) {
         constructor(...args) { super(...args); captured.cameras.push(this); }
       },
       // The toolpath view asks for the discrete (high-performance) GPU on dual-GPU PCs.
+      // An alpha canvas, so the 3D view background (meimad-background.js) can show through.
       WebGLRenderer: class extends THREE.WebGLRenderer {
         constructor(parameters = {}, ...rest) {
-          super({ powerPreference: "high-performance", ...parameters }, ...rest);
+          super({ powerPreference: "high-performance", ...parameters, alpha: true }, ...rest);
           captured.renderers.push(this);
+          this.meimadTransparentBackground = false;
         }
 
         // Meimad scripts adjust the scene just before it is drawn, after the upstream viewer has set
         // its own frames (meimad-machine-frame.js moves the part with a table that travels in X/Y).
+        // With a Meimad background the on-screen draw clears transparent; the picking pass (a render
+        // target) keeps the viewer's own clear color.
         render(scene, camera) {
           emit("beforeRender", scene);
-          super.render(scene, camera);
+          const transparent = this.meimadTransparentBackground && this.getRenderTarget() === null;
+          const alpha = transparent ? this.getClearAlpha() : 1;
+          if (transparent) this.setClearAlpha(0);
+          try {
+            super.render(scene, camera);
+          } finally {
+            if (transparent) this.setClearAlpha(alpha);
+          }
         }
       }
     };

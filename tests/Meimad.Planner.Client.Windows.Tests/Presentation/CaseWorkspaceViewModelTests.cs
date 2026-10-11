@@ -61,6 +61,48 @@ public sealed class CaseWorkspaceViewModelTests
     }
 
     [Fact]
+    public async Task A_snapshot_is_saved_in_the_working_folder_meimad_folder_and_stored_on_the_Server()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "MeimadPlanner.Snapshot.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var api = new FakeApiClient(CreateCase() with { WorkingFolderPath = folder });
+            var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+            viewModel.AttachSession(api, "windows-1", EditorStatus(7));
+            await viewModel.EnsureLoadedAsync();
+            await viewModel.SelectCaseAsync(viewModel.Cases.Single());
+            var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+            File.WriteAllBytes(Path.Combine(folder, "PN-100-step-preview.png"), [1, 2, 3]); // an engineering file of that name stays
+
+            await viewModel.SaveSnapshotAsync(png, "PN-100-step-preview.png");
+
+            var saved = Path.Combine(folder, "_MeimadPlanner", "PN-100-step-preview.png");
+            Assert.Equal(png, File.ReadAllBytes(saved));
+            Assert.Equal([1, 2, 3], File.ReadAllBytes(Path.Combine(folder, "PN-100-step-preview.png")));
+            Assert.Equal(png, api.LastPictureBytes);
+            Assert.Equal(saved, api.LastPictureSource);
+            Assert.Contains(saved, viewModel.StatusMessage, StringComparison.Ordinal);
+
+            // No Working Folder on disk: the picture is still stored on the Server, and the status says why no file.
+            var missing = new FakeApiClient(CreateCase() with { WorkingFolderPath = Path.Combine(folder, "missing") });
+            var other = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+            other.AttachSession(missing, "windows-1", EditorStatus(7));
+            await other.EnsureLoadedAsync();
+            await other.SelectCaseAsync(other.Cases.Single());
+            await other.SaveSnapshotAsync(png, "PN-100-step-preview.png");
+            Assert.Equal(png, missing.LastPictureBytes);
+            Assert.Null(missing.LastPictureSource);
+            Assert.Contains("not saved in the Working Folder", other.StatusMessage, StringComparison.Ordinal);
+            Assert.False(Directory.Exists(Path.Combine(folder, "missing")));
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    [Fact]
     public async Task A_case_loaded_after_sign_in_enables_the_browse_buttons_once_loading_ends()
     {
         var api = new FakeApiClient(CreateCase());
@@ -1027,7 +1069,15 @@ public sealed class CaseWorkspaceViewModelTests
         internal byte[]? LastPictureBytes { get; private set; }
         internal string? LastPictureName { get; private set; }
         internal string? LastPictureEntityTag { get; private set; }
+        internal string? LastPictureSource { get; private set; }
         private CasePictureInfo? picture;
+
+        public Task<CaseResource> UploadCasePictureAsync(
+            string caseId, string fileName, byte[] bytes, string? sourcePath, string entityTag, string clientId, CancellationToken cancellationToken = default)
+        {
+            LastPictureSource = sourcePath;
+            return UploadCasePictureAsync(caseId, fileName, bytes, entityTag, clientId, cancellationToken);
+        }
 
         public Task<CasePictureInfo?> GetCasePictureAsync(string caseId, CancellationToken cancellationToken = default) =>
             Task.FromResult(picture);

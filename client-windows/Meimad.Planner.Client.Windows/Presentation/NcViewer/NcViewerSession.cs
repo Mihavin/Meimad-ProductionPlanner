@@ -385,6 +385,12 @@ internal sealed class NcViewerSession : IDisposable
                 .Where(entry => entry.Folder.Length > 0)
                 .ToDictionary(entry => entry.Name, entry => entry.Folder, StringComparer.Ordinal);
         }
+        if (partial.TryGetProperty("backgroundMode", out var backgroundMode) && backgroundMode.ValueKind == JsonValueKind.String)
+            next.BackgroundMode = backgroundMode.GetString() == "solid" ? "solid" : "gradient";
+        if (partial.TryGetProperty("backgroundTop", out var backgroundTop) && backgroundTop.ValueKind == JsonValueKind.String)
+            next.BackgroundTop = NcViewerSettings.Color(backgroundTop.GetString()) ?? next.BackgroundTop;
+        if (partial.TryGetProperty("backgroundBottom", out var backgroundBottom) && backgroundBottom.ValueKind == JsonValueKind.String)
+            next.BackgroundBottom = NcViewerSettings.Color(backgroundBottom.GetString()) ?? next.BackgroundBottom;
         if (!string.IsNullOrWhiteSpace(next.MachineParametersFile) && !File.Exists(next.MachineParametersFile))
         {
             throw new InvalidOperationException($"CNC parameter file not found: {next.MachineParametersFile}");
@@ -1438,6 +1444,9 @@ internal sealed class NcViewerSession : IDisposable
             toolTableFile = settings.ToolTableFile,
             programMemory = settings.ProgramMemory,
             workOffsets = settings.WorkOffsets,
+            backgroundMode = settings.BackgroundMode == "solid" ? "solid" : "gradient",
+            backgroundTop = NcViewerSettings.Color(settings.BackgroundTop) ?? NcViewerSettings.DefaultBackgroundTop,
+            backgroundBottom = NcViewerSettings.Color(settings.BackgroundBottom) ?? NcViewerSettings.DefaultBackgroundBottom,
             referenceWorkspace = string.Empty,
             aiToolRecognitionEnabled = false,
             aiModel = string.Empty,

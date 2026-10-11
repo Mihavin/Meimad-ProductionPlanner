@@ -6,8 +6,9 @@
   `{ caseId, fileName, mediaType, sizeBytes, sha256, sourceReference, createdAt, createdBy }`.
   - `404 picture_not_stored` when the Case has none; `404 resource_not_found` for an unknown Case.
   - Every signed-in user may read it.
-- `PUT /api/v1/cases/{caseId}/picture?name=<file>` stores a raw image body (PNG, JPEG, BMP or GIF, checked by
-  content, at most 20 MB) as the Case picture.
+- `PUT /api/v1/cases/{caseId}/picture?name=<file>[&source=<path>]` stores a raw image body (PNG, JPEG, BMP or GIF,
+  checked by content, at most 20 MB) as the Case picture. The optional `source` names the file the picture was also
+  saved as (a STEP snapshot in the Working Folder's `_MeimadPlanner` folder) and is returned as `sourceReference`.
   - It needs `cases.edit` and `If-Match: "case:{id}:v{n}"`: a missing tag is `428`, a stale one
     `412 resource_version_stale`.
   - It clears the Case's picture link, increments the Case version, and returns the Case with its new ETag.

@@ -9,7 +9,8 @@ namespace Meimad.Planner.Server.Api.Cases;
 
 /// <summary>
 /// <c>/api/v1/cases/{caseId}/picture</c> (schema v115): the Case picture stored on the Server. Every signed-in user reads
-/// its details; PUT (raw PNG/JPEG/BMP/GIF body ≤ 20 MB, <c>?name=</c>) and DELETE need <c>cases.edit</c> and the Case's
+/// its details; PUT (raw PNG/JPEG/BMP/GIF body ≤ 20 MB, <c>?name=</c>, optional <c>&amp;source=</c> naming the file it was
+/// also saved as) and DELETE need <c>cases.edit</c> and the Case's
 /// <c>If-Match</c>, change the Case's version and return the Case. The image itself is served by <c>GET …/preview</c>,
 /// which prefers the stored picture over the Case's picture link.
 /// </summary>
@@ -37,6 +38,7 @@ internal static class CasePictureEndpoints
     private static async Task<IResult> PutAsync(
         string caseId,
         string? name,
+        string? source,
         HttpContext httpContext,
         CaseService cases,
         SqliteCasePictureRepository repository,
@@ -65,7 +67,10 @@ internal static class CasePictureEndpoints
             var actor = SignedInActor.Require(authority!);
             var now = timeProvider.GetUtcNow();
             if (await cases.GetByIdAsync(caseId, cancellationToken) is null) return CaseNotFound(httpContext);
-            var picture = await store.WriteAsync(caseId, name, buffer.ToArray(), null, actor, now, cancellationToken);
+            // `source` names the file the picture was also saved as (a STEP snapshot in the Working Folder); display only.
+            var sourceReference = string.IsNullOrWhiteSpace(source) ? null : source.Trim();
+            if (sourceReference is { Length: > 1000 }) sourceReference = sourceReference[..1000];
+            var picture = await store.WriteAsync(caseId, name, buffer.ToArray(), sourceReference, actor, now, cancellationToken);
             return await ResultAsync(await repository.SaveAsync(picture, expectedVersion, actor, now, cancellationToken),
                 caseId, httpContext, cases, cancellationToken);
         }

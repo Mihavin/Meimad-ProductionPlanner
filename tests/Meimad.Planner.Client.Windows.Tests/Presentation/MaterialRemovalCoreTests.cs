@@ -288,6 +288,43 @@ public sealed class MaterialRemovalCoreTests : IDisposable
     }
 
     [Fact]
+    public void Undercuts_and_tilted_cuts_are_drawn_as_a_closed_surface_that_reloads_with_every_slab()
+    {
+        // A slot cut from the side under an untouched top, a 45 degree groove and a through hole: the
+        // drawn surface must enclose exactly the material left, so reading it back as an STL stock (the
+        // next Operation's stock) gives every column the same slabs.
+        var result = Run("""
+            const s = M.createMillStock({ minX: 0, maxX: 40, minY: 0, maxY: 40, minZ: -30, maxZ: 0 }, 0.5);
+            const tool = { radius: 3, type: "end-mill", length: 50 };
+            M.cutMillSegment(s, [{ x: 32, y: -5, z: -15 }, { x: 32, y: 30, z: -15 }], tool, { x: 1, y: 0, z: 0 });
+            M.cutMillSegment(s, [{ x: 4, y: -5, z: -10 }, { x: 4, y: 45, z: -10 }], tool, { x: -Math.SQRT1_2, y: 0, z: Math.SQRT1_2 });
+            M.cutMillSegment(s, [{ x: 20, y: 20, z: -8 }, { x: 20, y: 38, z: -8 }], { radius: 2, type: "end-mill" });
+            M.cutMillSegment(s, [{ x: 10, y: 10, z: -40 }], { radius: 2.4, type: "end-mill" });
+            const back = M.millStockFromStl(M.readStl(M.writeStl(M.millTriangles(s), "t")), 0.5);
+            const a = [], b = [];
+            let differ = 0, columns = 0;
+            for (let iy = 1; iy < s.ny - 1; iy++) for (let ix = 1; ix < s.nx - 1; ix++) {
+              const n = M.columnSlabs(s, iy * s.nx + ix, a);
+              const m = M.columnSlabs(back, iy * back.nx + ix, b);
+              columns++;
+              let same = n === m;
+              for (let k = 0; same && k < n; k++) if (Math.abs(a[k] - b[k]) > 0.05) same = false;
+              if (!same) differ++;
+            }
+            const slab = (x, y) => { const n = M.columnSlabs(back, Math.round(y / 0.5) * back.nx + Math.round(x / 0.5), a); return a.slice(0, n); };
+            return { columns, differ, sideSlot: slab(36, 20), beyondSlot: slab(36, 35), undercut: back.undercut };
+            """);
+        Assert.True(result.GetProperty("columns").GetInt32() > 6000);
+        Assert.Equal(0, result.GetProperty("differ").GetInt32());
+        var slot = result.GetProperty("sideSlot").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+        Assert.Equal(4, slot.Length); // [-30, -18] under the slot and [-12, 0] over it
+        Assert.Equal(-18, slot[1], 0);
+        Assert.Equal(-12, slot[2], 0);
+        Assert.Equal(2, result.GetProperty("beyondSlot").GetArrayLength());
+        Assert.True(result.GetProperty("undercut").GetBoolean());
+    }
+
+    [Fact]
     public void Round_blanks_have_no_material_outside_the_cylinder()
     {
         var result = Run("""

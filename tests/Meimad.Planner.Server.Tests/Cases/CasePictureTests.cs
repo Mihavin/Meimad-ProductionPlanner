@@ -40,7 +40,7 @@ public sealed class CasePictureTests
             using (var forbidden = await PutAsync(client, caseId, tag, "snap.png", Png))
                 Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
 
-            using var saved = await PutAsync(client, caseId, tag, "PN-PIC-step-preview.png", Png);
+            using var saved = await PutAsync(client, caseId, tag, "PN-PIC-step-preview.png&source=" + Uri.EscapeDataString(@"\\srv\cases\PN-PIC\_MeimadPlanner\PN-PIC-step-preview.png"), Png);
             var savedText = await saved.Content.ReadAsStringAsync();
             Assert.True(saved.StatusCode == HttpStatusCode.OK, savedText);
             Assert.NotEqual(tag, saved.Headers.ETag!.Tag);
@@ -56,6 +56,7 @@ public sealed class CasePictureTests
             var info = JsonNode.Parse(await client.GetStringAsync($"/api/v1/cases/{caseId}/picture"))!;
             Assert.Equal("PN-PIC-step-preview.png", info["fileName"]!.GetValue<string>());
             Assert.Equal(Png.Length, info["sizeBytes"]!.GetValue<long>());
+            Assert.Equal(@"\\srv\cases\PN-PIC\_MeimadPlanner\PN-PIC-step-preview.png", info["sourceReference"]!.GetValue<string>());
 
             // The file is below the release root and in the recovery set.
             var root = application.Services.GetRequiredService<GCodeOptions>().ResolvedReleaseRoot;
@@ -158,7 +159,7 @@ public sealed class CasePictureTests
 
     private static async Task<HttpResponseMessage> PutAsync(HttpClient client, string caseId, string tag, string name, byte[] bytes)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/cases/{caseId}/picture?name={Uri.EscapeDataString(name)}")
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/cases/{caseId}/picture?name={(name.Contains('&') ? name[..name.IndexOf('&')] : Uri.EscapeDataString(name))}{(name.Contains('&') ? name[name.IndexOf('&')..] : string.Empty)}")
         {
             Content = new ByteArrayContent(bytes)
         };

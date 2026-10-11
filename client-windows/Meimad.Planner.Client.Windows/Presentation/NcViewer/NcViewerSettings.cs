@@ -22,6 +22,14 @@ internal sealed class NcViewerSettings
     public Dictionary<string, string> ProgramMemory { get; set; } = new(StringComparer.Ordinal);
     public JsonElement? WorkOffsets { get; set; }
 
+    /// <summary>3D view background: <c>gradient</c> (top to bottom) or <c>solid</c> (the top color).</summary>
+    public string BackgroundMode { get; set; } = "gradient";
+    public string BackgroundTop { get; set; } = DefaultBackgroundTop;
+    public string BackgroundBottom { get; set; } = DefaultBackgroundBottom;
+
+    internal const string DefaultBackgroundTop = "#33475B";
+    internal const string DefaultBackgroundBottom = "#0B1016";
+
     internal NcViewerSettings Clone() => new()
     {
         Machine = Machine,
@@ -31,8 +39,15 @@ internal sealed class NcViewerSettings
         MachineParametersFile = MachineParametersFile,
         ToolTableFile = ToolTableFile,
         ProgramMemory = new Dictionary<string, string>(ProgramMemory, StringComparer.Ordinal),
-        WorkOffsets = WorkOffsets?.Clone()
+        WorkOffsets = WorkOffsets?.Clone(),
+        BackgroundMode = BackgroundMode,
+        BackgroundTop = BackgroundTop,
+        BackgroundBottom = BackgroundBottom
     };
+
+    /// <summary>A <c>#RRGGBB</c> color in upper case, or null.</summary>
+    internal static string? Color(string? value) =>
+        value is { Length: 7 } && value[0] == '#' && value[1..].All(Uri.IsHexDigit) ? value.ToUpperInvariant() : null;
 }
 
 internal sealed class NcViewerSettingsStore

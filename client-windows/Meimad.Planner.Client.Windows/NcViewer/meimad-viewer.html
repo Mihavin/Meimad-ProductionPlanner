@@ -422,6 +422,25 @@
         </section>
 
         <!-- AI tool recognition is not part of Meimad Planner; renderer.js requires these fields. -->
+        <section class="settings-section" aria-labelledby="backgroundSettingsHeading">
+          <h3 id="backgroundSettingsHeading">3D view background</h3>
+          <div class="settings-grid compact-grid">
+            <label for="settingsBackgroundMode">Background
+              <select id="settingsBackgroundMode">
+                <option value="gradient">Gradient</option>
+                <option value="solid">Solid</option>
+              </select>
+            </label>
+            <label for="settingsBackgroundTop">Top color
+              <input id="settingsBackgroundTop" type="color">
+            </label>
+            <label for="settingsBackgroundBottom">Bottom color
+              <input id="settingsBackgroundBottom" type="color">
+            </label>
+          </div>
+          <button id="settingsBackgroundReset" class="command-button" type="button">Default background</button>
+          <p class="settings-note">Changes show at once; Save settings keeps them on this PC.</p>
+        </section>
         <section class="settings-section meimad-hidden" aria-hidden="true">
           <input id="settingsAiEnabled" name="aiToolRecognitionEnabled" type="checkbox">
           <input id="settingsAiModel" name="aiModel" type="text">
@@ -624,5 +643,6 @@
   <script src="./meimad-machine-frame.js"></script>
   <script src="./meimad-axes.js"></script>
   <script src="./meimad-scene.js"></script>
+  <script src="./meimad-background.js"></script>
 </body>
 </html>

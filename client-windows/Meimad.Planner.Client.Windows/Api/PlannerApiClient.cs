@@ -320,6 +320,9 @@ internal interface IPlannerApiClient : IDisposable
     /// <summary>Stores <paramref name="bytes"/> (PNG, JPEG, BMP or GIF) as the Case picture on the Server; returns the changed Case.</summary>
     Task<CaseResource> UploadCasePictureAsync(string caseId, string fileName, byte[] bytes, string entityTag, string clientId, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
+    /// <summary>As <see cref="UploadCasePictureAsync(string, string, byte[], string, string, CancellationToken)"/>, recording the file the picture was also saved as.</summary>
+    Task<CaseResource> UploadCasePictureAsync(string caseId, string fileName, byte[] bytes, string? sourcePath, string entityTag, string clientId, CancellationToken cancellationToken = default) =>
+        UploadCasePictureAsync(caseId, fileName, bytes, entityTag, clientId, cancellationToken);
     Task<CaseResource> DeleteCasePictureAsync(string caseId, string entityTag, string clientId, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
@@ -1508,11 +1511,16 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return await ReadSuccessAsync<CasePictureInfo>(response, cancellationToken);
     }
 
+    public Task<CaseResource> UploadCasePictureAsync(
+        string caseId, string fileName, byte[] bytes, string entityTag, string clientId, CancellationToken cancellationToken = default) =>
+        UploadCasePictureAsync(caseId, fileName, bytes, null, entityTag, clientId, cancellationToken);
+
     public async Task<CaseResource> UploadCasePictureAsync(
-        string caseId, string fileName, byte[] bytes, string entityTag, string clientId, CancellationToken cancellationToken = default)
+        string caseId, string fileName, byte[] bytes, string? sourcePath, string entityTag, string clientId, CancellationToken cancellationToken = default)
     {
+        var source = string.IsNullOrWhiteSpace(sourcePath) ? string.Empty : "&source=" + Uri.EscapeDataString(sourcePath);
         using var request = CreateRequest(HttpMethod.Put,
-            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/picture?name={Uri.EscapeDataString(Path.GetFileName(fileName))}", clientId);
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/picture?name={Uri.EscapeDataString(Path.GetFileName(fileName))}{source}", clientId);
         request.Headers.TryAddWithoutValidation("If-Match", entityTag);
         request.Content = new ByteArrayContent(bytes);
         request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");

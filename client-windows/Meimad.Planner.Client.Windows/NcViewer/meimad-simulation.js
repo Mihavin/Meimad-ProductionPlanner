@@ -477,7 +477,7 @@
       workerReady = true;
       const notes = toolNotes();
       elements.note.textContent = `Stock grid: ${data.cells.toLocaleString()} cells at ${Number(data.resolution).toFixed(3)} mm` +
-        (model && model.kind !== "lathe" ? " · grey: untouched top, cyan to violet: deeper cuts" : "") +
+        (model && model.kind !== "lathe" ? " · grey: untouched stock faces, cyan to violet: deeper cuts" : "") +
         (tiltedMoves ? ` · ${tiltedMoves} tilted-axis cutting move(s)` : "") +
         (notes.sized.length ? ` · Cut with the body size from the tool name: ${notes.sized.join(", ")}` : "");
       if (notes.missing.length) {
@@ -569,33 +569,32 @@
     hooks.upstream.render();
   }
 
-  // Mill: the untouched top grey, cuts from light cyan (shallow) to violet (deep) by their depth below the
-  // stock top. Lathe: one light steel color (the shape reads from the faceted shading).
+  // Mill: the stock's own faces grey, cuts from light cyan (shallow) to violet (deep) by their depth
+  // below the nearest face of the stock's box (the top, a side or the bottom), so a pocket cut from
+  // the side by a tilted tool reads like one cut from above. Lathe: one light steel color (the shape
+  // reads from the faceted shading).
   function depthColors(positions, kind) {
     const colors = new Float32Array(positions.length);
-    let top = -Infinity;
-    let bottom = Infinity;
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let index = 0; index + 2 < positions.length; index += 3) {
       const x = positions[index];
       const y = positions[index + 1];
       const z = positions[index + 2];
-      if (z > top) top = z;
-      if (z < bottom) bottom = z;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
     }
-    // The stock's own side faces are not cuts: their vertices lie on the outer rectangle.
-    const edge = Math.max(1e-4, Math.max(maxX - minX, maxY - minY) * 1e-6);
-    const onSide = (x, y) => x - minX < edge || maxX - x < edge || y - minY < edge || maxY - y < edge;
-    const range = Math.max(1e-6, top - bottom);
-    const untouched = Math.max(0.02, range * 0.002);
+    const depthOf = (x, y, z) => Math.min(x - minX, maxX - x, y - minY, maxY - y, z - minZ, maxZ - z);
+    // The deepest a cut can reach: the middle of the box's thinnest direction.
+    const range = Math.max(1e-6, Math.min(maxX - minX, maxY - minY, maxZ - minZ) / 2);
+    const untouched = Math.max(0.02, Math.max(maxX - minX, maxY - minY, maxZ - minZ) * 0.002);
     for (let index = 0; index + 2 < positions.length; index += 3) {
       let r = 0.73, g = 0.76, b = 0.80;
-      if (kind !== "lathe" && !onSide(positions[index], positions[index + 1])) {
-        const depth = top - positions[index + 2];
+      if (kind !== "lathe") {
+        const depth = depthOf(positions[index], positions[index + 1], positions[index + 2]);
         if (depth > untouched) {
           const t = Math.min(1, depth / range);
           // HSL hue 190 deg (cyan) to 275 deg (violet), lighter when shallow.

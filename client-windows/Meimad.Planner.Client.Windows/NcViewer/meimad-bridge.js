@@ -110,8 +110,17 @@
 
   const onChannel = (channel) => (callback) => listen(channel, callback);
 
+  // Every settings answer is also reported to Meimad scripts (meimad-background.js).
+  const reportSettings = (promise) => promise.then((settings) => {
+    if (settings && typeof settings === "object") window.dispatchEvent(new CustomEvent("meimad:settings", { detail: settings }));
+    return settings;
+  });
+
   window.fanucDesktop = Object.freeze({
-    getInitialState: () => invoke("getInitialState"),
+    getInitialState: () => invoke("getInitialState").then((state) => {
+      if (state && state.settings) window.dispatchEvent(new CustomEvent("meimad:settings", { detail: state.settings }));
+      return state;
+    }),
     openFile: () => invoke("openFile"),
     newFile: () => invoke("newFile"),
     saveFile: (text) => invoke("saveFile", text),
@@ -121,9 +130,13 @@
     confirmFlush: (id) => send("document:flushed", { id }),
     onFlushRequest: onChannel("document:flush-request"),
     updateSelection: (line) => send("document:selection", line),
-    getSettings: () => invoke("getSettings"),
-    openSettings: () => invoke("openSettings"),
-    saveSettings: (partial) => invoke("saveSettings", partial),
+    getSettings: () => reportSettings(invoke("getSettings")),
+    openSettings: () => reportSettings(invoke("openSettings")),
+    // The vendored form saves its own fields; the Meimad 3D view background is added here.
+    saveSettings: (partial) => reportSettings(invoke("saveSettings", {
+      ...partial,
+      ...(window.meimadBackground ? window.meimadBackground.formValues() : {})
+    })),
     chooseProgramMemoryFolder: (machineId) => invoke("chooseProgramMemoryFolder", machineId),
     reloadXml: () => invoke("reloadXml"),
     setApiKey: () => Promise.reject(new Error("AI features are not part of Meimad Planner.")),

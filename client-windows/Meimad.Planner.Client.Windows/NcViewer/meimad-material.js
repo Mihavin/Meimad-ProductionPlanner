@@ -1,6 +1,7 @@
 /*
  * Meimad Planner material removal core (pure functions, no DOM): a column stock for milling
- * (per grid point the topmost slab of material plus any undercut slabs below it; a vertical
+ * (per grid point the topmost slab of material plus any undercut slabs below it, drawn exactly
+ * below the top surface so undercuts and side cuts of tilted tools show; a vertical
  * tool lowers the top along its swept capsule, a tilted tool is stamped as a solid of
  * revolution along the motion) and an outer / inner radius profile per Z column for turning
  * (cut by the nose circle and the insert's body side), plus STL reading and writing. Loaded by
@@ -704,95 +705,206 @@
 
   // Mill: the top surface grid, the underside of the topmost slab (the flat bottom, or the
   // ceiling of an undercut), walls where material meets air, and the undercut slabs as boxes.
+  // Flat triangle positions that grow without copying every push.
+  function positionBuffer() {
+    let data = new Float32Array(1 << 16);
+    let length = 0;
+    const reserve = (count) => {
+      if (length + count <= data.length) return;
+      let size = data.length * 2;
+      while (size < length + count) size *= 2;
+      const next = new Float32Array(size);
+      next.set(data.subarray(0, length));
+      data = next;
+    };
+    return {
+      triangle(a, b, c) {
+        reserve(9);
+        data[length] = a[0]; data[length + 1] = a[1]; data[length + 2] = a[2];
+        data[length + 3] = b[0]; data[length + 4] = b[1]; data[length + 5] = b[2];
+        data[length + 6] = c[0]; data[length + 7] = c[1]; data[length + 8] = c[2];
+        length += 9;
+      },
+      // a-b-c-d counter-clockwise seen from the side the face looks to.
+      quad(a, b, c, d) {
+        this.triangle(a, b, c);
+        this.triangle(a, c, d);
+      },
+      result: () => data.slice(0, length)
+    };
+  }
+
+  // The slabs of one column, lowest first, into `into` ([lo, hi, lo, hi, ...]); returns their count
+  // times two. A zero-thickness slab (a column cut through) holds no material.
+  function columnSlabs(stock, index, into) {
+    let count = 0;
+    const top = stock.top[index];
+    if (isEmpty(top)) return 0;
+    const list = stock.extras.get(index);
+    if (list) {
+      for (let k = 0; k < list.length; k += 2) {
+        if (list[k + 1] > list[k] + EPSILON) {
+          into[count] = list[k];
+          into[count + 1] = list[k + 1];
+          count += 2;
+        }
+      }
+    }
+    const base = stock.base[index];
+    if (top > base + EPSILON) {
+      into[count] = base;
+      into[count + 1] = top;
+      count += 2;
+    }
+    return count;
+  }
+
+  // The parts of [lo, hi] outside the slabs `cover` (count numbers), into `into`; returns their count.
+  function uncovered(lo, hi, cover, count, into) {
+    let n = 0;
+    let from = lo;
+    for (let k = 0; k < count && from < hi - EPSILON; k += 2) {
+      const clo = cover[k];
+      const chi = cover[k + 1];
+      if (chi <= from + EPSILON) continue;
+      if (clo >= hi - EPSILON) break;
+      if (clo > from + EPSILON) {
+        into[n] = from;
+        into[n + 1] = clo;
+        n += 2;
+      }
+      from = Math.max(from, chi);
+    }
+    if (hi > from + EPSILON) {
+      into[n] = from;
+      into[n + 1] = hi;
+      n += 2;
+    }
+    return n;
+  }
+
+  // The mill stock's surface. The topmost material of every column is one smooth surface through
+  // the grid points (sloped between neighbouring heights, as a ball or tilted tool leaves it).
+  // Everything below it is exact on the cell boundaries (every grid point owns the square of one
+  // cell around it, clipped to the stock): undersides of overhangs, the slabs an undercut left,
+  // walls wherever a column has material its neighbour lacks below their tops, and the stock's
+  // bottom. A slot cut from the side shows as a slot, under an untouched top.
   function millTriangles(stock) {
-    const { nx, ny, cell, originX, originY, top, base, bottom } = stock;
-    const triangles = [];
-    const push = (a, b, c) => triangles.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+    const { nx, ny, cell, originX, originY, top } = stock;
+    const out = positionBuffer();
+    const half = cell / 2;
+    const maxX = originX + (nx - 1) * cell;
+    const maxY = originY + (ny - 1) * cell;
     const solid = (ix, iy) => ix >= 0 && iy >= 0 && ix < nx && iy < ny && !isEmpty(top[iy * nx + ix]);
     const at = (ix, iy) => [originX + ix * cell, originY + iy * cell, top[iy * nx + ix]];
-    const under = (ix, iy) => [originX + ix * cell, originY + iy * cell, base[iy * nx + ix]];
-    const undersideCells = stock.masked || stock.undercut;
+    // The top surface: one quad between every four grid points that hold material.
     for (let iy = 0; iy < ny - 1; iy += 1) {
       for (let ix = 0; ix < nx - 1; ix += 1) {
         if (!solid(ix, iy) || !solid(ix + 1, iy) || !solid(ix + 1, iy + 1) || !solid(ix, iy + 1)) continue;
-        const a = at(ix, iy);
-        const b = at(ix + 1, iy);
-        const c = at(ix + 1, iy + 1);
-        const d = at(ix, iy + 1);
-        push(a, b, c);
-        push(a, c, d);
-        if (undersideCells) {
-          const e = under(ix, iy);
-          const f = under(ix + 1, iy);
-          const g = under(ix + 1, iy + 1);
-          const h = under(ix, iy + 1);
-          push(e, g, f);
-          push(e, h, g);
+        out.quad(at(ix, iy), at(ix + 1, iy), at(ix + 1, iy + 1), at(ix, iy + 1));
+      }
+    }
+    const slabs = [];
+    const cover = [];
+    const parts = [];
+    const DIRECTIONS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    for (let iy = 0; iy < ny; iy += 1) {
+      const y = originY + iy * cell;
+      const y0 = Math.max(originY, y - half);
+      const y1 = Math.min(maxY, y + half);
+      let run = null;
+      const flush = () => {
+        if (run) out.quad([run.x0, y0, run.lo], [run.x0, y1, run.lo], [run.x1, y1, run.lo], [run.x1, y0, run.lo]);
+        run = null;
+      };
+      for (let ix = 0; ix < nx; ix += 1) {
+        const index = iy * nx + ix;
+        const height = top[index];
+        if (isEmpty(height)) {
+          flush();
+          continue;
+        }
+        const x = originX + ix * cell;
+        const x0 = Math.max(originX, x - half);
+        const x1 = Math.min(maxX, x + half);
+        // A corner of the cell outside every full quad (the rim of a round blank or a shaped stock)
+        // is closed flat at this point's height.
+        for (const [sx, sy] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) {
+          const cx = sx > 0 ? x1 : x0;
+          const cy = sy > 0 ? y1 : y0;
+          if (Math.abs(cx - x) < EPSILON || Math.abs(cy - y) < EPSILON) continue;
+          if (solid(ix + sx, iy) && solid(ix, iy + sy) && solid(ix + sx, iy + sy)) continue;
+          const corner = [[x, y, height], [cx, y, height], [cx, cy, height], [x, cy, height]];
+          if (sx * sy > 0) out.quad(corner[0], corner[1], corner[2], corner[3]);
+          else out.quad(corner[0], corner[3], corner[2], corner[1]);
+        }
+        const count = columnSlabs(stock, index, slabs);
+        // Undersides of every slab (the lowest one merged along the row) and tops of every slab under
+        // the topmost one.
+        if (count && run && Math.abs(run.lo - slabs[0]) < EPSILON) run.x1 = x1;
+        else {
+          flush();
+          if (count) run = { x0, x1, lo: slabs[0] };
+        }
+        for (let k = 0; k < count; k += 2) {
+          const lo = slabs[k];
+          if (k > 0) out.quad([x0, y0, lo], [x0, y1, lo], [x1, y1, lo], [x1, y0, lo]);
+          if (k + 2 < count) {
+            const hi = slabs[k + 1];
+            out.quad([x0, y0, hi], [x1, y0, hi], [x1, y1, hi], [x0, y1, hi]);
+          }
+        }
+        // Walls toward each neighbour: the material this column has and the neighbour lacks. Above
+        // the lower of the two tops the top surface already closes the gap.
+        for (const [dx, dy] of DIRECTIONS) {
+          const jx = ix + dx;
+          const jy = iy + dy;
+          const outside = jx < 0 || jy < 0 || jx >= nx || jy >= ny;
+          const neighbourSolid = !outside && !isEmpty(top[jy * nx + jx]);
+          const limit = neighbourSolid ? Math.min(height, top[jy * nx + jx]) : height;
+          const covered = neighbourSolid ? columnSlabs(stock, jy * nx + jx, cover) : 0;
+          // Along the stock's outer edge the top surface runs straight between grid points, so the
+          // wall's upper edge follows it: halfway to each neighbour along the edge.
+          const along = (ax, ay) => (outside && solid(ix + ax, iy + ay) ? (height + top[(iy + ay) * nx + ix + ax]) / 2 : height);
+          const plane = dx > 0 ? x1 : dx < 0 ? x0 : dy > 0 ? y1 : y0;
+          for (let k = 0; k < count; k += 2) {
+            const hi = Math.min(slabs[k + 1], limit);
+            if (!(hi > slabs[k] + EPSILON)) continue;
+            const pieces = uncovered(slabs[k], hi, cover, covered, parts);
+            for (let p = 0; p < pieces; p += 2) {
+              const lo = parts[p];
+              const upper = parts[p + 1];
+              const reachesTop = outside && upper >= height - EPSILON;
+              if (dx !== 0) {
+                const hiA = reachesTop ? Math.max(lo, along(0, -1)) : upper; // at y0
+                const hiB = reachesTop ? Math.max(lo, along(0, 1)) : upper;  // at y1
+                const a = [plane, y0, lo], b = [plane, y1, lo], c = [plane, y1, hiB], d = [plane, y0, hiA];
+                if (reachesTop) {
+                  const m = [plane, y, upper];
+                  const mLow = [plane, y, lo];
+                  if (dx > 0) { out.quad(a, mLow, m, d); out.quad(mLow, b, c, m); }
+                  else { out.quad(mLow, a, d, m); out.quad(b, mLow, m, c); }
+                } else if (dx > 0) out.quad(a, b, c, d);
+                else out.quad(b, a, d, c);
+              } else {
+                const hiA = reachesTop ? Math.max(lo, along(-1, 0)) : upper; // at x0
+                const hiB = reachesTop ? Math.max(lo, along(1, 0)) : upper;  // at x1
+                const a = [x0, plane, lo], b = [x1, plane, lo], c = [x1, plane, hiB], d = [x0, plane, hiA];
+                if (reachesTop) {
+                  const m = [x, plane, upper];
+                  const mLow = [x, plane, lo];
+                  if (dy > 0) { out.quad(mLow, a, d, m); out.quad(b, mLow, m, c); }
+                  else { out.quad(a, mLow, m, d); out.quad(mLow, b, c, m); }
+                } else if (dy > 0) out.quad(b, a, d, c);
+                else out.quad(a, b, c, d);
+              }
+            }
+          }
         }
       }
+      flush();
     }
-    // Vertical wall between two points along one grid edge, from their undersides up to their tops.
-    const wall = (a, b, aBase, bBase) => {
-      const a0 = [a[0], a[1], aBase];
-      const b0 = [b[0], b[1], bBase];
-      push(a, b0, b);
-      push(a, a0, b0);
-    };
-    const baseAt = (ix, iy) => base[iy * nx + ix];
-    if (!stock.masked) {
-      for (let ix = 0; ix < nx - 1; ix += 1) {
-        wall(at(ix + 1, 0), at(ix, 0), baseAt(ix + 1, 0), baseAt(ix, 0));
-        wall(at(ix, ny - 1), at(ix + 1, ny - 1), baseAt(ix, ny - 1), baseAt(ix + 1, ny - 1));
-      }
-      for (let iy = 0; iy < ny - 1; iy += 1) {
-        wall(at(0, iy), at(0, iy + 1), baseAt(0, iy), baseAt(0, iy + 1));
-        wall(at(nx - 1, iy + 1), at(nx - 1, iy), baseAt(nx - 1, iy + 1), baseAt(nx - 1, iy));
-      }
-      if (!undersideCells) {
-        const maxX = originX + (nx - 1) * cell;
-        const maxY = originY + (ny - 1) * cell;
-        push([originX, originY, bottom], [maxX, maxY, bottom], [maxX, originY, bottom]);
-        push([originX, originY, bottom], [originX, maxY, bottom], [maxX, maxY, bottom]);
-      }
-    } else {
-      // Round blank: a wall wherever a solid point borders an empty one, halfway between them.
-      const half = cell / 2;
-      for (let iy = 0; iy < ny; iy += 1) {
-        for (let ix = 0; ix < nx; ix += 1) {
-          if (!solid(ix, iy)) continue;
-          const p = at(ix, iy);
-          const b = baseAt(ix, iy);
-          if (!solid(ix + 1, iy)) wall([p[0] + half, p[1] - half, p[2]], [p[0] + half, p[1] + half, p[2]], b, b);
-          if (!solid(ix - 1, iy)) wall([p[0] - half, p[1] + half, p[2]], [p[0] - half, p[1] - half, p[2]], b, b);
-          if (!solid(ix, iy + 1)) wall([p[0] + half, p[1] + half, p[2]], [p[0] - half, p[1] + half, p[2]], b, b);
-          if (!solid(ix, iy - 1)) wall([p[0] - half, p[1] - half, p[2]], [p[0] + half, p[1] - half, p[2]], b, b);
-        }
-      }
-    }
-    // Undercut slabs below the topmost one: one box per grid cell and slab.
-    const half = cell / 2;
-    for (const [index, list] of stock.extras) {
-      const ix = index % nx;
-      const iy = Math.floor(index / nx);
-      const x0 = originX + ix * cell - half;
-      const x1 = x0 + cell;
-      const y0 = originY + iy * cell - half;
-      const y1 = y0 + cell;
-      for (let k = 0; k < list.length; k += 2) {
-        const lo = list[k];
-        const hi = list[k + 1];
-        if (!(hi > lo + EPSILON)) continue;
-        push([x0, y0, hi], [x1, y0, hi], [x1, y1, hi]);
-        push([x0, y0, hi], [x1, y1, hi], [x0, y1, hi]);
-        push([x0, y0, lo], [x1, y1, lo], [x1, y0, lo]);
-        push([x0, y0, lo], [x0, y1, lo], [x1, y1, lo]);
-        wall([x0, y0, hi], [x1, y0, hi], lo, lo);
-        wall([x1, y0, hi], [x1, y1, hi], lo, lo);
-        wall([x1, y1, hi], [x0, y1, hi], lo, lo);
-        wall([x0, y1, hi], [x0, y0, hi], lo, lo);
-      }
-    }
-    return new Float32Array(triangles);
+    return out.result();
   }
 
   // Lathe: the outer and inner profiles revolved about Z (scene X/Y = radius plane).
@@ -940,6 +1052,11 @@
   }
 
   // A mill stock from an STL: the highest surface above each grid point (2.5D) over the mesh's extent.
+  // A stock from a closed STL mesh: every grid point's vertical line enters and leaves the mesh at
+  // the triangles it crosses, so a column holds every slab the mesh has there (a part machined from
+  // the side in an earlier operation keeps its undercuts). A line that meets an odd number of
+  // faces (an open mesh) keeps one slab from its lowest to its highest crossing; a point the mesh
+  // does not cover holds no material.
   function millStockFromStl(positions, resolution, offset) {
     const extent = bounds(positions);
     if (!extent) return undefined;
@@ -950,20 +1067,53 @@
       minZ: extent.minZ + shift.z, maxZ: extent.maxZ + shift.z
     };
     const stock = createMillStock(box, resolution);
-    stock.top.fill(stock.bottom);
+    const crossings = new Map();
     for (let index = 0; index < positions.length; index += 9) {
-      rasterizeTriangle(stock,
+      rasterizeTriangle(stock, crossings,
         [positions[index] + shift.x, positions[index + 1] + shift.y, positions[index + 2] + shift.z],
         [positions[index + 3] + shift.x, positions[index + 4] + shift.y, positions[index + 5] + shift.z],
         [positions[index + 6] + shift.x, positions[index + 7] + shift.y, positions[index + 8] + shift.z]);
     }
+    stock.top.fill(EMPTY);
+    let empty = 0;
+    for (let index = 0; index < stock.top.length; index += 1) {
+      const list = crossings.get(index);
+      if (!list || !list.length) {
+        empty += 1;
+        continue;
+      }
+      list.sort((p, q) => p - q);
+      // Two faces meeting at an edge or vertex on the line are one crossing.
+      const z = [];
+      for (const value of list) if (!z.length || value - z[z.length - 1] > 1e-5) z.push(value);
+      const slabs = [];
+      if (z.length >= 2 && z.length % 2 === 0) {
+        for (let k = 0; k < z.length; k += 2) if (z[k + 1] > z[k] + EPSILON) slabs.push(z[k], z[k + 1]);
+      } else if (z.length >= 2) {
+        slabs.push(z[0], z[z.length - 1]);
+      }
+      if (!slabs.length) {
+        // A sheet the line only touches: keep it as a thin layer so the column is not lost.
+        stock.top[index] = z[z.length - 1];
+        stock.base[index] = z[z.length - 1];
+        continue;
+      }
+      stock.top[index] = slabs[slabs.length - 1];
+      stock.base[index] = slabs[slabs.length - 2];
+      if (slabs.length > 2) {
+        stock.extras.set(index, slabs.slice(0, slabs.length - 2));
+        stock.undercut = true;
+      }
+      if (stock.base[index] > stock.bottom + EPSILON) stock.undercut = true;
+    }
+    if (empty) stock.masked = true;
     stock.dirty = emptyDirty();
     stock.fromStl = true;
     return stock;
   }
 
-  // Max-Z rasterization of one triangle onto the heightfield.
-  function rasterizeTriangle(stock, a, b, c) {
+  // The heights at which one triangle crosses the vertical lines through the grid points.
+  function rasterizeTriangle(stock, crossings, a, b, c) {
     const cell = stock.cell;
     const minX = Math.min(a[0], b[0], c[0]), maxX = Math.max(a[0], b[0], c[0]);
     const minY = Math.min(a[1], b[1], c[1]), maxY = Math.max(a[1], b[1], c[1]);
@@ -984,7 +1134,12 @@
         if (l0 < tolerance || l1 < tolerance || l2 < tolerance) continue;
         const z = l0 * a[2] + l1 * b[2] + l2 * c[2];
         const index = iy * stock.nx + ix;
-        if (z > stock.top[index]) stock.top[index] = z;
+        let list = crossings.get(index);
+        if (!list) {
+          list = [];
+          crossings.set(index, list);
+        }
+        list.push(z);
       }
     }
   }
@@ -1009,6 +1164,7 @@
     readStl,
     bounds,
     millStockFromStl,
+    columnSlabs,
     takeDirty,
     isEmpty
   };

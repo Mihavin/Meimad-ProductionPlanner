@@ -354,7 +354,7 @@
                                 </Border>
                             </Grid>
                             <TextBlock Grid.Row="2" Margin="0,8,0,0" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"
-                                       Text="Linked model files load automatically when the Case is selected (primary part model first; stock and fixtures are drawn translucent). Left-drag rotates, right-drag pans, the wheel zooms, and Fit resets the framing. Snapshot stores the current view as the Case picture on the Server." />
+                                       Text="Linked model files load automatically when the Case is selected (primary part model first; stock and fixtures are drawn translucent). Left-drag rotates, right-drag pans, the wheel zooms, and Fit resets the framing. Snapshot saves the current view as a PNG in the Working Folder's _MeimadPlanner folder and stores it on the Server as the Case picture." />
                         </Grid>
                         </ScrollViewer>
                     </TabItem>

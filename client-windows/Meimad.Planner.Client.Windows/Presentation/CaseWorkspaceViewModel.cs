@@ -853,6 +853,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     /// <summary>Where the Case picture is kept: on the Server (schema v115), only as a link, or nowhere.</summary>
     public string PictureStatus => storedPicture is { } picture
         ? $"Stored on the Server: {picture.FileName} ({Math.Max(1, picture.SizeBytes / 1024):N0} KB)"
+          + (string.IsNullOrWhiteSpace(picture.SourceReference) ? string.Empty : $" · file: {picture.SourceReference}")
         : string.IsNullOrWhiteSpace(PreviewPath)
             ? "No picture. Use Browse Picture… or Snapshot in the 3D view."
             : $"Link only (not stored on the Server yet): {PreviewPath}";
@@ -870,17 +871,17 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     /// Stores the picture on the Server (a STEP snapshot or a chosen image file) instead of linking a file. The Case's
     /// other fields keep any unsaved edits; only its version and picture change.
     /// </summary>
-    internal async Task UploadPictureAsync(byte[] bytes, string fileName)
+    internal async Task<bool> UploadPictureAsync(byte[] bytes, string fileName, string? savedAs = null)
     {
         if (apiClient is null || !isEditor || SelectedCase is null || entityTag is null)
         {
             StatusMessage = "Select a saved Case before storing its picture.";
-            return;
+            return false;
         }
         IsBusy = true;
         try
         {
-            var resource = await apiClient.UploadCasePictureAsync(SelectedCase.CaseId, fileName, bytes, entityTag, clientId);
+            var resource = await apiClient.UploadCasePictureAsync(SelectedCase.CaseId, fileName, bytes, savedAs, entityTag, clientId);
             entityTag = resource.EntityTag;
             PreviewPath = resource.Value.PreviewPath ?? string.Empty;
             SelectedCase.Update(resource.Value);
@@ -888,15 +889,64 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             DetailPreview = ToBitmap(bytes);
             StatusMessage = $"The picture of Case {resource.Value.PartNumber} is stored on the Server.";
             PlanChanged?.Invoke(this, EventArgs.Empty);
+            return true;
         }
         catch (Exception exception) when (IsExpected(exception))
         {
             StatusMessage = FriendlyMessage(exception);
+            return false;
         }
         finally
         {
             IsBusy = false;
         }
+    }
+
+    /// <summary>The folder below the Working Folder that Meimad Planner may write generated files to (AGENTS rule 11).</summary>
+    internal const string GeneratedFolderName = "_MeimadPlanner";
+
+    /// <summary>
+    /// A STEP snapshot: saved as a PNG in the Case Working Folder's <c>_MeimadPlanner</c> folder (generated files never go
+    /// beside the engineering files; an older snapshot of the same name is replaced) and stored on the Server as the Case
+    /// picture, which the Planning Board shows. When the folder cannot be written, the picture is still stored on the Server.
+    /// </summary>
+    internal async Task SaveSnapshotAsync(byte[] png, string fileName)
+    {
+        string? savedAs = null;
+        string? folderProblem = null;
+        var workingFolder = WorkingFolderPath?.Trim();
+        if (string.IsNullOrWhiteSpace(workingFolder))
+        {
+            folderProblem = "the Case has no Working Folder";
+        }
+        else
+        {
+            try
+            {
+                if (!Directory.Exists(workingFolder))
+                {
+                    folderProblem = $"the Working Folder {workingFolder} was not found";
+                }
+                else
+                {
+                    var folder = Path.Combine(workingFolder, GeneratedFolderName);
+                    Directory.CreateDirectory(folder);
+                    var target = Path.Combine(folder, Path.GetFileName(fileName));
+                    await File.WriteAllBytesAsync(target, png);
+                    savedAs = target;
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                or ArgumentException or NotSupportedException or System.Security.SecurityException)
+            {
+                folderProblem = exception.Message;
+                savedAs = null;
+            }
+        }
+        if (!await UploadPictureAsync(png, fileName, savedAs)) return;
+        StatusMessage = savedAs is not null
+            ? $"Snapshot saved to {savedAs} and stored on the Server as the Case picture."
+            : $"Snapshot stored on the Server as the Case picture, but not saved in the Working Folder ({folderProblem}).";
     }
 
     internal async Task RemovePictureAsync()
