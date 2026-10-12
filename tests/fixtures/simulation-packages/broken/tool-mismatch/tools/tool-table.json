@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "units": "mm",
+  "source": {
+    "application": "Cimatron",
+    "exportedAtUtc": "2026-10-12T06:00:00Z"
+  },
+  "tools": [
+    {
+      "number": 1,
+      "toolIdentifier": "T1",
+      "description": "D10 FLAT",
+      "name": "D10 FLAT",
+      "type": "flat",
+      "diameterMm": 10,
+      "cornerRadiusMm": 0,
+      "fluteLengthMm": 30,
+      "gaugeLengthMm": 90,
+      "holder": {
+        "name": "BT40 ER32",
+        "diameterMm": 50,
+        "lengthMm": 60
+      }
+    }
+  ]
+}

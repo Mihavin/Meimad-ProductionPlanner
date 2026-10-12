@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "units": "mm",
+  "source": {
+    "application": "Cimatron",
+    "exportedAtUtc": "2026-10-12T06:00:00Z"
+  },
+  "tools": [
+    {
+      "number": 3,
+      "toolIdentifier": "T3",
+      "description": "D12 R1 BULL",
+      "name": "D12 R1 BULL",
+      "type": "bull-nose",
+      "diameterMm": 12,
+      "cornerRadiusMm": 1,
+      "fluteLengthMm": 30,
+      "gaugeLengthMm": 90,
+      "holder": {
+        "name": "BT40 ER32",
+        "diameterMm": 50,
+        "lengthMm": 60
+      }
+    }
+  ]
+}

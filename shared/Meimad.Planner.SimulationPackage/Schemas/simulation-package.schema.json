@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "simulation-package.schema.json",
+  "title": "Meimad simulation package manifest (manifest.json), schemaVersion 1",
+  "description": "One Cimatron NC export for one Case Operation: the post-processed NC program, the tool table, the stock (initial or remaining), the fixtures, the finished part and the procedure UCS. Every path is relative to the package folder and uses forward slashes; every file carries its SHA-256. Internal units are millimetres. A package is importable only after the exporter wrote the COMPLETE marker last. Measured machine work offsets (G54 from DPRNT) never belong in the manifest.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "exporter", "source", "operation", "units", "coordinateSystem", "files"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "minimum": 0 },
+    "packageId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "exporter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "cimatronVersion": { "type": "string", "maxLength": 64 },
+        "adapterVersion": { "type": "string", "maxLength": 64 },
+        "meshToleranceMm": { "type": "number", "minimum": 0, "maximum": 10 },
+        "usedDefaultMeshTolerance": { "type": "boolean" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["application"],
+      "properties": {
+        "application": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "project": { "type": "string", "maxLength": 260 },
+        "ncFileName": { "type": "string", "maxLength": 255 },
+        "exportedAtUtc": { "type": "string", "maxLength": 40 },
+        "host": { "type": "string", "maxLength": 128 },
+        "user": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "part": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "number": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 260 }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number"],
+      "properties": {
+        "number": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "name": { "type": "string", "maxLength": 200 },
+        "procedureId": { "type": ["integer", "null"], "minimum": 0 },
+        "procedureName": { "type": "string", "maxLength": 200 },
+        "procedureIds": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "externalId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 200 },
+        "postprocessor": { "type": "string", "maxLength": 200 },
+        "axisConfiguration": { "type": "string", "maxLength": 64 }
+      }
+    },
+    "units": { "type": "string", "minLength": 1, "maxLength": 16 },
+    "coordinateSystem": { "$ref": "coordinate-systems.schema.json#/$defs/coordinateSystem" },
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nc": { "$ref": "#/$defs/file" },
+        "toolTable": { "$ref": "#/$defs/file" },
+        "toolReport": { "$ref": "#/$defs/file" },
+        "cutters": { "$ref": "#/$defs/file" },
+        "holders": { "$ref": "#/$defs/file" },
+        "materials": { "$ref": "#/$defs/file" },
+        "jobsXml": { "$ref": "#/$defs/file" },
+        "coordinateSystems": { "$ref": "#/$defs/file" },
+        "stock": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/stockFile" }
+        },
+        "fixtures": {
+          "type": "array",
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/fixtureFile" }
+        },
+        "part": { "$ref": "#/$defs/partFile" },
+        "machineScene": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/file" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "relativePath": {
+      "description": "Relative to the package folder, forward slashes, no '..' segment, no drive letter, no leading slash.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 260,
+      "pattern": "^(?![/\\\\])(?![A-Za-z]:)(?!.*(^|[/\\\\])\\.\\.([/\\\\]|$))[^:*?\"<>|]+$"
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "stockFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "kind"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "kind": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "sourceOperation": { "type": ["string", "null"], "maxLength": 32 },
+        "name": { "type": "string", "maxLength": 200 },
+        "foundBy": { "enum": ["remaining-stock-api", "stock-procedure", "data-interface", "fallback"] }
+      }
+    },
+    "fixtureFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string", "maxLength": 200 },
+        "collision": { "type": "boolean" }
+      }
+    },
+    "partFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "role": { "const": "finished-part" },
+        "name": { "type": "string", "maxLength": 200 }
+      }
+    }
+  }
+}

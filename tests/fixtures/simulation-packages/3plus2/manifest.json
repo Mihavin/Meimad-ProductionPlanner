@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "packageId": "1f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "exporter": {
+    "name": "Meimad.CimatronExporter",
+    "version": "0.1.0",
+    "cimatronVersion": "2026.0",
+    "adapterVersion": "cimatron-com-1",
+    "meshToleranceMm": 0.01,
+    "usedDefaultMeshTolerance": false
+  },
+  "source": {
+    "application": "Cimatron",
+    "project": "GOLDEN-PART",
+    "ncFileName": "O1002.nc",
+    "exportedAtUtc": "2026-10-12T06:00:00Z"
+  },
+  "part": {
+    "number": "GOLDEN-PART",
+    "name": "Golden test part"
+  },
+  "operation": {
+    "number": "020",
+    "name": "Side face",
+    "procedureId": 23,
+    "procedureName": "OP020"
+  },
+  "machine": {
+    "externalId": "UMC500_01",
+    "name": "Haas UMC-500",
+    "postprocessor": "HAAS_NGC_UMC500",
+    "axisConfiguration": "B_C"
+  },
+  "units": "mm",
+  "coordinateSystem": {
+    "type": "part-model-coordinates",
+    "name": "UCS_OP020",
+    "workOffset": "G55",
+    "filesAreIn": "part-model-coordinates",
+    "originMm": {
+      "x": 80,
+      "y": 0,
+      "z": 40
+    },
+    "rotationDeg": {
+      "x": 0,
+      "y": 90,
+      "z": 0
+    },
+    "rotationOrder": "RzRyRx",
+    "matrix": [
+      0,
+      0,
+      1,
+      80,
+      0,
+      1,
+      0,
+      0,
+      -1,
+      0,
+      0,
+      40,
+      0,
+      0,
+      0,
+      1
+    ]
+  },
+  "files": {
+    "nc": {
+      "path": "nc/O1002.nc",
+      "sha256": "f5d8e7782ac79bff7ea96993383b178e20e3ec82b5f956578f77f3f609ce3ec2",
+      "sizeBytes": 307
+    },
+    "toolTable": {
+      "path": "tools/tool-table.json",
+      "sha256": "5e5f12e2bcd56e1168cf91736b6657f0afba9c59275bd496eb2092072cd8f310",
+      "sizeBytes": 542
+    },
+    "stock": [
+      {
+        "kind": "remaining",
+        "sourceOperation": "010",
+        "foundBy": "remaining-stock-api",
+        "path": "geometry/stock-op020-from-op010.stl",
+        "sha256": "05f33175dad94eb58837476859a9bd5506f87d01fc5dcb89b5648af3e39f2622",
+        "sizeBytes": 684
+      }
+    ],
+    "fixtures": [
+      {
+        "name": "Tombstone",
+        "collision": true,
+        "path": "geometry/fixture-001.stl",
+        "sha256": "33bf4ee30ef3a6d94bce2239858835e12b9a65650371f3e4d7a6b5b8305731c2",
+        "sizeBytes": 684
+      }
+    ],
+    "part": {
+      "role": "finished-part",
+      "path": "geometry/part.stl",
+      "sha256": "74f788b144f2615ed56a860347747e457f808bcb7b1447c6141b89322f1dbe51",
+      "sizeBytes": 684
+    }
+  }
+}

@@ -156,11 +156,14 @@ internal static class NcViewerScenes
         return result;
     }
 
-    /// <summary>The fixture and rest-material ("stock") files linked to one Operation, in list order.</summary>
+    /// <summary>
+    /// The fixture, rest-material ("stock") and finished-part ("part", linked to the Operation by a Cimatron
+    /// package import) files of one Operation, in list order. Case-level part models stay out of the scene.
+    /// </summary>
     internal static IReadOnlyList<NcViewerSceneFile> OperationFiles(IReadOnlyList<CaseModelFile> files, string caseOperationId) =>
         files
-            .Where(file => file.CaseOperationId == caseOperationId && file.Kind is "fixture" or "stock")
-            .OrderBy(file => file.Kind == "stock" ? 1 : 0)
+            .Where(file => file.CaseOperationId == caseOperationId && file.Kind is "fixture" or "stock" or "part")
+            .OrderBy(file => file.Kind switch { "fixture" => 0, "stock" => 1, _ => 2 })
             .ThenBy(file => file.SortOrder)
             .ThenBy(file => file.Label, StringComparer.CurrentCultureIgnoreCase)
             .Select(file => new NcViewerSceneFile(

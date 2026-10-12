@@ -21,11 +21,18 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\server\Meimad.Planner.Server\Meimad.Planner.Server.csproj" />
+    <!-- Exporter workflow tests run against a fake Cimatron API (no Cimatron on the build PC). -->
+    <ProjectReference Include="..\..\tools\Meimad.CimatronExporter\Meimad.CimatronExporter.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="Acceptance\acceptance-dataset.sql" />
     <EmbeddedResource Include="ResourcePlanning\resource-scheduler-baseline.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Golden Cimatron simulation packages (Stage 0): copied byte-exact beside the tests. -->
+    <None Include="..\fixtures\simulation-packages\**\*" LinkBase="simulation-packages" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

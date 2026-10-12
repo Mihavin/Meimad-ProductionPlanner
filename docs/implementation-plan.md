@@ -153,6 +153,85 @@ tests without the live-Server startup test (520 passed), including `WorkOffsetsV
 variable numbers (`#5221`, `#14001`, `#7001`, Okuma `VZOF*[n]`), the printability of `/`, `-`, `.` in DPRNT/PUT text,
 number formats and line lengths, the Mazak `print.txt` with these lines, a real COM port, and the NC viewer card in the
 WebView2 window. Exporter definition §22 step 11 (end-to-end on the Haas VF-3 and the Mazak) remains open.
+## Cimatron simulation packages: contracts, exporter and import (2026-10-12; schema v117; implemented locally)
+
+**Source:** Cimatron → Meimad exporter definition §1–§19 and the execution plan "Этап 0 — контракты и тестовый набор",
+"Этап 5 — Cimatron exporter и package importer", §5 (`IPackageImporter.Validate/Import`, `ICoordinateService.Resolve`)
+and the first sprint items 1–2. §15/§20–§22 (measured G54 through DPRNT) belong to the parallel measured-work-offset
+workstream; this one only keeps measured offsets out of the manifest.
+
+**Implemented:**
+- Stage 0 contracts, `shared/Meimad.Planner.SimulationPackage` (net10.0, no UI): manifest model schemaVersion 1, file roles
+  (`nc`, `initialStock`, `remainingStock`, `machinedStock`, `fixture`, `part`, `machineScene` + data roles), stock kinds,
+  mm units; `simulation-package.schema.json`, `tool-table.schema.json`, `coordinate-systems.schema.json` embedded and
+  shipped beside the assembly, checked by a strict keyword-subset validator (no new dependency); `CoordinateService`
+  (file → Cimatron UCS → NC zero → machine, explicit rotation orders, matrix/Euler consistency, RzRyRx decomposition to
+  the v113 Work CS); `SimulationPackageValidator` with stable codes per §14; golden 3-axis, 3+2 and simultaneous 5-axis
+  packages with expected bounds and broken variants under `tests/fixtures/simulation-packages`
+  (`tests/fixtures/generate-simulation-packages.cs` regenerates them; `.gitattributes` keeps them byte-exact).
+- Server: schema v117 (`simulation_package_imports`, `simulation_package_import_files`,
+  `simulation_package_machine_mappings`), `SimulationPackageImportService : IPackageImporter`, endpoints, the §10 Machine
+  mapping, the optional polling folder watcher (`SimulationPackages:Watcher`, off).
+- Exporter `tools/Meimad.CimatronExporter` (`docs/cimatron-exporter.md`): §11 workflow behind `ICimatronApi`, late-bound
+  COM adapter `cimatron-com-1` with IDispatch capability probing, BAT launcher, post-hook example.
+- Windows client: *Import Cimatron package...* and *Package report* in the Cimatron setup card, the report window (codes,
+  severities as symbol + text, stock/Machine choice, manual Work CS confirmation), the Release G-code form fed with the
+  package NC and tool table, Operation-level finished parts in the card and the NC viewer scene, the finished-part
+  thumbnail under `_MeimadPlanner\thumbnails`.
+
+**Decisions and conflicts (recorded, reversible):**
+1. **Meimad header in the NC (§20.4) vs "no G-code change after the post" (§2) and AGENTS rule 29.** §20.4 asks the
+   exporter to add `(MEIMAD/PART …)` comments to the NC; §2 forbids the exporter to change post-processed G-code, and
+   rule 29 makes Planner identity server-owned (the postprocessor is server-blind; `PART_NAME`/`OPERATION_NAME`
+   placeholders are resolved only in a Production Package). Chosen: the exporter never edits the NC; the identity
+   (part, Operation, procedure, machine, `packageId`, manifest and NC SHA-256) travels in the manifest and the import
+   record. A DPRNT-visible identity should come from the Server-resolved Production Package placeholders — for the
+   measured-work-offset workstream to confirm.
+2. **Schema v116 placeholder.** The migrator requires contiguous versions; v116 belongs to the measured-work-offset
+   branch. `SchemaV116ReservedForMeasuredWorkOffsetsMigration` is a no-op stand-in named
+   `reserved_v116_measured_work_offsets_placeholder`; on merge it is deleted and the real v116 takes its slot. Only test
+   databases ever record it.
+3. **Package files stay where the exporter wrote them.** The Server reads and hashes them but stores no copy (like Case
+   model links); the stock/fixture/part links point into the package folder. A re-export replaces the files at the same
+   paths (the old package moves to `.superseded` without `COMPLETE`), so links of a superseded import show the new
+   files until the new package is imported; the stored hashes detect the change on re-validation. Open: copy package
+   geometry into the Server store for immutable history (needs a file endpoint for the viewer).
+4. **Package location.** `Gcode\<Case>\<Operation>\cimatron-export` is written by the exporter on the CAM PC, not by the
+   NC viewer (AGENTS rule 11 governs viewer saves/releases under the process-revision folders). The NC inside is not a
+   release; the import never creates one (rule 29 canonical templates). The Release G-code form is pre-filled with the
+   package NC and tool table, and `matchingGcodeReleaseId` links an import to a release whose file hash equals the
+   package NC. `tool-table.json` carries `toolIdentifier`/`description`, so the Server's release parser accepts it.
+5. **Machine mapping (§10) vs AGENTS rule 3.** The mapping is CAM context only: it never assigns the Operation to a
+   Machine or touches a backlog. "Unresolved = blocking" is implemented as blocking until the planner chooses a Machine
+   (`planner_selected`); several candidates are listed and none is picked. Remembering a choice needs `setup.manage`.
+6. **Folder watcher in the Server**, not the client: only the Server reads approved roots and writes planning data, and a
+   client watcher would need a PC running. It polls (FileSystemWatcher is unreliable on SMB), is off by default, imports
+   only folders with `COMPLETE` and `manifest.json` under approved roots, never chooses stock or Machine and never
+   replaces a manual Work CS; such packages are stored as `blocked` with their report.
+7. **Severity choices.** Blocking per §14 plus: stock and tool table are required (execution plan Stage 5: reject without
+   mandatory stock; §14 "tool table does not match NC"); an unsupported `schemaVersion` blocks (there is no reader for it;
+   the plan said "warn"); inch files are accepted with a warning (the plan's "warn on units"); a package imported into an
+   Operation whose number differs from the manifest is a warning (the planner chose the Operation) — confirm with the
+   owner. The 3-axis toolpath/stock bounds check is a warning; rotary and tilted programs are left to the simulation.
+8. **`.meimad-sim`.** The execution plan names a `.meimad-sim` package; it is a folder with `package.json`
+   (`"format": "meimad-sim"`), not an archive, so the Server reads the files in place.
+9. **Planning revision.** The package tables advance only the non-planning revision; the model-file links an import
+   creates advance the planning revision exactly as links added by hand (existing `case_model_files` triggers).
+10. **NC viewer scene.** Operation-level `part` files (only an import creates them) are now drawn, translucent, with the
+    fixtures toggle; Case-level part models stay out. This touches `meimad-scene.js` and `NcViewerSetupScene.cs`, which the
+    viewer rewrite also changes — merge by keeping the `part` kind.
+11. **Thumbnail.** The client renders the finished part offscreen with the Case model viewer and saves it below
+    `_MeimadPlanner\thumbnails`; `IOperationThumbnailSink` is a pending in-memory sink with a TODO for the TV dashboard
+    workstream's upload endpoint, which is not invented here.
+
+**Verified locally:** Server tests `SimulationPackages` (coordinate, schema/validator, exporter with the fake API, API,
+migration, permissions, watcher), `ProjectionRevisionTests`, `MigrationTests`; the full Server suite; client tests
+`SimulationPackageClientTests`, `NcViewerSetupSceneTests`, `OperationCamSetup*`, `LocalizationCatalogTests`. The exporter
+`--probe` on a PC without Cimatron exits 3 with `cimatron_not_installed`.
+
+**Not verified (needs a PC with Cimatron and the factory network):** the COM adapter and every Cimatron call; a real
+package in mode A and mode B aligned in the NC viewer on a Haas and a Mazak program (§17 end-to-end, §18); the watcher on
+the share; the post-processor hook syntax; installing the exporter on the CAM PCs (not in any installer yet).
 
 ## NC viewer background, Path selector and stock shading (2026-10-11; implemented locally)
 

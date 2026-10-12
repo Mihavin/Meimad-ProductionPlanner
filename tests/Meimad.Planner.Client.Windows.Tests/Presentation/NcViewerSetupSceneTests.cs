@@ -53,7 +53,7 @@ public sealed class NcViewerSetupSceneTests : IDisposable
     }
 
     [Fact]
-    public void Operation_files_are_the_fixtures_and_rest_material_linked_to_that_operation()
+    public void Operation_files_are_the_fixtures_rest_material_and_finished_part_linked_to_that_operation()
     {
         var now = DateTimeOffset.UnixEpoch;
         CaseModelFile File(string id, string? operation, string kind, int order) =>
@@ -70,8 +70,8 @@ public sealed class NcViewerSetupSceneTests : IDisposable
 
         var result = NcViewerScenes.OperationFiles(files, "op-10");
 
-        Assert.Equal(["vise-a.stl", "vise-b.stl", "rest.stl"], result.Select(file => file.Name));
-        Assert.Equal(["fixture", "fixture", "stock"], result.Select(file => file.Kind));
+        Assert.Equal(["vise-a.stl", "vise-b.stl", "rest.stl", "part.stl"], result.Select(file => file.Name));
+        Assert.Equal(["fixture", "fixture", "stock", "part"], result.Select(file => file.Kind));
     }
 
     [Fact]

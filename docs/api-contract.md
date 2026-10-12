@@ -105,6 +105,102 @@ structured event log.
 to a COM port of the Server PC. Fields `serialPort` (`COM1`...`COM999`, required), `baudRate` (1200-115200, default
 9600), `parity` (`NONE`, `EVEN`, `ODD`; default `NONE`), `dataBits` (7 or 8; default 8), `stopBits` (1 or 2; default 1).
 Invalid values are `422` naming `configuration.dprnt.<field>`. Haas NGC connections keep `TCP` and `FILE`.
+## Cimatron simulation packages (2026-10-12; schema v117)
+
+A simulation package is a folder the Cimatron exporter (`tools/Meimad.CimatronExporter`, see
+`docs/cimatron-exporter.md`) writes for one Case Operation: `manifest.json` (schemaVersion 1), the posted NC, the tool
+table, the stock (initial or remaining), the fixtures, the finished part, the procedure UCS, and `COMPLETE` written last.
+The contract is `shared/Meimad.Planner.SimulationPackage/Schemas/simulation-package.schema.json` (with
+`tool-table.schema.json` and `coordinate-systems.schema.json`); the files ship beside the Server and the exporter in
+`simulation-package-schemas/`. Paths are relative to the package folder with forward slashes; lengths are mm; every
+file carries its lowercase SHA-256; the manifest never carries a measured machine offset.
+
+The Server only reads the package. It reads a folder only under an approved root: the Setup network folder, the Case
+Working Folder of the import, or a `SimulationPackages:ApprovedRoots` entry. A PC drive path (`Z:\…`) is converted to the
+network folder like every Case link. Nothing is copied: the stock, fixture and part links point into the package folder.
+
+| Method and route | Permission | Purpose |
+|---|---|---|
+| `POST /api/v1/simulation-packages/validate` | signed in | `{packagePath, caseId?}` → `200 {report}`; changes nothing. |
+| `POST /api/v1/cases/{caseId}/operations/{operationId}/simulation-packages` | `cases.edit` (+ `setup.manage` with `rememberMachineMapping`) | Import (below). |
+| `GET /api/v1/cases/{caseId}/operations/{operationId}/simulation-packages` | signed in | `{items}` of the Operation's imports, newest first (current one `imported`, earlier ones `superseded`). |
+| `GET /api/v1/simulation-packages?caseId=&caseOperationId=&status=&limit=` | signed in | `{items}`; `status` `imported`, `superseded` or `blocked` (watcher attempts). |
+| `GET /api/v1/simulation-packages/{importId}` | signed in | One import with its files and stored report. |
+| `GET /api/v1/simulation-packages/machine-mappings` | signed in | `{items: [{mappingId, matchField, matchValue, machineId, machineNumber, machineName, createdAt, createdBy}]}`. |
+| `POST /api/v1/simulation-packages/machine-mappings` | `setup.manage` | `{matchField: external_id\|postprocessor\|machine_name, matchValue, machineId}` → `201`; `409 machine_mapping_exists` when an external id is already mapped (one Machine per external id); `404` unknown Machine. |
+| `DELETE /api/v1/simulation-packages/machine-mappings/{mappingId}` | `setup.manage` | `204`; `404` when absent. |
+
+**Import request** (unknown members are `400`):
+
+```json
+{
+  "packagePath": "\\\\192.168.0.240\\data\\customers files\\DPD\\PN-1\\Gcode\\PN-1\\010\\cimatron-export",
+  "expectedCamSetupVersion": 0,
+  "expectedCurrentImportId": null,
+  "selectedStockPath": null,
+  "machineId": null,
+  "rememberMachineMapping": false,
+  "overwriteManualWorkCs": false
+}
+```
+
+`expectedCamSetupVersion` (the Operation CAM setup version the planner saw, `0` when there was none) is required — its
+absence is `428 precondition_required`. `expectedCurrentImportId` is the Operation's current package import the planner
+saw (`null` = none). Either one stale refuses the import atomically with `409 cam_setup_changed` or
+`409 simulation_package_import_changed`, `details: [{currentCamSetupVersion, currentImportId}]` and
+`conflict: {resource, changedBy, changedAt, advice}`.
+
+**Outcomes.**
+- `201 {outcome: "imported", import, report}`. In one transaction the Server supersedes the Operation's previous
+  package (removing only the model-file links that package created), links the selected stock (`kind stock`), every
+  fixture (`kind fixture`) and the finished part (`kind part`) to the Operation, stores the import with its files and
+  report, and saves the Work CS with `source cimatron`: mode `nc-procedure-ucs` → origin 0, rotation 0 at the manifest
+  work offset; mode `part-model-coordinates` → the UCS origin and its RzRyRx rotation (decomposed from the matrix when
+  only a matrix is given). Audit events `simulation_package_imported` and `case_operation_cam_setup_saved`.
+- `200 {outcome: "already_imported", import, report}` when the same manifest SHA-256 is the Operation's current
+  package: nothing changes (idempotent import).
+- `422 simulation_package_blocked` with `error.details: [{code, message, context}]` and the full `report`: nothing
+  changes; the attempt is written to the audit log (`simulation_package_import_blocked`).
+
+**Report** `{packagePath, completeMarkerPresent, manifestSha256, schemaVersion, packageId, exporterVersion,
+cimatronVersion, operationNumber, operationName, procedureId, units, coordinateSystem, machine, files: [{role, path,
+sha256, sizeBytes, exists, readable, stockKind, sourceOperation, name, collision, triangleCount, boundsMm}], nc:
+{programNumber, toolNumbers, units, usesRotaryAxes, usesTiltedPlane, cuttingBoundsMm}, toolTableNumbers,
+stockCandidates, machineCandidates: [{machineId, number, name, matchedBy}], machineId, machineMatchedBy,
+hasBlockingErrors, diagnostics: [{code, severity: error|warning|info, message, context}]}`. `role` is one of `nc`,
+`initialStock`, `remainingStock`, `machinedStock`, `fixture`, `part`, `machineScene`, `toolTable`, `toolReport`,
+`cutters`, `holders`, `materials`, `jobsXml`, `coordinateSystems`.
+
+**Diagnostic codes** (stable; the message is English context for logs):
+
+| Severity | Codes |
+|---|---|
+| Blocking (exporter definition §14) | `package_path_invalid`, `package_root_not_approved`, `package_not_found`, `package_incomplete` (no `COMPLETE`), `manifest_missing`, `manifest_invalid_json`, `manifest_schema_violation` (`context.pointer`, `keyword`), `manifest_contains_measured_offset`, `schema_version_missing`, `schema_version_unsupported`, `units_unknown`, `operation_number_missing`, `procedure_id_missing`, `ucs_missing`, `ucs_type_unknown`, `ucs_transform_incomplete`, `ucs_matrix_invalid`, `ucs_matrix_inconsistent`, `coordinate_mode_conflict`, `file_path_not_relative`, `file_path_traversal`, `file_duplicate_path`, `file_missing`, `file_empty`, `file_too_large`, `package_too_large`, `file_hash_missing`, `file_hash_mismatch`, `nc_missing`, `nc_header_missing`, `tool_table_missing`, `tool_table_unreadable`, `tool_table_mismatch` (`context.missingTools`), `stock_missing`, `stock_kind_unknown`, `geometry_unreadable`, `geometry_format_unsupported`, `fixture_count_exceeded`; import only: `case_unresolved`, `operation_unresolved`, `stock_selection_required`, `stock_selection_invalid`, `machine_mapping_unresolved`, `machine_mapping_ambiguous`, `machine_selection_invalid`, `work_cs_manual_conflict`, `work_offset_invalid` |
+| Warning | `part_missing`, `part_unreadable`, `fixture_missing`, `holder_dimensions_incomplete`, `stock_fallback_rule`, `stock_multiple_candidates`, `stock_source_operation_missing`, `cimatron_version_untested`, `default_mesh_tolerance`, `units_converted_from_inch`, `nc_units_mismatch`, `toolpath_stock_misaligned`, `machine_missing`, `operation_mismatch`, `work_offset_mismatch` |
+| Info | `tool_table_unused_tools`, `toolpath_alignment_not_checked`, `already_imported` |
+
+**Machine mapping** (exporter definition §10), in order; the first step that finds anything decides:
+1. `external_id` mapping rows (the configured external machine id) — `matchedBy external_id`;
+2. the exact postprocessor name: Machines that support the active postprocessor of that name — `postprocessor`;
+3. the explicit mapping table (`postprocessor` and `machine_name` rows) — `mapping_table`;
+4. a compatible pair: the manifest machine name equals a Machine's number or name, ignoring case, spaces, dashes and
+   underscores — `compatible_pair`;
+5. none → `machine_mapping_unresolved` with every Machine as a candidate.
+
+One Machine resolves; several are `machine_mapping_ambiguous` with the candidates listed and none picked. The planner
+answers with `machineId` (one of the candidates; any Machine when unresolved) — `matchedBy planner_selected` — and may
+ask to remember it (`setup.manage`), which adds an `external_id` (or `postprocessor`/`machine_name`) mapping row. The
+mapping is CAM context: it never assigns the Operation to a Machine or changes a backlog.
+
+**Stock.** With one initial/remaining stock candidate it is used; with several the import is
+`stock_selection_required` until `selectedStockPath` names one (never chosen silently).
+
+**Work CS.** An existing `manual` CAM setup is replaced only with `overwriteManualWorkCs: true`; otherwise
+`work_cs_manual_conflict`.
+
+**Tool table and NC release.** The import records the NC and tool table SHA-256 and the tool numbers. `import.matchingGcodeReleaseId`
+is the Operation's G-code release whose file hash equals the package NC (when the planner released that file), so the
+tool table, the NC and the release are one identity. The import itself never creates an NC release.
 
 ## Case pictures on the Server (2026-10-11; schema v115)
 

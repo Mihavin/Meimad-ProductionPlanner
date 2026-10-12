@@ -612,6 +612,10 @@
                                 <StackPanel>
                                     <DockPanel Margin="0,0,0,6">
                                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Button Content="Import Cimatron package..." Click="ImportCimatronPackage_Click" IsEnabled="{Binding CanEdit}"
+                                                    ToolTip="Import a package written by the Meimad Cimatron exporter: NC, tool table, stock, fixtures, finished part and Work CS, checked by the Server" />
+                                            <Button Content="Package report" Click="CimatronPackageReport_Click"
+                                                    ToolTip="Show the report of the last Cimatron package import" />
                                             <Button Content="Import from Cimatron..." Click="ImportCimatronFiles_Click" IsEnabled="{Binding CanEdit}"
                                                     ToolTip="Link STL or STEP files exported from Cimatron: STOCK files become rest material, the rest fixtures" />
                                             <Button Content="Add fixture..." Click="AddCimatronFixture_Click" IsEnabled="{Binding CanEdit}" />
@@ -620,6 +624,7 @@
                                         <StackPanel>
                                             <TextBlock Text="Cimatron setup of the selected Operation" FontSize="17" FontWeight="Bold"/>
                                             <TextBlock Text="{Binding SavedSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/>
+                                            <TextBlock Text="{Binding PackageSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/>
                                         </StackPanel>
                                     </DockPanel>
                                     <TextBlock Text="Work CS: the Cimatron UCS of this Operation's NC procedures, in the part-model coordinates the fixture and rest-material files were exported in. Copy the origin and rotations from Cimatron's UCS dialog. Rotations are applied about X, then Y, then Z (degrees). The NC viewer places the files through this Work CS."

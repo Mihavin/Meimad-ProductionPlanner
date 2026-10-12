@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Meimad simulation package contract (schemaVersion 1): the manifest model, the JSON Schemas,
+    the coordinate service (file coordinates -> Cimatron UCS -> NC zero -> machine coordinates)
+    and the package validator. It has no UI and no database: the Server imports packages with it,
+    the Windows client reads its report models, and tools\Meimad.CimatronExporter writes packages
+    with it. The schemas ship as embedded resources and as files beside the assembly.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>Meimad.Planner.SimulationPackage</RootNamespace>
+    <AssemblyName>Meimad.Planner.SimulationPackage</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Schemas\*.schema.json" LogicalName="Meimad.Planner.SimulationPackage.Schemas.%(Filename)%(Extension)" />
+    <Content Include="Schemas\*.schema.json"
+             Link="simulation-package-schemas\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -33,6 +33,47 @@ and non-planning revisions only (measurements are not planning inputs).
 
 The shared DPRNT configuration (`CncDprntConfiguration`, connection JSON, no schema change) gains the `SERIAL` source
 with `serialPort`, `baudRate`, `parity`, `dataBits`, `stopBits` for FANUC FOCAS connections.
+## Cimatron simulation packages (schema v117, 2026-10-12)
+
+Schema v116 is reserved for the measured work offsets (DPRNT) branch developed in parallel; on this branch a no-op
+placeholder migration holds the number until that branch merges (see the implementation plan).
+
+`simulation_package_imports` holds one row per imported package of a Case Operation (and per blocked watcher attempt):
+- `id`; `case_id`, `case_operation_id` (cascade with the Case/Operation; null only for a `blocked` row whose Case or
+  Operation could not be resolved);
+- `status`: `imported` (the Operation's current package; a partial unique index allows one row per Operation and
+  `manifest_sha256` in this state — the idempotency key), `superseded` (with `superseded_at` and
+  `superseded_by_import_id`) or `blocked` (a watcher attempt stopped by a blocking diagnostic);
+- `package_id` (the exporter's GUID), `manifest_sha256` (SHA-256 of `manifest.json`), `schema_version`, `package_path`
+  (stored relative to the network folder like Case links);
+- exporter and source facts: `exporter_name`, `exporter_version`, `cimatron_version`, `source_application`,
+  `source_project`, `nc_file_name`, `exported_at`;
+- `operation_number`, `operation_name`, `procedure_id`, `procedure_name` as exported;
+- the target machine as exported (`machine_external_id`, `machine_name`, `postprocessor`, `axis_configuration`) and the
+  Meimad Machine it was mapped to: `machine_id` (set null when the Machine is deleted) and `machine_matched_by`
+  (`external_id`, `postprocessor`, `mapping_table`, `compatible_pair`, `planner_selected`);
+- `units`, `coordinate_system_json` (the manifest coordinate system), `selected_stock_path`;
+- `nc_sha256`, `tool_table_sha256`, `tool_numbers_json` (the T-numbers of the tool table);
+- `report_json` (the import report with every diagnostic), `imported_at`, `imported_by`.
+
+`simulation_package_import_files` lists every manifest file of an import: `role` (`nc`, `initialStock`,
+`remainingStock`, `machinedStock`, `unknownStock`, `fixture`, `part`, `machineScene`, `toolTable`, `toolReport`,
+`cutters`, `holders`, `materials`, `jobsXml`, `coordinateSystems`), `relative_path` (primary key with the import),
+`sha256`, `size_bytes`, `stock_kind` (`initial`/`remaining`/`machined`), `source_operation`, `name`, `collision`,
+`selected` (the stock the import used) and `case_model_file_id` — the Case model-file link the import created for the
+file (selected stock → `kind stock`, fixtures → `fixture`, finished part → `part`, all with the Operation), set null if
+the planner unlinks it. A newer import of the same Operation deletes exactly these links of the superseded import.
+
+`simulation_package_machine_mappings` is the Setup-managed Machine mapping: `match_field` `external_id` (the configured
+Cimatron machine id; a partial unique index keeps one Machine per id, case-insensitive), `postprocessor` or
+`machine_name` (the explicit mapping table), `match_value` (NOCASE), `machine_id` (cascade), `created_at`, `created_by`;
+unique per field, value and Machine.
+
+The package files themselves are never copied or changed: the links point into the package folder the exporter wrote.
+The Operation Work CS written by an import is the ordinary `case_operation_cam_setups` row (source `cimatron`).
+The package tables are CAM context, not planning inputs: their triggers advance the all-input and non-planning
+revisions only (the model-file links keep their existing triggers). Backups carry the rows; there are no Server-side
+package files to back up.
 
 ## Case pictures on the Server (schema v115, 2026-10-11)
 
@@ -322,6 +363,7 @@ Whether a formal append-only audit log is required is TBD. Hard-delete/archive b
 | Order | `orders` | Required Case; positive quantity. |
 | Case Operation | `case_operations` | Required Case; unique route position/operation number per Case; optional self-referenced predecessor. |
 | Operation CAM Setup | `case_operation_cam_setups` | Schema v113: at most one per Case Operation (primary key), cascade-deleted with it; Work CS origin/rotation in part-model coordinates, source `cimatron`/`manual`, optional work offset and notes, version, `updated_by` and times. |
+| Simulation Package Import | `simulation_package_imports`, `simulation_package_import_files` | Schema v117: one row per imported Cimatron package (at most one `imported` row per Operation and manifest SHA-256); files with role, hash and the model-file link created; Machine mapping in `simulation_package_machine_mappings`. |
 | Production Batch | `production_batches` | Required Case; positive planned quantity. |
 | Verified Material Receipt | `verified_material_receipts` | Required Case; positive whole-piece quantity; explicit local verifier and timestamp; source fixed to `LOCAL_VERIFIED`. |
 | Batch Material Reservation | `batch_material_reservations` | Required verified receipt and Production Batch of the same Case; positive whole-piece quantity; unique receipt/Batch pair. |

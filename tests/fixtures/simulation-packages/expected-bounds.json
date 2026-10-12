@@ -1,0 +1,49 @@
+{
+  "description": "Golden expectations of the three reference packages. Bounds are millimetres, min then max. 'file' bounds are in the file coordinates; 'ucs' bounds are after the package coordinate system (file -> Cimatron UCS = NC work coordinates). toolpathCutting is the bounds of the feed and canned-cycle end points of absolute moves in NC work coordinates.",
+  "packages": {
+    "3-axis": {
+      "mode": "nc-procedure-ucs",
+      "ucs": "UCS_OP010",
+      "workOffset": "G54",
+      "toolNumbers": [1, 2],
+      "usesRotaryAxes": false,
+      "usesTiltedPlane": false,
+      "files": {
+        "geometry/stock.stl": { "role": "initialStock", "file": [[0, 0, -30], [100, 60, 0]], "ucs": [[0, 0, -30], [100, 60, 0]] },
+        "geometry/fixture-001.stl": { "role": "fixture", "file": [[-20, -20, -60], [120, 80, -30]], "ucs": [[-20, -20, -60], [120, 80, -30]] },
+        "geometry/fixture-002.stl": { "role": "fixture", "file": [[-10, -15, -30], [110, 0, -10]], "ucs": [[-10, -15, -30], [110, 0, -10]] },
+        "geometry/part.stl": { "role": "part", "file": [[5, 5, -25], [95, 55, 0]], "ucs": [[5, 5, -25], [95, 55, 0]] }
+      },
+      "toolpathCutting": [[10, 10, -20], [90, 50, -5]]
+    },
+    "3plus2": {
+      "mode": "part-model-coordinates",
+      "ucs": "UCS_OP020",
+      "workOffset": "G55",
+      "workCs": { "originMm": [80, 0, 40], "rotationDeg": [0, 90, 0] },
+      "toolNumbers": [3],
+      "usesRotaryAxes": true,
+      "usesTiltedPlane": true,
+      "files": {
+        "geometry/stock-op020-from-op010.stl": { "role": "remainingStock", "file": [[0, 0, 0], [80, 50, 40]], "ucs": [[0, 0, -80], [40, 50, 0]] },
+        "geometry/fixture-001.stl": { "role": "fixture", "file": [[-30, -10, -20], [20, 60, 0]], "ucs": [[40, -10, -110], [60, 60, -60]] },
+        "geometry/part.stl": { "role": "part", "file": [[0, 0, 0], [77, 50, 40]], "ucs": [[0, 0, -80], [40, 50, -3]] }
+      },
+      "toolpathCutting": [[5, 5, -3], [35, 45, -3]]
+    },
+    "5-axis": {
+      "mode": "nc-procedure-ucs",
+      "ucs": "UCS_OP030",
+      "workOffset": "G54",
+      "toolNumbers": [4],
+      "usesRotaryAxes": true,
+      "usesTiltedPlane": true,
+      "files": {
+        "geometry/stock.stl": { "role": "initialStock", "file": [[-20, -20, -20], [40, 30, 0]], "ucs": [[-20, -20, -20], [40, 30, 0]] },
+        "geometry/fixture-001.stl": { "role": "fixture", "file": [[-25, -25, -45], [45, 35, -20]], "ucs": [[-25, -25, -45], [45, 35, -20]] },
+        "geometry/part.stl": { "role": "part", "file": [[-15, -15, -20], [35, 25, -2]], "ucs": [[-15, -15, -20], [35, 25, -2]] }
+      },
+      "toolpathCutting": [[-10, 0, -2], [30, 15, 5]]
+    }
+  }
+}
