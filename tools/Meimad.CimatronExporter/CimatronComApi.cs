@@ -31,6 +31,9 @@ internal sealed class CimatronComApi : ICimatronApi
     /// <summary>Problems loading Cimatron's interop assemblies, for the probe.</summary>
     internal static List<string> BinderProblems { get; } = [];
 
+    /// <summary>What the last <see cref="Connect"/> tried to reach the Cimatron application, for the probe.</summary>
+    internal static List<string> ConnectTrace { get; } = [];
+
     /// <summary>The late-bound member names, in one place so a field test can adjust them.</summary>
     internal static class Members
     {
@@ -120,8 +123,32 @@ internal sealed class CimatronComApi : ICimatronApi
         }
 
         var getApplication = Members.GetApplication.FirstOrDefault(member => HasMember(access, member)) ?? Members.GetApplication[0];
-        var application = Call(access, getApplication)
-            ?? throw new CimatronApiException("cimatron_not_available", "Cimatron returned no application object (is Cimatron open?).");
+        ConnectTrace.Clear();
+        object? application = null;
+        CimatronApiException? accessFailure = null;
+        try
+        {
+            application = Call(access, getApplication);
+            ConnectTrace.Add($"AppAccess.{getApplication}: {(application is null ? "no object" : "ok")}");
+        }
+        catch (CimatronApiException exception)
+        {
+            accessFailure = exception;
+            ConnectTrace.Add($"AppAccess.{getApplication}: {exception.Message}");
+        }
+
+        if (application is null)
+        {
+            // AppAccess could not reach Cimatron by class (Cimatron's classes not registered): a running Cimatron's own entry.
+            application = CimatronRunningApplication.Find(programFolder, ConnectTrace);
+            if (application is null)
+            {
+                throw new CimatronApiException(accessFailure?.Code ?? "cimatron_not_available",
+                    $"{accessFailure?.Message ?? "Cimatron returned no application object."} {CimatronRunningApplication.Advice()}", accessFailure);
+            }
+
+            ConnectedThrough = $"{ConnectedThrough ?? "the registered " + name}; application object from the running object table";
+        }
         object? document = null;
         object? model = null;
         try

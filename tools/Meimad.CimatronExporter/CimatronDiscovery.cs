@@ -18,7 +18,8 @@ internal static class CimatronDiscovery
 
     internal static IEnumerable<string> Report()
     {
-        yield return $"Exporter process: {(Environment.Is64BitProcess ? "64-bit" : "32-bit")}, Windows {Environment.OSVersion.Version}, user {Environment.UserName}";
+        yield return $"Exporter process: {(Environment.Is64BitProcess ? "64-bit" : "32-bit")}, Windows {Environment.OSVersion.Version}, user {Environment.UserName}, "
+            + (CimatronRunningApplication.Elevated ? "RUN AS ADMINISTRATOR (cannot reach a Cimatron started normally)" : "not elevated");
         yield return "COM ProgIDs mentioning Cimatron:";
         var found = 0;
         foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })

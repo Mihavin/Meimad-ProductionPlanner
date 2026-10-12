@@ -111,7 +111,15 @@ registered, and Windows needs them registered to pass calls between the exporter
   (`HKEY_CURRENT_USER`, no administrator rights; Cimatron's files are not changed); `--unregister-cimatron` removes them
   again. Repairing the Cimatron installation as an administrator registers them for every user instead.
 
-`--probe` writes everything to standard output (redirect it to a file): the Cimatron processes, the whole running object
+With the type libraries registered, `GetApplication` then answered *Class not registered*: AppAccess reaches Cimatron
+through Cimatron's COM classes, which are not registered on that PC either. When `GetApplication` fails, the exporter
+takes the application object from the running object table instead (`CimatronRunningApplication`: by the Application
+class id, else any entry with the `IApplication` interface). That table is per logon session and elevation level, so the
+exporter must run from a normal PowerShell, not "Run as administrator", while Cimatron is open. If Cimatron does not put
+itself there, the remaining fix is registering Cimatron's COM classes (repair the installation as an administrator).
+
+`--probe` writes everything to standard output (redirect it to a file): the connection attempts, whether the exporter
+runs as administrator, the Cimatron processes, how many of Cimatron's COM classes are registered, the whole running object
 table, whether each type library is registered, how many interop interfaces were loaded, and, when connected, the
 members found and `process-manager.xml` (Cimatron's `GetProcessManagerAsXML`, for matching the procedure and UCS
 accessors). It also writes `cimatron-api.txt` beside the exe: the classes, interfaces, methods, properties and enum values

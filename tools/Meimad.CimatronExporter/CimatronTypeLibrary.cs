@@ -155,22 +155,45 @@ internal static class CimatronTypeLibrary
     }
 
     /// <summary>The class id of coclass <paramref name="name"/> in a type library file, or null.</summary>
-    internal static Guid? ClassId(string library, string name)
+    internal static Guid? ClassId(string library, string name) =>
+        Types(library).Where(type => type.Kind == TYPEKIND.TKIND_COCLASS && string.Equals(type.Name, name, StringComparison.OrdinalIgnoreCase))
+            .Select(type => (Guid?)type.Id).FirstOrDefault();
+
+    /// <summary>The interface id of interface <paramref name="name"/> in a type library file, or null.</summary>
+    internal static Guid? InterfaceId(string library, string name) =>
+        Types(library).Where(type => type.Kind is TYPEKIND.TKIND_INTERFACE or TYPEKIND.TKIND_DISPATCH
+                && string.Equals(type.Name, name, StringComparison.OrdinalIgnoreCase))
+            .Select(type => (Guid?)type.Id).FirstOrDefault();
+
+    /// <summary>Every class of every type library in <paramref name="programFolder"/> and whether Windows has it registered.</summary>
+    internal static IEnumerable<(string Library, string Name, Guid Id, bool Registered)> Classes(string programFolder)
     {
-        if (!File.Exists(library) || LoadTypeLibEx(library, RegKindNone, out var typeLibrary) != 0) return null;
+        foreach (var library in Directory.EnumerateFiles(programFolder, "*.tlb").Order(StringComparer.OrdinalIgnoreCase))
+        {
+            foreach (var type in Types(library).Where(type => type.Kind == TYPEKIND.TKIND_COCLASS))
+            {
+                using var key = Registry.ClassesRoot.OpenSubKey($@"CLSID\{type.Id:B}");
+                var registered = key is not null && (key.OpenSubKey("LocalServer32") is not null || key.OpenSubKey("InprocServer32") is not null);
+                yield return (Path.GetFileName(library), type.Name, type.Id, registered);
+            }
+        }
+    }
+
+    private static List<(string Name, TYPEKIND Kind, Guid Id)> Types(string library)
+    {
+        var types = new List<(string, TYPEKIND, Guid)>();
+        if (!File.Exists(library) || LoadTypeLibEx(library, RegKindNone, out var typeLibrary) != 0) return types;
         try
         {
             for (var index = 0; index < typeLibrary.GetTypeInfoCount(); index += 1)
             {
                 typeLibrary.GetDocumentation(index, out var typeName, out _, out _, out _);
                 typeLibrary.GetTypeInfoType(index, out var kind);
-                if (kind == TYPEKIND.TKIND_COCLASS && string.Equals(typeName, name, StringComparison.OrdinalIgnoreCase))
-                {
-                    typeLibrary.GetTypeInfo(index, out var info);
-                    return WithAttributes(info, attributes => attributes.guid);
-                }
+                typeLibrary.GetTypeInfo(index, out var info);
+                types.Add((typeName, kind, WithAttributes(info, attributes => attributes.guid)));
+                Marshal.ReleaseComObject(info);
             }
-            return null;
+            return types;
         }
         finally
         {

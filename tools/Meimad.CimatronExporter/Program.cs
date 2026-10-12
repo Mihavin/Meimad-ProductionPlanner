@@ -53,6 +53,8 @@ static int Run(string[] args)
     {
         // The probe's output goes to the console and a redirected file alike.
         if (connectFailure is not null) Console.WriteLine($"{connectFailure.Code}: {connectFailure.Message}");
+        Console.WriteLine("Connection attempts:");
+        foreach (var line in CimatronComApi.ConnectTrace) Console.WriteLine("  " + line);
         foreach (var line in CimatronDiscovery.Report()) Console.WriteLine(line);
         WriteRegistrationStatus(options);
         WriteApiListing(options);
@@ -118,6 +120,10 @@ static void WriteRegistrationStatus(ExportOptions options)
 
     foreach (var library in CimatronTypeLibrary.ProbeLibraries)
         Console.WriteLine($"  {library}: {CimatronTypeLibrary.RegistrationStatus(Path.Combine(folder, library))}");
+    var classes = CimatronTypeLibrary.Classes(folder).ToList();
+    var missing = classes.Where(entry => !entry.Registered).ToList();
+    Console.WriteLine($"Cimatron COM classes registered: {classes.Count - missing.Count} of {classes.Count}");
+    foreach (var (library, name, id, _) in missing.Take(80)) Console.WriteLine($"  not registered: {library} {name} {id:B}");
     var binder = CimatronComApi.Binder;
     Console.WriteLine($"Cimatron interop interfaces usable without IDispatch: {binder?.InterfaceCount ?? 0}");
     foreach (var problem in CimatronComApi.BinderProblems) Console.WriteLine("  " + problem);
@@ -137,7 +143,10 @@ static void WriteApiListing(ExportOptions options)
     try
     {
         var lines = new List<string> { $"Cimatron Program folder: {folder}" };
-        foreach (var library in CimatronTypeLibrary.ProbeLibraries) lines.AddRange(CimatronTypeLibrary.Describe(Path.Combine(folder, library)));
+        var libraries = CimatronTypeLibrary.ProbeLibraries.Select(library => Path.Combine(folder, library))
+            .Concat(Directory.EnumerateFiles(folder, "*.tlb").Order(StringComparer.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var library in libraries) lines.AddRange(CimatronTypeLibrary.Describe(library));
         File.WriteAllLines(target, lines);
         Console.WriteLine($"Cimatron API listing ({lines.Count} lines): {target}");
     }

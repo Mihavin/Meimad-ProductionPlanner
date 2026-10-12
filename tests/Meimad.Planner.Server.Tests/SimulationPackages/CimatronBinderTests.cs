@@ -85,5 +85,27 @@ public sealed class CimatronBinderTests
         Assert.Equal(1u, outputs[0]);
         Assert.Contains(CimatronTypeLibrary.Describe(dll), line => line.Trim() == "ForReading = 1"); // enum values are listed
         Assert.Equal("registered", CimatronTypeLibrary.RegistrationStatus(dll));
+        Assert.NotNull(CimatronTypeLibrary.InterfaceId(dll, "IFileSystem"));
+        Assert.Null(CimatronTypeLibrary.InterfaceId(dll, "FileSystemObject")); // a class, not an interface
+    }
+
+    [Fact]
+    public void Without_Cimatron_the_running_object_table_fallback_finds_nothing_and_says_why()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var empty = Path.Combine(Path.GetTempPath(), "MeimadPlanner.CimatronBinder.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(empty);
+        try
+        {
+            var trace = new List<string>();
+            Assert.Null(CimatronRunningApplication.Find(empty, trace)); // no type libraries: no IApplication to look for
+            Assert.Contains(trace, line => line.Contains("IApplication", StringComparison.Ordinal));
+            Assert.Empty(CimatronTypeLibrary.Classes(empty));
+            Assert.False(string.IsNullOrWhiteSpace(CimatronRunningApplication.Advice()));
+        }
+        finally
+        {
+            Directory.Delete(empty, true);
+        }
     }
 }
