@@ -62,7 +62,9 @@ internal sealed record NcViewerOpenRequest(
     // Where a program without a file of its own (a Server release) finds its subprograms.
     string? SubprogramFolder = null,
     // Machine 3D models and the Operation's Cimatron Work CS, fixtures and rest material.
-    NcViewerSetupScene? Scene = null)
+    NcViewerSetupScene? Scene = null,
+    // The measured work offsets (G54 ...) of the opened Operation and release (meimad-work-offsets.js).
+    NcViewerWorkOffsetContext? WorkOffsets = null)
 {
     /// <summary>The upstream viewer's blank program.</summary>
     internal const string BlankProgram = "%\nO0001\n\nM30\n%\n";

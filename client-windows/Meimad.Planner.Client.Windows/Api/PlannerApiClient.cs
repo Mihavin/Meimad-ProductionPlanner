@@ -9,7 +9,7 @@ using System.Text.Json;
 
 namespace Meimad.Planner.Client.Windows.Api;
 
-internal interface IPlannerApiClient : IDisposable
+internal partial interface IPlannerApiClient : IDisposable
 {
     Task<HandoffView> GetPackageHandoffsAsync(string packageId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<ProductionPackageInfo> GetHistoricalPackageAsync(string packageId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -1212,7 +1212,7 @@ internal sealed class PlannerApiClientFactory : IPlannerApiClientFactory
         });
 }
 
-internal sealed class PlannerApiClient : IPlannerApiClient
+internal sealed partial class PlannerApiClient : IPlannerApiClient
 {
     private const string ClientIdHeader = "X-Meimad-Client-Id";
     private const string UserIdHeader = "X-Meimad-User-Id";

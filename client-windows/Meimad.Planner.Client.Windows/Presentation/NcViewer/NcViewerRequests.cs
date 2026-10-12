@@ -84,7 +84,8 @@ internal static class NcViewerRequests
             ProgramFolders: programFolders,
             OperationToolTable: operationToolTable,
             SubprogramFolder: subprogramFolder,
-            Scene: scene);
+            Scene: scene,
+            WorkOffsets: NcViewerWorkOffsets.For(api, caseOperationId, releaseId, machineId, machines, release));
     }
 
     /// <summary>

@@ -92,6 +92,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string dprntFileClearPolicy = "ON_OFFSET_LOADER";
     private string dprntFtpUsername = string.Empty;
     private string dprntFtpPassword = string.Empty;
+    private string dprntSerialPort = string.Empty;
+    private string dprntSerialBaudRate = "9600";
+    private string dprntSerialParity = "NONE";
+    private string dprntSerialDataBits = "8";
+    private string dprntSerialStopBits = "1";
     private string focasHost = string.Empty;
     private string focasMacAddress = string.Empty;
     private string focasPort = "8193";
@@ -671,7 +676,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     /// events, and the Planning Board offers the production statuses to report by hand.
     /// </summary>
     public bool DprntEnabled { get => dprntEnabled; set => SetField(ref dprntEnabled, value); }
-    public IReadOnlyList<string> DprntSources => ShowsFocasConfiguration ? ["TCP", "FILE", "FTP", "NONE"] : ["TCP", "FILE"];
+    public IReadOnlyList<string> DprntSources => ShowsFocasConfiguration ? ["TCP", "FILE", "FTP", "SERIAL", "NONE"] : ["TCP", "FILE"];
     public string DprntTcpPort { get => dprntTcpPort; set => SetField(ref dprntTcpPort, value); }
     /// <summary>Serial-to-Ethernet bridge address for the TCP source; blank means the controller itself (FANUC FOCAS connections only).</summary>
     public string DprntTcpHost { get => dprntTcpHost; set => SetField(ref dprntTcpHost, value); }
@@ -682,6 +687,16 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     /// <summary>Login for the FTP source, when the controller's embedded FTP server requires one (FANUC FOCAS connections only).</summary>
     public string DprntFtpUsername { get => dprntFtpUsername; set => SetField(ref dprntFtpUsername, value); }
     public string DprntFtpPassword { get => dprntFtpPassword; set => SetField(ref dprntFtpPassword, value); }
+    /// <summary>The SERIAL source's COM port on the Server PC and its line settings (FANUC FOCAS connections only).</summary>
+    public string DprntSerialPort { get => dprntSerialPort; set => SetField(ref dprntSerialPort, value); }
+    public string DprntSerialBaudRate { get => dprntSerialBaudRate; set => SetField(ref dprntSerialBaudRate, value); }
+    public IReadOnlyList<string> DprntSerialBaudRates { get; } = ["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"];
+    public string DprntSerialParity { get => dprntSerialParity; set => SetField(ref dprntSerialParity, value); }
+    public IReadOnlyList<string> DprntSerialParities { get; } = ["NONE", "EVEN", "ODD"];
+    public string DprntSerialDataBits { get => dprntSerialDataBits; set => SetField(ref dprntSerialDataBits, value); }
+    public IReadOnlyList<string> DprntSerialDataBitOptions { get; } = ["8", "7"];
+    public string DprntSerialStopBits { get => dprntSerialStopBits; set => SetField(ref dprntSerialStopBits, value); }
+    public IReadOnlyList<string> DprntSerialStopBitOptions { get; } = ["1", "2"];
     public string FocasHost { get => focasHost; set => SetField(ref focasHost, value); }
     public string FocasMacAddress { get => focasMacAddress; set => SetField(ref focasMacAddress, value); }
     public string FocasPort { get => focasPort; set => SetField(ref focasPort, value); }
@@ -1432,7 +1447,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             var configuration = new FocasConnectionConfiguration(
                 FocasHost.Trim(), NullIfBlank(FocasMacAddress), port, timeout, FocasPartCounterSource,
                 new FocasDprntConfiguration(DprntSource, NullIfBlank(DprntFilePath), DprntFileClearPolicy, dprntPort,
-                    NullIfBlank(DprntTcpHost), NullIfBlank(DprntFtpUsername), NullIfBlank(DprntFtpPassword), DprntEnabled),
+                    NullIfBlank(DprntTcpHost), NullIfBlank(DprntFtpUsername), NullIfBlank(DprntFtpPassword), DprntEnabled,
+                    NullIfBlank(DprntSerialPort), ParseOptional(DprntSerialBaudRate), NullIfBlank(DprntSerialParity),
+                    ParseOptional(DprntSerialDataBits), ParseOptional(DprntSerialStopBits)),
                 new FocasProgramAccessConfiguration(
                     FocasProgramUploadEnabled ? "FOCAS_PROGRAM_UPLOAD" : "NONE",
                     FocasProgramUploadEnabled, FocasProgramFolder.Trim()));
@@ -1468,6 +1485,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         DprntFileClearPolicy = configuration?.Dprnt?.ClearPolicy ?? "NEVER";
         DprntFtpUsername = configuration?.Dprnt?.FtpUsername ?? string.Empty;
         DprntFtpPassword = configuration?.Dprnt?.FtpPassword ?? string.Empty;
+        DprntSerialPort = configuration?.Dprnt?.SerialPort ?? string.Empty;
+        DprntSerialBaudRate = (configuration?.Dprnt?.BaudRate ?? 9600).ToString(CultureInfo.InvariantCulture);
+        DprntSerialParity = configuration?.Dprnt?.Parity ?? "NONE";
+        DprntSerialDataBits = (configuration?.Dprnt?.DataBits ?? 8).ToString(CultureInfo.InvariantCulture);
+        DprntSerialStopBits = (configuration?.Dprnt?.StopBits ?? 1).ToString(CultureInfo.InvariantCulture);
         FocasProgramUploadEnabled = configuration?.ProgramAccess?.Enabled ?? false;
         FocasProgramFolder = configuration?.ProgramAccess?.ProgramFolder ?? "//CNC_MEM/USER/PATH1/";
         FocasPollingIntervalMs = value.PollingIntervalMs.ToString(CultureInfo.InvariantCulture);
@@ -2681,6 +2703,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         DprntFileClearPolicy = "ON_OFFSET_LOADER";
         DprntFtpUsername = string.Empty;
         DprntFtpPassword = string.Empty;
+        DprntSerialPort = string.Empty;
+        DprntSerialBaudRate = "9600";
+        DprntSerialParity = "NONE";
+        DprntSerialDataBits = "8";
+        DprntSerialStopBits = "1";
         ResetFocasForm();
         HaasLocalNetShareEnabled = false;
         HaasLocalNetSharePath = string.Empty;
@@ -3231,6 +3258,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     private static string? NullIfBlank(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>A whole number typed or chosen in a field; blank or not a number sends nothing.</summary>
+    private static int? ParseOptional(string? value) =>
+        int.TryParse(value?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var number) ? number : null;
 
     private static bool TryParseLocalInstant(string value, out DateTimeOffset result)
     {
