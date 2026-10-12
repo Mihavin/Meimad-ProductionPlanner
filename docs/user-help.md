@@ -202,6 +202,28 @@ For an Operation machined in Cimatron, open Case → Operations, select the Oper
 2. Type the Work CS from Cimatron's UCS dialog: the work offset (G54, G54.1 P1, …), the origin in mm and the rotations about X, then Y, then Z, in the coordinates the files were exported in. **Save Work CS**.
 3. Open the Operation's program in the NC viewer: the fixtures and the rest material appear in place around the toolpath. In the *Machine & setup* card, **Use as stock** next to a rest material starts the material removal from it. The rest material is drawn solid and shaded; tick **Rest material see-through** to see the toolpath inside it. While *Material removal* is on, the cut stock is drawn instead. *Import from Cimatron…* in the viewer shows extra files in that window only.
 
+**Importing a Cimatron package (one step instead of linking files and typing the Work CS).** When the Meimad exporter
+has run in Cimatron (from the post-processor hook, the `export-to-meimad.bat` launcher or by hand; see
+`docs/cimatron-exporter.md`), the Operation's folder `Gcode\<Case>\<Operation>\cimatron-export` holds a package. In the
+*Cimatron setup* card choose **Import Cimatron package...** and pick that folder (it contains `manifest.json` and
+`COMPLETE`).
+- The Server checks the package and links its stock, every fixture and the finished part to the Operation, and sets the
+  Work CS from the Cimatron UCS. Nothing has to be typed: open the program in the NC viewer and the toolpath, stock,
+  fixtures and part are in place (the finished part is drawn see-through green with the fixtures).
+- The Release G-code form takes the package's NC program and tool table, and a picture of the finished part is saved in
+  the Working Folder's `_MeimadPlanner\thumbnails` folder for the TV.
+- If the package has several possible stocks or several Machines match its machine, a report opens and asks you to
+  choose; tick *Remember this Machine* (Setup permission) so the next package maps by itself. A Work CS you typed by hand
+  is replaced only when you tick *Replace the manually entered Work CS*.
+- If the package has a real problem (a file changed after the export, a missing file, an NC tool missing from the tool
+  table, no UCS, an export that did not finish), nothing changes and the report lists each problem with its code
+  (⛔ errors, ⚠ warnings). Fix it in Cimatron and export again.
+- Importing the same package again changes nothing; a newer export of the same Operation replaces the files of the
+  previous package. **Package report** shows the last report again. Measured machine offsets (G54 from the machine) are
+  never part of a package.
+- If someone else changed the Work CS or imported a package meanwhile, the import is refused with who and when; check
+  and import again.
+
 **Real machine motion.** The Machine view moves each part of the machine the way the real machine does: on a VF-type mill the table and part travel in X and Y under a spindle that only moves in Z; on the 5-axis machines the head moves in X, Y and Z and the trunnion tilts and turns the part. A Machine 3D model belongs on the node of the machine part it shows (for example the table STL on *x-table*, the head on *z-head*, the column or enclosure on *base*).
 
 **Lathes in the Machine view.** For a lathe program choose **Frame → Machine**: the carriage, the X slide, the Y slide (Y-axis lathes) and the turret follow the tool, and the spindle turns with the program's C words. The spindle face sits behind the stock you defined (cylinder front Z minus length). Machine 3D models of a lathe attach to its nodes the same way as on a mill; a model on a moving node must be drawn with the tool point at the spindle centre and face. Live-tool milling (C, H, Y, V words) shows in the *Axes* card and in the Machine view, but the cuts are drawn as their X-Z profile; G112 and G107 interpolation are named, not simulated.
