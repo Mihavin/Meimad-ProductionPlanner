@@ -8,9 +8,15 @@ namespace Meimad.CimatronExporter;
 /// that define stock (outside any toolpath, e.g. Cimatron's "Stock By Contours").
 /// </summary>
 internal sealed record ProcessManagerData(IReadOnlyList<CimatronProcedure> Procedures, IReadOnlyList<string> UcsNames,
-    IReadOnlyList<int>? StockProcedureIds = null)
+    IReadOnlyList<int>? StockProcedureIds = null, IReadOnlyList<int>? NonMachiningIds = null)
 {
     internal IReadOnlyList<int> StockProcedures => StockProcedureIds ?? [];
+
+    /// <summary>Procedures outside every toolpath (target part, stock): not NC, left out of the export.</summary>
+    internal IReadOnlyList<int> NonMachining => NonMachiningIds ?? [];
+
+    /// <summary>The procedures that machine: those inside a toolpath.</summary>
+    internal IReadOnlyList<CimatronProcedure> Machining => Procedures.Where(item => !NonMachining.Contains(item.Id)).ToArray();
 }
 
 /// <summary>
@@ -44,6 +50,7 @@ internal static class ProcessManagerXml
         var procedures = new List<CimatronProcedure>();
         var ucsNames = new List<string>();
         var stock = new List<int>();
+        var nonMachining = new List<int>();
         var seen = new HashSet<int>();
         var hasToolpaths = document.Descendants().Any(IsToolpath);
         foreach (var element in document.Descendants())
@@ -64,11 +71,12 @@ internal static class ProcessManagerXml
             var ucs = Ucs(element) ?? (toolpath is null ? null : ToolpathUcs(toolpath));
             if (ucs is not null) ucsNames.Add(ucs);
             var machining = !hasToolpaths || toolpath is not null;
+            if (!machining) nonMachining.Add(id.Value);
             if (!machining && IsStockDefinition(element, name)) stock.Add(id.Value);
             procedures.Add(new CimatronProcedure(id.Value, name, ucs, machining && HasToolpath(element), OperationOf(element)));
         }
 
-        return new ProcessManagerData(procedures, ucsNames.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), stock);
+        return new ProcessManagerData(procedures, ucsNames.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), stock, nonMachining);
     }
 
     // An element that is one procedure: its name says so (a single word such as "Procedure"; parameter rows such as
@@ -346,5 +354,68 @@ internal static class StockFileDiscovery
         }
 
         return candidates.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+}
+
+/// <summary>The bounding box and triangle count of a binary STL (Cimatron's remaining-stock export writes one).</summary>
+internal static class StlBounds
+{
+    internal static (int Triangles, double[] Min, double[] Max)? Read(string path)
+    {
+        if (!File.Exists(path)) return null;
+        var bytes = File.ReadAllBytes(path);
+        if (bytes.Length < 84) return null;
+        var count = BitConverter.ToUInt32(bytes, 80);
+        if (bytes.Length != 84 + 50L * count || count == 0) return null;
+        double[] min = [double.MaxValue, double.MaxValue, double.MaxValue];
+        double[] max = [double.MinValue, double.MinValue, double.MinValue];
+        for (var triangle = 0; triangle < count; triangle++)
+        {
+            for (var vertex = 0; vertex < 3; vertex++)
+            {
+                var offset = 84 + triangle * 50 + 12 + vertex * 12;
+                for (var axis = 0; axis < 3; axis++)
+                {
+                    double value = BitConverter.ToSingle(bytes, offset + axis * 4);
+                    min[axis] = Math.Min(min[axis], value);
+                    max[axis] = Math.Max(max[axis], value);
+                }
+            }
+        }
+
+        return ((int)count, min, max);
+    }
+}
+
+/// <summary>
+/// Decides how Cimatron's UCS <c>Matrix</c> is laid out by comparing the composed matrix of the active UCS with what
+/// <c>IModel.Active2ModelTranslate</c> answers for the active origin and unit axes (the axes' model coordinates are the
+/// columns of the UCS→model rotation). A symmetric rotation cannot tell rows from columns.
+/// </summary>
+internal static class UcsLayoutCheck
+{
+    internal static string Compare(IReadOnlyList<double> composed, IReadOnlyList<double> origin, IReadOnlyList<double> xPoint,
+        IReadOnlyList<double> yPoint, IReadOnlyList<double> zPoint)
+    {
+        var columns = new[] { xPoint, yPoint, zPoint }.Select(point => Enumerable.Range(0, 3).Select(axis => point[axis] - origin[axis]).ToArray()).ToArray();
+        double asComposed = 0, transposed = 0, symmetric = 0;
+        for (var row = 0; row < 3; row++)
+        {
+            asComposed = Math.Max(asComposed, Math.Abs(composed[row * 4 + 3] - origin[row]));
+            for (var column = 0; column < 3; column++)
+            {
+                asComposed = Math.Max(asComposed, Math.Abs(composed[row * 4 + column] - columns[column][row]));
+                transposed = Math.Max(transposed, Math.Abs(composed[column * 4 + row] - columns[column][row]));
+                symmetric = Math.Max(symmetric, Math.Abs(composed[row * 4 + column] - composed[column * 4 + row]));
+            }
+        }
+
+        transposed = Math.Max(transposed, Enumerable.Range(0, 3).Max(row => Math.Abs(composed[row * 4 + 3] - origin[row])));
+        const double tolerance = 1e-4;
+        if (asComposed < tolerance && symmetric < tolerance)
+            return "matches as composed, but the rotation is symmetric: activate a tilted UCS (e.g. UCS11_3) in Cimatron and probe again to tell rows from columns";
+        if (asComposed < tolerance) return "CONFIRMED: Matrix is row-major with the Vector as the UCS origin in model coordinates (as composed)";
+        if (transposed < tolerance) return "the rotation must be TRANSPOSED (Matrix holds the UCS axes as rows)";
+        return $"matches neither layout (largest difference {asComposed:G4} as composed, {transposed:G4} transposed)";
     }
 }

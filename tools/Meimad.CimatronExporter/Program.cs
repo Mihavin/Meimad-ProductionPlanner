@@ -110,11 +110,15 @@ static int Run(string[] args)
                 Console.WriteLine($"Active NC document: {document.Name} {document.FilePath}");
                 var stockFiles = StockFileDiscovery.Find(document.FilePath);
                 Console.WriteLine($"Stock STL files beside the document: {(stockFiles.Count == 0 ? "none" : string.Join(", ", stockFiles))}");
-                foreach (var procedure in api.GetProcedures())
+                var procedures = api.GetProcedures();
+                foreach (var procedure in procedures)
                     Console.WriteLine($"  procedure {procedure.Id} '{procedure.Name}' UCS {procedure.UcsName ?? "?"} toolpath {procedure.HasToolpath}{(procedure.OperationName is null ? "" : $" in '{procedure.OperationName}'")}");
                 var ucsNames = api.GetUcsNames();
                 Console.WriteLine("UCS: " + (ucsNames.Count == 0 ? "(none read)" : string.Join(", ", ucsNames)));
-                foreach (var name in ucsNames.Take(8))
+                // The matrices of the UCS the procedures use (the ones a package can be exported in).
+                var used = procedures.Select(procedure => procedure.UcsName).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                Console.WriteLine($"Matrices of the {used.Length} UCS used by procedures (row-major UCS -> model, translation in the last column):");
+                foreach (var name in used)
                 {
                     var ucs = api.GetUcs(name);
                     Console.WriteLine($"  UCS '{name}' matrix: {(ucs is null ? "not readable" : string.Join(", ", ucs.Matrix.Select(value => value.ToString("G6", System.Globalization.CultureInfo.InvariantCulture))))}");

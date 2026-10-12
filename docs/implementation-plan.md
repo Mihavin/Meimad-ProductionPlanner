@@ -253,7 +253,18 @@ reached the user's instance and NC document through `GetActiveApplication` and s
 and stock procedures outside the toolpaths not machining), fixes the UCS entity query (`CreateFilter(cmFilterEntityType)`
 then `IFilterType.Add(cmUcs)`), looks for `STOCK*.stl` in the `NC` folder holding the document folder, writes the probe to
 `probe-result.txt` in UTF-8, and tries the remaining stock of the stock-defining procedure as a candidate initial stock
-(probe only). Tests: `CimatronAccessorTests`,
+(probe only). The seventh probe confirmed 54 procedures with their UCS, 68 named UCS with matrices, and a 12-triangle
+box from the stock procedure. Adapter `cimatron-com-5` uses that box as the initial stock (part-model coordinates;
+mode A needs `--stock-file`), leaves the target-part and stock procedures out of the export, and compares the active
+UCS with `IModel.Active2ModelTranslate` to settle the matrix layout.
+
+**Open decision (Proposed, 2026-10-12): procedures with their own UCS.** The exporter definition (§6, §18) says the NC
+and the geometry share one "procedure UCS", the frame the post writes the NC in. In the Meimad 5-axis document probed on
+2026-10-12 one toolpath holds procedures in 17 different UCS (orientation frames), all posted together by
+`PostByUcsToAllNcProcedures` relative to one UCS. The exporter therefore reads the definition's procedure UCS as the
+post UCS (`--ucs`): procedures in other UCS give the warning `ucs_procedures_differ` when posting by UCS, and the
+package stays blocked (`ucs_mismatch`) only with `ExecutePostToAllNcProcedures`, whose output frame is unknown. Reversible
+in `PackageExporter.ValidateState`; awaiting the owner's confirmation. Tests: `CimatronAccessorTests`,
 `CimatronBinderTests`, `CimatronExporterTests` (frame of the stock export, stock discovery); `SimulationPackages` suite
 80 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
 ## TV Dashboard part picture in every Machine row (2026-10-12, schema v118; implemented locally on branch ws/tv)

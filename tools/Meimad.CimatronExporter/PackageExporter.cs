@@ -219,8 +219,15 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         var procedureUcs = procedures.Select(item => item.UcsName).Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (procedureUcs.Any(name => !string.Equals(name, options.Ucs, StringComparison.OrdinalIgnoreCase)))
         {
-            log.Error("state", "ucs_mismatch",
-                $"The procedures use UCS {string.Join(", ", procedureUcs)}, not '{options.Ucs}'; export one UCS per package.");
+            // Proposed (implementation plan, 2026-10-12): with PostByUcsToAllNcProcedures the NC is written relative to
+            // --ucs whatever orientation UCS each procedure has (5-axis and indexed work use many), so the package frame is
+            // still one UCS. Without it the posted frame is unknown and the package is blocked.
+            if (api.Capabilities.PostByUcs)
+                log.Warning("state", "ucs_procedures_differ",
+                    $"The procedures use UCS {string.Join(", ", procedureUcs)}; the NC is posted relative to '{options.Ucs}' and the geometry is placed in that UCS.");
+            else
+                log.Error("state", "ucs_mismatch",
+                    $"The procedures use UCS {string.Join(", ", procedureUcs)}, not '{options.Ucs}'; export one UCS per package.");
         }
 
         var stockFile = options.StockFile;
@@ -449,7 +456,7 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
                 return null;
             }
 
-            log.Ok("stock", "Initial stock exported.");
+            log.Ok("stock", "Initial stock exported by Cimatron (on Cimatron 2026.0: the remaining stock of the stock-defining procedure, in part-model coordinates).");
             return new StockFileReference { Path = "geometry/stock.stl", Kind = StockKinds.Initial, FoundBy = "stock-procedure" };
         }
         catch (CimatronApiException exception)

@@ -249,6 +249,22 @@ public sealed class CimatronExporterTests : IDisposable
     }
 
     [Fact]
+    public void Procedures_in_another_ucs_warn_when_posted_by_ucs_and_block_otherwise()
+    {
+        // 5-axis work: each procedure has its own orientation UCS; PostByUcs still writes the NC relative to --ucs.
+        using var api = new FakeCimatronApi();
+        var posted = Run(api, Options("--ucs", "UCS_OP020"));
+        Assert.True(posted.Complete, posted.Log.ToReport());
+        Assert.Contains(posted.Log.Entries, entry => entry.Code == "ucs_procedures_differ");
+
+        Directory.Delete(Output, true);
+        using var withoutPostByUcs = new FakeCimatronApi { SupportsPostByUcs = false };
+        var blocked = Run(withoutPostByUcs, Options("--ucs", "UCS_OP020"));
+        Assert.Equal(1, blocked.ExitCode);
+        Assert.Contains(blocked.Log.Entries, entry => entry.Code == "ucs_mismatch");
+    }
+
+    [Fact]
     public void Command_line_requires_output_post_and_ucs()
     {
         Assert.NotNull(ExportOptions.Parse(["--probe"]).Options);

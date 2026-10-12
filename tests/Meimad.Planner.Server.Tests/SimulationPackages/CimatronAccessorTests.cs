@@ -84,6 +84,8 @@ public sealed class CimatronAccessorTests
         // No UCS of its own: the toolpath's UCS; not calculated: no toolpath.
         Assert.Equal(new CimatronProcedure(59, "Drill 5x_59", "MODEL", false, "TP_MODEL"), data.Procedures[3]);
         Assert.Equal([3], data.StockProcedures);
+        Assert.Equal([2, 3], data.NonMachining);
+        Assert.Equal([6, 59], data.Machining.Select(item => item.Id));
         Assert.Equal(["MODEL-1", "MODEL", "FAZA----11111"], data.UcsNames);
     }
 
@@ -107,6 +109,55 @@ public sealed class CimatronAccessorTests
         Assert.Equal(0, UcsMatrix.Compose([1, 0, 0, 0, 1, 0, 0, 0, 1], null)!.Value.Matrix[3]);
         Assert.Null(UcsMatrix.Compose([1, 2, 3], null));
         Assert.Null(UcsMatrix.Compose(null, [1, 2, 3]));
+    }
+
+    [Fact]
+    public void Ucs_layout_is_decided_from_translated_points()
+    {
+        // UCS11_3 of the Meimad probe (2026-10-12): a tilted, non-symmetric rotation.
+        double[] composed = [-0.00771125, -0.99997, 0, 55.9491, 0.101128, -0.000779848, -0.994873, 60, 0.994844, -0.00767172, 0.101131, 96.5154, 0, 0, 0, 1];
+        double[] origin = [55.9491, 60, 96.5154];
+        double[] Point(int column) => [origin[0] + composed[column], origin[1] + composed[4 + column], origin[2] + composed[8 + column]];
+        Assert.StartsWith("CONFIRMED", UcsLayoutCheck.Compare(composed, origin, Point(0), Point(1), Point(2)));
+
+        double[] Transposed(int row) => [origin[0] + composed[row * 4], origin[1] + composed[row * 4 + 1], origin[2] + composed[row * 4 + 2]];
+        Assert.Contains("TRANSPOSED", UcsLayoutCheck.Compare(composed, origin, Transposed(0), Transposed(1), Transposed(2)));
+
+        double[] identity = [1, 0, 0, 5, 0, 1, 0, 6, 0, 0, 1, 7, 0, 0, 0, 1];
+        Assert.Contains("symmetric", UcsLayoutCheck.Compare(identity, [5, 6, 7], [6, 6, 7], [5, 7, 7], [5, 6, 8]));
+        Assert.StartsWith("matches neither", UcsLayoutCheck.Compare(identity, [0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]));
+    }
+
+    [Fact]
+    public void Stl_bounds_are_read_from_a_binary_stl()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"meimad-stl-bounds-{Guid.NewGuid():N}.stl");
+        try
+        {
+            using (var writer = new BinaryWriter(File.Create(file)))
+            {
+                writer.Write(new byte[80]);
+                writer.Write(2u);
+                float[][] triangles = [[-66, -63.5f, 0, 66, -63.5f, 0, 66, 63.7f, 0], [-66, -63.5f, 99.5f, 66, 63.7f, 99.5f, -66, 63.7f, 99.5f]];
+                foreach (var triangle in triangles)
+                {
+                    writer.Write(new byte[12]);
+                    foreach (var value in triangle) writer.Write(value);
+                    writer.Write((ushort)0);
+                }
+            }
+
+            var bounds = StlBounds.Read(file)!.Value;
+            Assert.Equal(2, bounds.Triangles);
+            Assert.Equal([-66, -63.5, 0], bounds.Min);
+            Assert.Equal(99.5, bounds.Max[2]);
+            File.WriteAllText(file, "solid ascii");
+            Assert.Null(StlBounds.Read(file));
+        }
+        finally
+        {
+            File.Delete(file);
+        }
     }
 
     [Fact]

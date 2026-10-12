@@ -24,7 +24,7 @@ namespace Meimad.CimatronExporter;
 /// </summary>
 internal sealed class CimatronComApi : ICimatronApi
 {
-    internal const string Version = "cimatron-com-4";
+    internal const string Version = "cimatron-com-5";
     internal const string AppAccessProgId = "CimAppAccess.AppAccess";
 
     /// <summary>How the last <see cref="Connect"/> reached Cimatron (null: the registered ProgID).</summary>
@@ -57,6 +57,7 @@ internal sealed class CimatronComApi : ICimatronApi
         internal const string SetFilter = "SetFilter";
         internal const string SelectEntities = "Select";
         internal const string FilterAdd = "Add";
+        internal const string ActiveToModel = "Active2ModelTranslate";
         internal const string Transformation = "Transformation";
         internal static readonly string[] Matrix = ["Matrix", "Tranformation"];
         internal const string Vector = "Vector";
@@ -100,7 +101,10 @@ internal sealed class CimatronComApi : ICimatronApi
             CuttersAndHoldersCsv: Find(Members.CuttersCsv) is not null,
             JobsXml: Find(Members.JobsXml) is not null,
             RemainingStock: Find(Members.RemainingStock) is not null,
-            InitialStock: FindAny(Members.InitialStock) is not null,
+            // Cimatron 2026.0 has no initial-stock export; the remaining stock of the one stock-defining procedure
+            // ("Stock By Contours") is the initial stock (probe of 2026-10-12: a 12-triangle box).
+            InitialStock: FindAny(Members.InitialStock) is not null
+                || (Find(Members.RemainingStock) is not null && ProcessManager() is { StockProcedures.Count: 1 }),
             EntityExport: FindAny(Members.EntityExport) is not null,
             MultiStl: FindAny(Members.MultiStl) is not null,
             UcsTransform: ucsQuery || activeUcs,
@@ -309,6 +313,7 @@ internal sealed class CimatronComApi : ICimatronApi
         }
 
         yield return activeLine;
+        yield return "UCS matrix layout (active UCS against Active2ModelTranslate): " + UcsLayout();
 
         string entityLine;
         try
@@ -339,6 +344,35 @@ internal sealed class CimatronComApi : ICimatronApi
             yield return StockExperiment(id, $"stock-defining procedure {id}");
     }
 
+    // The active UCS's composed matrix against IModel.Active2ModelTranslate of its origin and unit axes. Read-only.
+    private string UcsLayout()
+    {
+        if (model is null || !HasMember(model, Members.ActiveUcs) || !HasMember(model, Members.ActiveToModel))
+            return "not available (no Active2ModelTranslate)";
+        try
+        {
+            var ucs = CallOrGet(model, Members.ActiveUcs);
+            if (ucs is null) return "no active UCS";
+            var (_, _, composed) = ReadTransformation(ucs);
+            if (composed is null) return "the active UCS has no readable matrix";
+            var points = new List<IReadOnlyList<double>>();
+            foreach (var point in new[] { new double[] { 0, 0, 0 }, [1, 0, 0], [0, 1, 0], [0, 0, 1] })
+            {
+                var (result, outputs) = Invoke(model, Members.ActiveToModel, point);
+                var translated = Doubles(outputs.Skip(1).FirstOrDefault(output => output is not null) ?? result);
+                if (translated.Count < 3) return $"Active2ModelTranslate answered no point for ({Join(point)})";
+                points.Add(translated);
+            }
+
+            return $"origin -> [{Join(points[0])}], axes -> [{Join(points[1])}] [{Join(points[2])}] [{Join(points[3])}]: "
+                + UcsLayoutCheck.Compare(composed.Value.Matrix, points[0], points[1], points[2], points[3]);
+        }
+        catch (CimatronApiException exception)
+        {
+            return exception.Message;
+        }
+    }
+
     // ExportProceduresRemainingStock(id, cmNcModelUcs, temp file): what Cimatron answered, and the STL it wrote.
     private string StockExperiment(int procedureId, string label)
     {
@@ -349,10 +383,11 @@ internal sealed class CimatronComApi : ICimatronApi
             var created = outputs.OfType<bool>().Cast<bool?>().FirstOrDefault() ?? result as bool?;
             if (!File.Exists(file)) return $"Remaining stock of {label}: answered {created?.ToString() ?? "nothing"}, no file written";
             var length = new FileInfo(file).Length;
-            var triangles = length >= 84 ? BitConverter.ToUInt32(File.ReadAllBytes(file), 80) : 0;
-            var binary = length == 84 + 50L * triangles;
+            var bounds = StlBounds.Read(file);
             return $"Remaining stock of {label}: answered {created?.ToString() ?? "nothing"}, {length} bytes, "
-                + (binary ? $"binary STL with {triangles} triangles" : "not a binary STL (ASCII or other)");
+                + (bounds is null
+                    ? "not a binary STL (ASCII or other)"
+                    : $"binary STL with {bounds.Value.Triangles} triangles, model box min [{Join(bounds.Value.Min)}] max [{Join(bounds.Value.Max)}]");
         }
         catch (CimatronApiException exception)
         {
@@ -382,7 +417,7 @@ internal sealed class CimatronComApi : ICimatronApi
     public IReadOnlyList<CimatronProcedure> GetProcedures()
     {
         var data = ProcessManager();
-        if (data is { Procedures.Count: > 0 }) return data.Procedures;
+        if (data is { Procedures.Count: > 0 }) return data.Machining;
         if (model is null || !HasMember(model, Members.ModelProcedures)) return [];
         var result = new List<CimatronProcedure>();
         foreach (var item in Enumerate(CallOrGet(model, Members.ModelProcedures)))
@@ -492,9 +527,21 @@ internal sealed class CimatronComApi : ICimatronApi
 
     public void ExportInitialStock(CimatronUcsFrame frame, string stlPath)
     {
-        var owner = FindAny(Members.InitialStock)
-            ?? throw new CimatronApiException("capability_unavailable", "This Cimatron exposes no initial-stock export.");
-        Call(owner.Target, owner.Name, frame == CimatronUcsFrame.Procedure ? Members.ProcedureUcsType : Members.ModelUcsType, stlPath);
+        var owner = FindAny(Members.InitialStock);
+        if (owner is not null)
+        {
+            Call(owner.Value.Target, owner.Value.Name, frame == CimatronUcsFrame.Procedure ? Members.ProcedureUcsType : Members.ModelUcsType, stlPath);
+            return;
+        }
+
+        if (Find(Members.RemainingStock) is null || ProcessManager() is not { StockProcedures.Count: 1 } data)
+            throw new CimatronApiException("capability_unavailable", "This Cimatron exposes no initial-stock export and the NC document has not exactly one stock-defining procedure.");
+
+        // The stock procedure has no machining UCS of its own: its stock is exported in part-model coordinates only.
+        if (frame == CimatronUcsFrame.Procedure)
+            throw new CimatronApiException("capability_unavailable",
+                $"The initial stock comes from Cimatron's stock procedure {data.StockProcedures[0]} in part-model coordinates only; export in part-model coordinates (without --geometry-in-ucs) or give --stock-file.");
+        ExportRemainingStock(data.StockProcedures[0], CimatronUcsFrame.Model, stlPath);
     }
 
     public IReadOnlyList<CimatronGeometryFile> ExportPartGeometry(string ucsName, string folder)
