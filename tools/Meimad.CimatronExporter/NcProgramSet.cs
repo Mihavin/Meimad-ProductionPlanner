@@ -51,6 +51,26 @@ internal static partial class NcProgramSet
         return reached.Count == files.Count ? roots[0] : null;
     }
 
+    /// <summary>
+    /// The work offsets an NC program selects, in order of first use: G54…G59 and G54.1 P… (Meimad's Mazak program of
+    /// 2026-10-12 cuts in G57 and has its orbit-home macro rebuild G57 after each tilt).
+    /// </summary>
+    public static IReadOnlyList<string> WorkOffsets(string path)
+    {
+        var offsets = new List<string>();
+        foreach (var raw in File.ReadLines(path, Encoding.Latin1))
+        {
+            var line = Comment().Replace(raw, "").ToUpperInvariant();
+            foreach (Match match in WorkOffset().Matches(line))
+            {
+                var offset = match.Groups[2].Success ? $"G54.1 P{match.Groups[2].Value}" : "G" + match.Groups[1].Value;
+                if (!offsets.Contains(offset)) offsets.Add(offset);
+            }
+        }
+
+        return offsets;
+    }
+
     /// <summary>Programs the files call that none of them is (2026-10-12: 6000.EIA calls 9013, a program kept on the machine).</summary>
     public static IReadOnlyList<string> CallsOutside(IReadOnlyList<NcProgramFile> files) =>
         files.SelectMany(file => file.Calls)
@@ -79,6 +99,9 @@ internal static partial class NcProgramSet
 
     [GeneratedRegex(@"\([^)]*\)?", RegexOptions.CultureInvariant)]
     private static partial Regex Comment();
+
+    [GeneratedRegex(@"(?<![A-Z0-9.])G(5[4-9])(?:\.1\s*P\s*(\d{1,3}))?(?![0-9])", RegexOptions.CultureInvariant)]
+    private static partial Regex WorkOffset();
 
     [GeneratedRegex(@"^(?:O|:)(?:(\d{1,8})|<([^>]+)>)", RegexOptions.CultureInvariant)]
     private static partial Regex ProgramHeader();

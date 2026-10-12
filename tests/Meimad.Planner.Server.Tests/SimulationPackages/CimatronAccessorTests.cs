@@ -83,6 +83,10 @@ public sealed class CimatronAccessorTests
             // 9013 is a machine-resident program (the Meimad Mazak post of 2026-10-12).
             Assert.Equal(["9013"], NcProgramSet.CallsOutside([main, sub, named]));
 
+            var offsets = Write("6002.EIA", "%\nO6002\nG90 G57 (G54 IN A COMMENT)\nG65 P9013 I57 A0 C0\nG54.1 P3 X0\nG57\nG540 G1X0\nM30\n%\n");
+            Assert.Equal(["G57", "G54.1 P3"], NcProgramSet.WorkOffsets(offsets));
+            File.Delete(offsets);
+
             // Two programs that do not call each other, and a file the main program does not reach: the user chooses.
             var other = NcProgramSet.Read(Write("6001.EIA", "%\nO6001\nT3M6\nM30\n%\n"));
             Assert.Null(NcProgramSet.MainProgram([main, other]));

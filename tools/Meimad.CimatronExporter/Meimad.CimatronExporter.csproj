@@ -14,7 +14,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>Meimad.CimatronExporter</RootNamespace>
     <AssemblyName>Meimad.CimatronExporter</AssemblyName>
-    <Version>0.1.7</Version>
+    <Version>0.1.8</Version>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 

@@ -195,7 +195,8 @@ Variaxis post writes 3+2 work: `G57`, `G0 A… C…`, `G65 P5999 I<n>` (orbit-ho
 `G65 P9013 I57 A… C…`, the machine's orbit-home macro that rebuilds G57 for the turned table. After it, X/Y/Z are in the
 turned-table frame: as written only 34% of the tilted cutting points lie within 20 mm of the stock box, and turned back
 with q = Rz(C)·Rx(A)·p (part zero = `MODEL` origin) 99.9% do (97.7% within 2 mm; the sign of C is not decided by this
-symmetric stock). The flat face-milling passes lie on the stock top (Z 113.5) with the usual over-travel. So the stock,
+symmetric stock). The flat face-milling passes lie on the stock top (Z 113.5) with the usual over-travel. The work offset is G57 (124 blocks, no other); exporter 0.1.8 takes the
+Work CS work offset from the NC when `--work-offset` is not given (before, the manifest said G54). So the stock,
 the `MODEL` frame and the NC agree, but the NC viewer needs a Mazak Variaxis i-500 A/C trunnion profile with the O9013
 orbit-home rule (as the Haas UMC-500 profile has) to draw the tilted sections in place.
 

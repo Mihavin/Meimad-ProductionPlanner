@@ -261,6 +261,10 @@ public sealed class CimatronExporterTests : IDisposable
         Assert.DoesNotContain("holder_dimensions_incomplete", log);
         Assert.Contains(result.Log.Entries, entry => entry.Message.Contains("from cutters.csv for T1, T2"));
         var table = ToolTableDocument.Parse(File.ReadAllText(Path.Combine(result.PackagePath!, "tools", "tool-table.json")));
+        // The golden NC selects one work offset; the Work CS takes it.
+        var used = NcProgramSet.WorkOffsets(Path.Combine(result.PackagePath!, "nc", "O1001.nc"));
+        var manifest = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(result.PackagePath!, "manifest.json")));
+        Assert.Equal(used.Count > 0 ? used[0] : "G54", manifest.GetProperty("coordinateSystem").GetProperty("workOffset").GetString());
         var t1 = table.Tools.Single(tool => tool.Number == 1);
         Assert.Equal(("MERASEK_16", 16.0, "HOLDER-50_NEW", 50.0), (t1.Name, t1.DiameterMm!.Value, t1.Holder!.Name, t1.Holder.DiameterMm!.Value));
         Assert.Equal(45.0, table.Tools.Single(tool => tool.Number == 2).TaperAngleDeg);

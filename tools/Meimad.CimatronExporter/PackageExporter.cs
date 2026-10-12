@@ -55,7 +55,8 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
             if (stock is null) return Finish(log, output, staging, options, null);
             var (fixtures, part) = ExportGeometry(options, state, staging, log);
             if (log.HasErrors) return Finish(log, output, staging, options, null);
-            var coordinateSystem = ReadCoordinateSystem(options, state.GeometryInProcedureUcs, log);
+            var coordinateSystem = ReadCoordinateSystem(options, state.GeometryInProcedureUcs,
+                Path.Combine(staging, nc.Path.Replace('/', Path.DirectorySeparatorChar)), log);
             if (coordinateSystem is null) return Finish(log, output, staging, options, null);
 
             File.WriteAllText(Path.Combine(staging, "metadata", "coordinate-systems.json"), JsonSerializer.Serialize(new
@@ -715,10 +716,40 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         return (fixtures, part);
     }
 
-    /// <summary>Step 7: mode A when the geometry is in the procedure UCS, else mode B with the UCS matrix. Never guessed.</summary>
-    private CoordinateSystemDefinition? ReadCoordinateSystem(ExportOptions options, bool geometryInUcs, ExportLog log)
+    /// <summary>
+    /// The work offset the Work CS is stored with: <c>--work-offset</c>, else the one the NC program selects (2026-10-12: the
+    /// Mazak program cuts in G57 while the manifest said G54), else G54 with a warning.
+    /// </summary>
+    private static string WorkOffsetFor(ExportOptions options, string ncPath, ExportLog log)
     {
-        var workOffset = string.IsNullOrWhiteSpace(options.WorkOffset) ? "G54" : options.WorkOffset.Trim().ToUpperInvariant();
+        var used = File.Exists(ncPath) ? NcProgramSet.WorkOffsets(ncPath) : [];
+        if (!string.IsNullOrWhiteSpace(options.WorkOffset))
+        {
+            var given = options.WorkOffset.Trim().ToUpperInvariant();
+            if (used.Count > 0 && !used.Contains(given, StringComparer.OrdinalIgnoreCase))
+                log.Warning("ucs", "work_offset_not_in_nc", $"--work-offset {given} is not used by the NC program, which selects {string.Join(", ", used)}.");
+            return given;
+        }
+
+        switch (used.Count)
+        {
+            case 0:
+                log.Warning("ucs", "work_offset_default", "The NC program selects no work offset; the Work CS is stored as G54 (give --work-offset).");
+                return "G54";
+            case 1:
+                log.Ok("ucs", $"Work offset {used[0]} taken from the NC program.");
+                return used[0];
+            default:
+                log.Warning("ucs", "work_offset_several",
+                    $"The NC program selects {string.Join(", ", used)}; the Work CS is stored with the first, {used[0]} (give --work-offset to choose).");
+                return used[0];
+        }
+    }
+
+    /// <summary>Step 7: mode A when the geometry is in the procedure UCS, else mode B with the UCS matrix. Never guessed.</summary>
+    private CoordinateSystemDefinition? ReadCoordinateSystem(ExportOptions options, bool geometryInUcs, string ncPath, ExportLog log)
+    {
+        var workOffset = WorkOffsetFor(options, ncPath, log);
         IReadOnlyList<double>? matrix = options.UcsMatrix;
         if (matrix is null && !geometryInUcs)
         {

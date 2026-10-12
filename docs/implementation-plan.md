@@ -281,7 +281,9 @@ import loses the false warning once upgraded. Two later runs failed in Cimatron'
 simultaneously in 3 axes during a 2.5X procedure`, procedure 5 of `TP_MODEL`); exporter 0.1.7 quotes such post-log errors
 (`post_stopped`). The published package was checked against its own data: the tilted sections are 3+2 work in frames
 rebuilt by the Mazak's orbit-home macro O9013 (`G65 P9013 I57 A… C…`), and turned back by Rz(C)·Rx(A) 99.9% of the tilted
-cutting points fall within 20 mm of the stock. **Open item:** the NC engine has no Mazak Variaxis i-500 profile (only
+cutting points fall within 20 mm of the stock. The 0.1.7 package recorded work offset G54 while the program cuts in G57 only; exporter 0.1.8 takes the
+work offset from the NC when `--work-offset` is not given (`work_offset_several`, `work_offset_default`,
+`work_offset_not_in_nc` warnings). **Open item:** the NC engine has no Mazak Variaxis i-500 profile (only
 Haas UMC-500 with its O09013 rule, Doosan DVF-5000, Chevalier), so the viewer cannot place these tilted sections until one
 is added with the machine's A/C senses. Still to confirm: the import and NC viewer check, and the layout check on a
 tilted active UCS.
