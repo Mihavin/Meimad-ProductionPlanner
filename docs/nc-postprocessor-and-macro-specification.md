@@ -1036,3 +1036,164 @@ Run the post once on a test job and check the NC file, not the post source:
 - [Haas verification response algorithm](haas-verification-response-algorithm.md)
 - [CNC commissioning checklist](cnc-commissioning-checklist.md)
 - [User help: CNC connection, DPRNT source, FANUC FOCAS](user-help.md)
+
+## 15. Measured work offset report (DPRNT, schema v116)
+
+After the setupist measures the part zero, the Machine reports the measured work offset to the Server so the
+NC viewer and the planners see the physical G54 next to the Cimatron design Work CS (exporter definition §20). The
+Server generates the report program per Machine in its NC dialect:
+`GET /api/v1/machines/{machineId}/work-offset-report?operationId=<Case Operation>&releaseId=<NC release>&offsets=G54&axes=XYZ`
+(also **Reports → Work Offsets → Show report program** in the Windows client). It moves nothing and writes nothing:
+it reads the control's work offset variables and prints one framed message per offset on the DPRNT channel the
+Machine already has (TCP / bridge, print file, FTP or SERIAL). The Server stores a frame only when it arrives
+complete (`OFFSET-START` … `OFFSET-END`) and matches the Machine, the NC release and the Operation; see
+`api-contract.md`, "Measured work offsets".
+
+Printed form (CNC-safe: letters, digits, `/`, `-`, `.`; `G54.1 P1` is printed `G541P1`):
+
+```text
+MEIMAD/OFFSET-START/SESSION/WO-10-20261012-63000-1/MACHINE/10/PROGRAM/654321/OPERATION/20/RELEASE/654321
+MEIMAD/OFFSET/SESSION/WO-10-20261012-63000-1/OFFSET/G54/UNITS/21/AXES/XYZ
+MEIMAD/OFFSET/SESSION/WO-10-20261012-63000-1/X/125.4020/Y/-80.0160/Z/42.6910
+MEIMAD/OFFSET-END/SESSION/WO-10-20261012-63000-1
+```
+
+`UNITS/21` is the G21 (mm) modal state from `#4006`; `20` means inch and the Server converts to millimetres. The
+session joins the controller date `#3011` and time `#3012`, read once into the locals `#31`/`#32` so every line of one
+report carries the same session, and the offset's position in the report. `MACHINE` is the Planner Machine number,
+`PROGRAM` and `RELEASE` the six-digit NC identity of the release, `OPERATION` the Case Operation number.
+
+### 15.1 Haas NGC (`HAAS_NGC`)
+
+G54-G59 at `#5221` + 20 per offset, G154 P1-P99 at `#14001` + 20 per offset (G110-G129 are G154 P1-P20); axis n at
+`+n-1` in the order X Y Z A B C. `G103 P1`/`P0` keeps look-ahead from printing early.
+
+```gcode
+%
+O01992 (MEIMAD WORK OFFSET REPORT)
+(MEIMAD WORK OFFSET REPORT - NO MOTION)
+(MACHINE 10 - OPERATION 20 - NC RELEASE 654321)
+(OFFSETS G54 - RUN AFTER MEASURING)
+G103 P1
+#31=#3011
+#32=#3012
+DPRNT[MEIMAD/OFFSET-START/SESSION/WO-10-#31[80]-#32[60]-1/MACHINE/10/PROGRAM/654321/OPERATION/20/RELEASE/654321]
+DPRNT[MEIMAD/OFFSET/SESSION/WO-10-#31[80]-#32[60]-1/OFFSET/G54/UNITS/#4006[20]/AXES/XYZ]
+DPRNT[MEIMAD/OFFSET/SESSION/WO-10-#31[80]-#32[60]-1/X/#5221[44]/Y/#5222[44]/Z/#5223[44]]
+DPRNT[MEIMAD/OFFSET-END/SESSION/WO-10-#31[80]-#32[60]-1]
+G103 P0
+M30
+%
+```
+
+A UMC-500SS reports B and C with `axes=XYZBC`: one more line `…/B/#5225[44]/C/#5226[44]`.
+
+### 15.2 FANUC custom macro B (`FANUC_MACRO_B`)
+
+G54-G59 at `#5221` + 20 per offset; G54.1 P1-P48 at `#7001` + 20 per offset, P49-P300 (300-set option) at `#14001` +
+20 per offset; axis n is the control's n-th axis (X, Y, Z = 1, 2, 3; further letters get 4, 5 in the order given, or
+name them: `axes=X1,Z2` on a lathe). Every DPRNT sits between `POPEN` and `PCLOS`.
+
+```gcode
+%
+O1992 (MEIMAD WORK OFFSET REPORT)
+(MEIMAD WORK OFFSET REPORT - NO MOTION)
+(MACHINE 11 - OPERATION 20 - NC RELEASE 654321)
+(OFFSETS G54 G541P1 - RUN AFTER MEASURING)
+#31=#3011
+#32=#3012
+POPEN
+DPRNT[MEIMAD/OFFSET-START/SESSION/WO-11-#31[80]-#32[60]-1/MACHINE/11/PROGRAM/654321/OPERATION/20/RELEASE/654321]
+DPRNT[MEIMAD/OFFSET/SESSION/WO-11-#31[80]-#32[60]-1/OFFSET/G54/UNITS/#4006[20]/AXES/XYZ]
+DPRNT[MEIMAD/OFFSET/SESSION/WO-11-#31[80]-#32[60]-1/X/#5221[44]/Y/#5222[44]/Z/#5223[44]]
+DPRNT[MEIMAD/OFFSET-END/SESSION/WO-11-#31[80]-#32[60]-1]
+DPRNT[MEIMAD/OFFSET-START/SESSION/WO-11-#31[80]-#32[60]-2/MACHINE/11/PROGRAM/654321/OPERATION/20/RELEASE/654321]
+DPRNT[MEIMAD/OFFSET/SESSION/WO-11-#31[80]-#32[60]-2/OFFSET/G541P1/UNITS/#4006[20]/AXES/XYZ]
+DPRNT[MEIMAD/OFFSET/SESSION/WO-11-#31[80]-#32[60]-2/X/#7001[44]/Y/#7002[44]/Z/#7003[44]]
+DPRNT[MEIMAD/OFFSET-END/SESSION/WO-11-#31[80]-#32[60]-2]
+PCLOS
+M30
+%
+```
+
+The DC2/DC4 codes of `POPEN`/`PCLOS`, the LF/CR line end and the blanks parameter 6001#1 puts before numbers are
+removed by the Server, so a FANUC frame through a serial-to-Ethernet bridge parses exactly like the Haas one.
+
+### 15.3 Mazak Matrix EIA (`MAZAK_MATRIX_EIA`)
+
+The FANUC form with the same variables; the DPR14 = 4 print file `print.txt` is read as the FILE source. The
+Variaxis i-500 reports its A tilt and C table with `axes=XYZAC`:
+
+```gcode
+%
+O1992 (MEIMAD WORK OFFSET REPORT)
+(MEIMAD WORK OFFSET REPORT - NO MOTION)
+(MACHINE 12 - OPERATION 20 - NC RELEASE 654321)
+(OFFSETS G54 - RUN AFTER MEASURING)
+#31=#3011
+#32=#3012
+POPEN
+DPRNT[MEIMAD/OFFSET-START/SESSION/WO-12-#31[80]-#32[60]-1/MACHINE/12/PROGRAM/654321/OPERATION/20/RELEASE/654321]
+DPRNT[MEIMAD/OFFSET/SESSION/WO-12-#31[80]-#32[60]-1/OFFSET/G54/UNITS/#4006[20]/AXES/XYZAC]
+DPRNT[MEIMAD/OFFSET/SESSION/WO-12-#31[80]-#32[60]-1/X/#5221[44]/Y/#5222[44]/Z/#5223[44]]
+DPRNT[MEIMAD/OFFSET/SESSION/WO-12-#31[80]-#32[60]-1/A/#5224[44]/C/#5225[44]]
+DPRNT[MEIMAD/OFFSET-END/SESSION/WO-12-#31[80]-#32[60]-1]
+PCLOS
+M30
+%
+```
+
+Lines the control appends while the Server reads the file are never lost: the file is emptied only when it still
+ends where the Server stopped reading, and a frame split over several polls is joined by the Server.
+
+### 15.4 Okuma OSP (`OKUMA_OSP`) - not a FANUC dialect
+
+OSP has no DPRNT, no `#` variables and no date/time variable for User Task. The report is a `.MIN` main program
+(no `O` line, `M02` at the end) printing with `PUT`/`WRITE C`; the work coordinate system `G15 Hn` is read from the
+system variables `VZOFX[n]`, `VZOFY[n]`, `VZOFZ[n]` (and `VZOFA`/`VZOFB`/`VZOFC`) through the scratch common variable
+`VC191`; the session number is the Machine's event-sequence common variable (`VC5` by default, the one the cycle
+events use). Units are printed as `MM`; change it to `INCH` on an inch control.
+
+```text
+(MEIMAD WORK OFFSET REPORT - NO MOTION)
+(MACHINE 13 - OPERATION 20 - NC RELEASE 654321)
+(OFFSETS G15H1 - RUN AFTER MEASURING)
+VC5=ROUND[VC5]
+IF [VC5 LT 0] NMWO1
+IF [VC5 GE 899999] NMWO1
+GOTO NMWO2
+NMWO1 VC5=0
+NMWO2 VC5=VC5+1
+PUT 'MEIMAD/OFFSET-START/SESSION/WO-13-'
+PUT VC5,6,0
+PUT '-1/MACHINE/13/PROGRAM/654321/OPERATION/20/RELEASE/654321'
+WRITE C
+PUT 'MEIMAD/OFFSET/SESSION/WO-13-'
+PUT VC5,6,0
+PUT '-1/OFFSET/G15H1/UNITS/MM/AXES/XZ'
+WRITE C
+PUT 'MEIMAD/OFFSET/SESSION/WO-13-'
+PUT VC5,6,0
+PUT '-1'
+VC191=VZOFX[1]
+PUT '/X/'
+PUT VC191,9,4
+VC191=VZOFZ[1]
+PUT '/Z/'
+PUT VC191,9,4
+WRITE C
+PUT 'MEIMAD/OFFSET-END/SESSION/WO-13-'
+PUT VC5,6,0
+PUT '-1'
+WRITE C
+M02
+```
+
+### 15.5 Commissioning
+
+None of these programs has run on a physical control in this factory. Before relying on a measured offset:
+run the report once with a known offset on each control and compare the stored value (Reports → Work Offsets) with
+the control's offset page; confirm the variable numbers for the installed option set (Haas `#14001`, FANUC
+`#7001`/`#14001`, Okuma `VZOF*`), that the control prints `/`, `-` and `.` in DPRNT/PUT text, the number format
+(`[44]`, `PUT VC191,9,4`), and that the line length is accepted. A measurement differing from the current one by more
+than the review threshold (1 mm / 0.5° by default) waits for review instead of becoming current.

@@ -1,5 +1,111 @@
 # API Contract
 
+## Measured work offsets (2026-10-12; schema v116)
+
+Measured work offsets (G54 ...) reported by the Machines through DPRNT, stored as append-only evidence
+(exporter definition §20, execution plan stage 6). The Cimatron Work CS of the Operation is a different
+thing (design coordinates) and is never changed by these endpoints.
+
+### Message grammar on the DPRNT channel
+
+The Server reads `MEIMAD/OFFSET...` lines from every configured DPRNT source of a Machine (TCP controller or
+serial-to-Ethernet bridge, FILE print file, FTP print file, SERIAL COM port). Blanks and control codes are removed
+before parsing, exactly as for the other `MEIMAD/` lines. Two spellings of the same records are accepted:
+
+| Form | Example |
+|---|---|
+| CNC-safe (what the generated report programs print; no `;`, `=`, `_` or lower case) | `MEIMAD/OFFSET-START/SESSION/WO-10-20261012-63000-1/MACHINE/10/PROGRAM/654321/OPERATION/20/RELEASE/654321` |
+| Definition form | `MEIMAD/OFFSET_START;session=20261012-00017;machine=10;program=O654321;operation=020;release=654321;offset=G54;units=mm` |
+
+Records (`-` and `_` are the same in the record name):
+
+- `OFFSET_START` opens a session: `SESSION` plus any identity fields.
+- `OFFSET` carries fields and axis values (`X`, `Y`, `Z`, `A`, `B`, `C`); several per session are allowed.
+  Without an open session, an `OFFSET` line with the identity fields is a complete single-line message.
+- `OFFSET_VALUE` carries `AXIS` and `VALUE`.
+- `OFFSET_END` closes the session (`SESSION` only).
+
+Fields (keys are case-insensitive):
+
+| Field | Meaning |
+|---|---|
+| `MACHINE` | Planner Machine ID or Machine number (letters and digits compared, any case). Required. |
+| `PROGRAM` | Program identity: the six-digit NC identity (`654321`, `O654321`) or any O-number (informational). |
+| `OPERATION` | Case Operation number (`20`, `020`, `OP20`) or Case Operation ID. Required. |
+| `RELEASE` | Six-digit NC identity of the release, the release ID, or its file SHA-256 (at least 12 hex characters). Required unless `PROGRAM` carries the NC identity. |
+| `OFFSET` | `G54`-`G59`, `G54.1 P1` (`G541P1`, `G54-1P1`), `G154 P1`, `G110`-`G129` (Haas, stored as `G154 P1`-`P20`), `G15 H1` (Okuma). Required. |
+| `UNITS` | `MM`/`METRIC` or `INCH`/`IN`, or the modal G-code number `21`/`20` a control prints from `#4006`. Required; inch values are stored in millimetres. |
+| `AXES` | The axes the frame must contain, for example `XYZ`, `XZ`, `XYZBC`. Default `XYZ`. |
+| `SESSION` | Session identity of the frame; `SEQ`/`SEQUENCE` is kept as evidence only. |
+
+Parser state machine (`Idle → Started → Collecting → Ended`; transport-independent, one per Machine channel):
+a value or END without START is refused; a new START drops the open session; END with a declared axis missing
+drops the session; a duplicate axis, invalid number, unknown units, conflicting offset/units/identity or a missing
+identity field completes the frame as `REJECTED` evidence. Nothing of an unfinished session is ever stored.
+
+### Ingest rules and statuses
+
+Every finished frame (and every ingest request) is stored once, in this order of decisions:
+
+1. Same normalized message hash as a stored record: duplicate, the stored record is returned (idempotent).
+2. Same session (per receiving Machine, or per named Machine for the API) with other content: `REJECTED session_reused`.
+3. Content the parser refused: `REJECTED <code>`.
+4. Machine not the receiving Machine (`wrong_machine`), unknown/ambiguous/inactive Machine, unknown/ambiguous NC
+   release, program/release or Operation mismatch: `UNMATCHED <reason>` ("Unmatched machine evidence", never applied).
+5. A work offset the Machine's NC dialect does not have (`unsupported_work_offset`), missing units, no linear axis,
+   a value beyond `WorkOffsets:MaximumLinearMm` (10000) or `MaximumRotaryDeg` (720): `REJECTED`.
+6. The NC release is no longer the Operation's current G-code (`stale_release`), the measurement is older than the
+   current one (`older_than_current`), or it moves an axis more than `WorkOffsets:ReviewLinearThresholdMm` (1.0 mm)
+   or `ReviewRotaryThresholdDeg` (0.5°) from the current one (`large_change`): `REVIEW_REQUIRED`.
+7. Otherwise `VALID`: it becomes current and the previous current record becomes `SUPERSEDED`.
+
+Current = the one `VALID` record of a Machine + Case Operation + NC release + work offset. Event sequence numbers
+never decide anything (AGENTS rule 31). A DPRNT measurement's `measuredAt` is the Server receipt time.
+
+### Record
+
+```json
+{
+  "workOffsetId": "8d0c...", "machineId": "machine-10", "machineNumber": "10", "machineName": "Haas VF-3SS",
+  "caseOperationId": "...", "operationNumber": 20, "operationName": "OP20 mill",
+  "ncReleaseId": "...", "ncIdentityToken": 654321, "ncReleaseLabel": "process r1 · Haas 5X r2 · NC 654321",
+  "ncReleaseIsCurrent": true, "workOffset": "G54",
+  "positionMm": { "x": 125.402, "y": -80.016, "z": 42.691 }, "rotationDeg": { "a": null, "b": 0, "c": 90 },
+  "units": "MM", "source": "DPRNT_TCP", "sourceSession": "WO-10-20261012-63000-1", "sourceSequence": null,
+  "claimed": { "machine": "10", "program": "654321", "operation": "20", "release": "654321" },
+  "rawMessage": "MEIMAD/OFFSET-START/...\nMEIMAD/OFFSET/...\nMEIMAD/OFFSET-END/...", "rawMessageHash": "<sha256>",
+  "measuredAt": "2026-10-12T06:30:00+00:00", "receivedAt": "2026-10-12T06:30:00+00:00", "receivedBy": "DPRNT:cnc-10",
+  "status": "VALID", "statusReason": null, "initialStatus": "VALID", "supersedesId": "...",
+  "reviewedBy": null, "reviewedAt": null, "reviewComment": null, "version": 1
+}
+```
+
+`source` is `DPRNT_TCP`, `DPRNT_FILE`, `DPRNT_FTP`, `DPRNT_SERIAL`, `DPRNT` (source unknown) or the ingest request's
+`source`. `rawMessageHash` is the SHA-256 of the normalized message (identity, session, units, values), so the same
+measurement sent again by another transport or with other padding has the same hash.
+
+### Endpoints
+
+| Method | Route | Contract |
+|---|---|---|
+| `GET` | `/api/v1/machines/{machineId}/operations/{operationId}/work-offsets?offset=G54&limit=200` | `{ machineId, caseOperationId, workOffset, current: [record], history: [record] }`: the VALID records (one per NC release and offset) and every record, newest measurement first. `offset` optional; unknown Machine or Operation `404 resource_not_found`; invalid offset or limit (1-2000) `422`. Signed-in users. |
+| `GET` | `/api/v1/machine-evidence/work-offsets?status=REVIEW_REQUIRED,UNMATCHED&machineId=&caseOperationId=&limit=200` | `{ items: [record] }`, newest received first. Status names as above; unknown status `422`. Signed-in users. |
+| `GET` | `/api/v1/machine-evidence/work-offsets/{workOffsetId}` | One record or `404`. Signed-in users. |
+| `POST` | `/api/v1/machine-evidence/work-offset` | Ingest for external readers; needs `setup.manage`. Body: `{ machineId, operationNumber, program, releaseId, workOffset, positionMm: { x, y, z }, rotationDeg: { a, b, c }, units: "mm", source: "DPRNT_TCP", sourceSession, sequence, rawMessage, rawMessageHash, measuredAt }`. `machineId`, `operationNumber`, `releaseId` (or a `program` with the NC identity), `workOffset`, `sourceSession`, `positionMm.x` and `positionMm.z` are required; `positionMm` is millimetres. Idempotent by `rawMessageHash` (or the SHA-256 of the normalized body): `201 { duplicate: false, record }` for a new record, `200 { duplicate: true, record }` for a repeat. A malformed request is `422 validation_failed` with `details[0].code` (`machine_missing`, `operation_missing`, `release_missing`, `offset_missing`, `session_missing`, `axis_missing`, `invalid_units`, `invalid_source`, `invalid_hash`, `measured_at_in_future`, `invalid_number`); domain refusals are stored records with status `REJECTED` or `UNMATCHED`. The Server's own DPRNT readers call the service directly. |
+| `POST` | `/api/v1/machine-evidence/work-offsets/{workOffsetId}/accept` | Needs `production.execute`. Body `{ version, expectedCurrentId, comment }`: `version` of the candidate as read; `expectedCurrentId` the current record the reviewer compared with (`""` for none; omit to skip that check). The candidate becomes `VALID` and the previous current record `SUPERSEDED`. A changed candidate (other version, no longer `REVIEW_REQUIRED`) or a changed current record is `409 edit_conflict` with `conflict { resource, changedBy, changedAt, advice }`. |
+| `POST` | `/api/v1/machine-evidence/work-offsets/{workOffsetId}/reject` | Needs `production.execute`. Body `{ version, comment }`; the candidate becomes `REJECTED`. Same conflicts. |
+| `GET` | `/api/v1/machines/{machineId}/work-offset-report?operationId=&releaseId=&offsets=G54,G55&axes=XYZ` | The report program in the Machine's NC dialect: `{ ncDialect, fileName, text, lines }`. `axes` are letters (`XYZBC`) or letters with the control's axis numbers (`X1,Z2`). An offset the dialect does not have, a release of another Operation or invalid axes `422`; unknown Machine or Operation `404`. Signed-in users; read-only. |
+
+Accepted and rejected reviews append `machine_work_offset_accepted` / `machine_work_offset_rejected` to the
+structured event log.
+
+### SERIAL DPRNT source (FANUC FOCAS connections)
+
+`configuration.dprnt.source` of a `FANUC_FOCAS` connection may also be `SERIAL`: the control's RS-232 output wired
+to a COM port of the Server PC. Fields `serialPort` (`COM1`...`COM999`, required), `baudRate` (1200-115200, default
+9600), `parity` (`NONE`, `EVEN`, `ODD`; default `NONE`), `dataBits` (7 or 8; default 8), `stopBits` (1 or 2; default 1).
+Invalid values are `422` naming `configuration.dprnt.<field>`. Haas NGC connections keep `TCP` and `FILE`.
+
 ## Case pictures on the Server (2026-10-11; schema v115)
 
 - `GET /api/v1/cases/{caseId}/picture` returns the stored picture's details:
@@ -1789,7 +1895,7 @@ The FANUC adapter is read-only and uses the FOCAS 2 Ethernet library installed o
 }
 ```
 
-`host` and `macAddress` form the Machine identity exactly as for Haas. `timeoutMs` is forced to the connection timeout. `partCounterSource` is `PARTS_COUNT_6711` (parameter 6711, resettable parts count) or `PARTS_TOTAL_6712`. FOCAS supplies the normalized machine state (`ACTIVE`, `FEED_HOLD`, `STOPPED`, `READY`, `ALARM`, `EMERGENCY_STOP`), the executing program (`O` plus the O-number from `cnc_exeprgname`), the part counter, spindle speed, feed rate, and active alarm count; each poll retains one compact `FOCAS_STATUS` diagnostic. `dprnt.source` may be `TCP` (a serial-to-Ethernet bridge in TCP-server mode at `dprnt.host` on `dprnt.port`), `FILE`, or `NONE`; Part identity and `MEIMAD/` workflow events come only from that source, exactly as for Haas, and an O-number or file name never becomes Part identity. `programAccess.provider: "FOCAS_PROGRAM_UPLOAD"` optionally uploads at most `headerByteLimit` bytes of `programFolder + <O-number>` to parse the NC header with the shared header parser when no DPRNT PartName exists; it is commissioning-gated like the Haas share reader. A missing FOCAS library or unreachable controller fails the `focas` check and marks the connection `OFFLINE` with the library path guidance in `lastError`.
+`host` and `macAddress` form the Machine identity exactly as for Haas. `timeoutMs` is forced to the connection timeout. `partCounterSource` is `PARTS_COUNT_6711` (parameter 6711, resettable parts count) or `PARTS_TOTAL_6712`. FOCAS supplies the normalized machine state (`ACTIVE`, `FEED_HOLD`, `STOPPED`, `READY`, `ALARM`, `EMERGENCY_STOP`), the executing program (`O` plus the O-number from `cnc_exeprgname`), the part counter, spindle speed, feed rate, and active alarm count; each poll retains one compact `FOCAS_STATUS` diagnostic. `dprnt.source` may be `TCP` (a serial-to-Ethernet bridge in TCP-server mode at `dprnt.host` on `dprnt.port`), `FILE`, `FTP`, `SERIAL` (a COM port of the Server PC: `serialPort`, `baudRate`, `parity`, `dataBits`, `stopBits`; see "Measured work offsets"), or `NONE`; Part identity, `MEIMAD/` workflow events and `MEIMAD/OFFSET` measured work offsets come only from that source, exactly as for Haas, and an O-number or file name never becomes Part identity. `programAccess.provider: "FOCAS_PROGRAM_UPLOAD"` optionally uploads at most `headerByteLimit` bytes of `programFolder + <O-number>` to parse the NC header with the shared header parser when no DPRNT PartName exists; it is commissioning-gated like the Haas share reader. A missing FOCAS library or unreachable controller fails the `focas` check and marks the connection `OFFLINE` with the library path guidance in `lastError`.
 
 #### 7.5.1 CNC verification identity foundation (schema v50)
 

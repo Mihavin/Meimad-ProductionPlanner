@@ -2153,7 +2153,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 ? null
                 : NcViewer.NcProgramFolders.ForOperation(
                     client, caseId, operationId, SelectedReleasePostprocessor?.PostprocessorId, GCodeChangeScope),
-            Scene: scene);
+            Scene: scene,
+            WorkOffsets: client is null ? null : NcViewer.NcViewerWorkOffsets.For(client, operationId, null, null, machines, null));
     }
 
     /// <summary>

@@ -1,0 +1,97 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.WorkOffsetsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource CanvasBrush}">
+  <Grid Margin="8">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+    <DockPanel Margin="0,0,0,8">
+      <Button DockPanel.Dock="Right" VerticalAlignment="Top" Content="Refresh" Command="{Binding RefreshCommand}" />
+      <StackPanel>
+        <TextBlock Text="Work Offsets" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock Text="Work offsets (G54 ...) the machines measured and reported through DPRNT. A measurement becomes current only when it matches the Machine, the Operation and the NC release; a large change, an old NC release or an older measurement waits for review. The Cimatron Work CS of the Operation is not changed."
+                   Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" />
+      </StackPanel>
+    </DockPanel>
+
+    <WrapPanel Grid.Row="1" Margin="0,0,0,8">
+      <TextBlock Text="Machine" VerticalAlignment="Center" Margin="0,0,6,0" />
+      <ComboBox ItemsSource="{Binding Machines}" SelectedItem="{Binding Machine}" Width="240" Margin="0,0,14,0" />
+      <TextBlock Text="Show" VerticalAlignment="Center" Margin="0,0,6,0" />
+      <ComboBox ItemsSource="{Binding Statuses}" SelectedItem="{Binding Status}" Width="240" />
+    </WrapPanel>
+
+    <StackPanel Grid.Row="2" Margin="0,0,0,8">
+      <TextBlock Text="{Binding Message}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" />
+      <TextBlock Text="{Binding PermissionText}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" />
+    </StackPanel>
+
+    <DataGrid Grid.Row="3" ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
+              IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" HorizontalScrollBarVisibility="Auto"
+              AutomationProperties.Name="Measured work offsets">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="150" />
+        <DataGridTextColumn Header="Measured" Binding="{Binding MeasuredText}" Width="140" />
+        <DataGridTextColumn Header="Machine" Binding="{Binding MachineText}" Width="170" />
+        <DataGridTextColumn Header="Operation" Binding="{Binding OperationText}" Width="150" />
+        <DataGridTextColumn Header="Offset" Binding="{Binding WorkOffset}" Width="80" />
+        <DataGridTextColumn Header="Values (mm, degrees)" Binding="{Binding PositionText}" Width="300" FontFamily="Consolas" />
+        <DataGridTextColumn Header="NC release" Binding="{Binding ReleaseText}" Width="230" />
+        <DataGridTextColumn Header="Reason" Binding="{Binding ReasonText}" Width="260" />
+        <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="100" />
+      </DataGrid.Columns>
+    </DataGrid>
+
+    <Border Grid.Row="4" Margin="0,8,0,0" Padding="9" BorderThickness="1" CornerRadius="3"
+            BorderBrush="{DynamicResource BorderBrush}" Background="{DynamicResource RaisedBrush}">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="16" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <StackPanel>
+          <TextBlock Text="Review" FontWeight="Bold" Margin="0,0,0,4" />
+          <TextBlock Text="{Binding Selected.StatusText}" />
+          <TextBlock Text="{Binding Selected.ReasonText}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding DeltaText}" TextWrapping="Wrap" Margin="0,4,0,0" FontFamily="Consolas" />
+          <TextBlock Text="Received message" Margin="0,8,0,2" Foreground="{DynamicResource MutedTextBrush}" />
+          <TextBox Text="{Binding Selected.RawMessage, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" Height="70"
+                   TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                   AutomationProperties.Name="Received message" />
+          <TextBlock Text="Comment" Margin="0,8,0,2" Foreground="{DynamicResource MutedTextBrush}" />
+          <TextBox Text="{Binding Comment, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Review comment" />
+          <WrapPanel Margin="0,8,0,0">
+            <Button Content="Accept as current" Command="{Binding AcceptCommand}" Margin="0,0,8,0"
+                    ToolTip="Make this measurement the current one for its Machine, Operation, NC release and offset" />
+            <Button Content="Reject" Command="{Binding RejectCommand}"
+                    ToolTip="Keep this measurement as rejected evidence; it never becomes current" />
+          </WrapPanel>
+        </StackPanel>
+        <StackPanel Grid.Column="2">
+          <TextBlock Text="Report program" FontWeight="Bold" Margin="0,0,0,4" />
+          <TextBlock Text="The program the setupist runs on the Machine after measuring: it prints the offsets to DPRNT in the Machine's NC dialect and moves nothing."
+                     Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" />
+          <WrapPanel Margin="0,6,0,0">
+            <TextBlock Text="Offsets" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <TextBox Text="{Binding ReportOffsets, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="0,0,14,0"
+                     ToolTip="Comma-separated, for example G54,G55 or G54.1 P1 or G15 H1" />
+            <TextBlock Text="Axes" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <TextBox Text="{Binding ReportAxes, UpdateSourceTrigger=PropertyChanged}" Width="100" Margin="0,0,14,0"
+                     ToolTip="Axis letters such as XYZ or XYZBC; a lathe names its axis numbers, for example X1,Z2" />
+            <Button Content="Show report program" Command="{Binding ReportCommand}"
+                    ToolTip="Render the program for the selected measurement's Machine, Operation and NC release" />
+          </WrapPanel>
+          <TextBox Text="{Binding ReportText, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" Height="140" Margin="0,6,0,0"
+                   TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                   AutomationProperties.Name="Report program" />
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

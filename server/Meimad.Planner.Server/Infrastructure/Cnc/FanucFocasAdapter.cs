@@ -336,7 +336,9 @@ internal sealed class FanucFocasAdapter : ICncMachineAdapter
         {
             var source = dprnt.Source?.Trim().ToUpperInvariant() ?? string.Empty;
             if (!CncDprntSources.IsSupported(source))
-                throw new CncValidationException("dprnt.source", "DPRNT source must be TCP, FILE, or NONE.");
+                throw new CncValidationException("dprnt.source", "DPRNT source must be TCP, FILE, FTP, SERIAL, or NONE.");
+            if (source == CncDprntSources.Serial && string.IsNullOrWhiteSpace(dprnt.SerialPort))
+                throw new CncValidationException("dprnt.serialPort", "A DPRNT serial port is required when the DPRNT source is SERIAL.");
             if (source == CncDprntSources.File && string.IsNullOrWhiteSpace(dprnt.FilePath))
                 throw new CncValidationException("dprnt.filePath", "A DPRNT file path is required when the DPRNT source is FILE.");
             if (!CncDprntClearPolicies.IsSupported(dprnt.ClearPolicy?.Trim().ToUpperInvariant() ?? string.Empty))

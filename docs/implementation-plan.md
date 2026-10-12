@@ -73,6 +73,86 @@ discrete GPU, or against a real collision on a machine.
   slice passes end to end") was overridden by the owner's instruction of 2026-10-12 to implement all documents; the
   end-to-end demo (Cimatron package → Meimad import → simulation → TV row) still needs a real Cimatron export.
 - Operator view starts on for read-only releases and off for editing; remembered per PC.
+## Measured work offsets from the machine via DPRNT (2026-10-12; schema v116; implemented locally)
+
+Execution plan stage 6 and exporter definition §6, §15 and §20-§22: the Machine reports the measured G54 (G55 ...,
+G54.1 Pn, G154 Pn, G15 Hn) through its DPRNT channel; the Server matches it to Machine + Case Operation + NC release,
+keeps it as append-only evidence and the NC viewer shows it next to the Cimatron design Work CS.
+
+**Implemented:**
+- Server `Application/MachineEvidence`: `DprntLineNormalizer` and `OffsetEvidenceParser` (`IOffsetEvidenceParser`, the
+  §20.9 state machine, transport-independent, one per Machine channel), `WorkOffsetIngestService` (idempotent ingest,
+  matching, validation, review triggers), `WorkOffsetService` (reads, review, report program),
+  `WorkOffsetDprntConsumer` (the `WORK_OFFSET` evidence type on the existing `DPRINT_EVENT` telemetry of every adapter
+  and DPRNT source), `IWorkOffsetRepository` / `SqliteWorkOffsetRepository`, `WorkOffsetOptions` (`WorkOffsets`
+  configuration). `CncDprintEventIngestionService` skips `MEIMAD/OFFSET...` lines; PartName, Offset Loader and
+  workflow events are unchanged.
+- Schema v116 `machine_work_offsets` (data-model.md): append-only rows, guarded status transitions, one VALID row per
+  key; Machine deletion is blocked while measurements exist; excluded from the Kitaron import staleness hash.
+- API (api-contract.md, "Measured work offsets"): operation view, evidence list, record, idempotent ingest
+  (`setup.manage`), accept/reject (`production.execute`, version + current-record conflict → 409 `edit_conflict`),
+  report program per dialect.
+- NC dialect layer: `NcDialectProfile.NormalizeWorkOffset` and `WorkOffsetReport` for Haas NGC, FANUC macro B, Mazak
+  Matrix EIA and Okuma OSP (`NcWorkOffsetReports`); samples in nc-postprocessor-and-macro-specification.md §15.
+- SERIAL DPRNT source (`CncSerialDprntReader`, System.IO.Ports 10.0.10 NuGet) for FANUC FOCAS connections, with the
+  serial fields in Setup.
+- Windows client: Reports → Work Offsets (`WorkOffsetsViewModel`, `WorkOffsetsView`), `PlannerApiClient` work offset
+  methods (partial file), NC viewer card `NcViewer/meimad-work-offsets.js` (design Work CS and measured offset side by
+  side, source badge, time, warnings, history dialog, *Apply to Home offsets*), host method `meimadWorkOffsets`
+  (`NcViewerWorkOffsets`), he/ru catalog entries.
+
+**Decisions recorded (reversible; conflicts between the specification documents and AGENTS.md):**
+- *Sequence vs. AGENTS rule 31.* §20.10 asks that "timestamp and sequence are not older than the last accepted record".
+  Rule 31 forbids deciding anything by sequence continuity. Sequences are stored as evidence only and are not part of
+  the message hash; duplicates are found by the normalized message hash and the session; currency uses the measured
+  time, and a measurement older than the current one becomes REVIEW_REQUIRED (`older_than_current`), not rejected.
+- *Wire grammar.* The §20.2 form (`;key=value`, lower case) cannot be printed by FANUC-family DPRNT (`;` is end of block,
+  no lower case) or Okuma PUT. Both that form and a CNC-safe `/KEY/VALUE` form (`OFFSET-START`, `G541P1` for
+  `G54.1 P1`) are accepted and hash the same; the generated programs print the CNC-safe form.
+- *Append-only vs. SUPERSEDED and reviews.* The measurement, evidence and references of a row never change and rows are
+  never deleted; only `status` moves (VALID → SUPERSEDED, REVIEW_REQUIRED → VALID | REJECTED) with a version, and
+  `supersedes_id` is set once. A trigger enforces it.
+- *Old release.* §20.9 says "reject as stale", §20.15.7 "STALE/REVIEW_REQUIRED", §20.14 "do not accept automatically":
+  stored as REVIEW_REQUIRED `stale_release`; a reviewer may accept it as current for that (old) release's key.
+- *Missing axis at END.* §20.9 "keep pending, do not persist": the frame is dropped at END and nothing is stored;
+  waiting for values after END would let lines of the next frame complete it.
+- *Invalid content of a complete frame* (bad number, units, duplicate axis, missing identity, reused session) is stored
+  as REJECTED evidence with its raw text and hash; single malformed lines outside a frame are only logged.
+- *Unmatched evidence* is the same table with status UNMATCHED, no Operation/release, and the receiving Machine.
+- *Release identity.* `RELEASE` is the six-digit NC identity (globally unique per release, AGENTS rule 29), the release
+  ID or its file hash; `PROGRAM` with a six-digit identity must agree; an O-number is informational.
+- *Measured time.* A DPRNT measurement's `measuredAt` is the Server receipt time (the controller clock is in the session
+  text only); the ingest endpoint may send `measuredAt`.
+- *Permissions.* Ingest: `setup.manage` (integration). Review: `production.execute` (setup work on the floor).
+  Reading: any signed-in user. Proposed; change in `WorkOffsetEndpoints` if the owner decides otherwise.
+- *Transport classes.* §20.8/§21 name `IDprntSource`, `TcpDprntSource`, `FileDprntSource`, `SerialDprntSource` under
+  `Infrastructure/MachineSources`. The existing `CncDprntSource` (TCP, FILE, FTP and now SERIAL) is that layer, so no
+  parallel readers were built; the shared parser is `IOffsetEvidenceParser`.
+- *SERIAL* is offered on FANUC FOCAS connections only, like FTP; Haas and DPRNT-only connections keep TCP/FILE (an
+  Okuma or Mazak serial port goes through a serial-to-Ethernet bridge as TCP).
+- *Report program delivery.* The report is a separate per-Machine program rendered on request; it is not injected into
+  Production Packages or the Offset Loader (that would change immutable package artifacts and the commissioned Haas
+  loader). See OD-042.
+- *Haas G110-G129* are stored as `G154 P1`-`P20` (same registers). Inch reports are stored in millimetres.
+- *NC viewer.* "Apply to Home offsets" writes this PC's Home offsets of the viewer machine (what the simulation uses for
+  the machine frame); the Cimatron Work CS and the Server are never changed.
+
+**Open decisions:**
+- **OD-042 (Proposed) - Report from the Offset Loader.** Whether the generated Offset Loader (or every package) should
+  print the measured offsets after the challenge call, so no separate program is needed. Not chosen now.
+- **OD-043 (Proposed) - Review thresholds.** 1.0 mm and 0.5° (`WorkOffsets:ReviewLinearThresholdMm`,
+  `ReviewRotaryThresholdDeg`) are placeholders; the definition gives no values.
+
+**Verified locally (2026-10-12):** the full Server test project (1546 passed, 5 skipped, 0 failed), including
+`MachineEvidence` (parser state machine, §20.15 acceptance tests 1-8 and 10, report programs printed and re-parsed per
+control, API authorization and conflicts), `WorkOffsetMigrationTests`, `CncSerialDprntSourceTests`; the Windows client
+tests without the live-Server startup test (520 passed), including `WorkOffsetsViewModelTests` and
+`NcViewerWorkOffsetsCoreTests` (acceptance test 9 in V8).
+
+**Not verified (needs the real controls):** no report program has run on a Haas, FANUC, Mazak or Okuma control; the
+variable numbers (`#5221`, `#14001`, `#7001`, Okuma `VZOF*[n]`), the printability of `/`, `-`, `.` in DPRNT/PUT text,
+number formats and line lengths, the Mazak `print.txt` with these lines, a real COM port, and the NC viewer card in the
+WebView2 window. Exporter definition §22 step 11 (end-to-end on the Haas VF-3 and the Mazak) remains open.
 
 ## NC viewer background, Path selector and stock shading (2026-10-11; implemented locally)
 

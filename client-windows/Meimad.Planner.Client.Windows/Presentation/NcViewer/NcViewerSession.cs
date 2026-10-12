@@ -280,6 +280,8 @@ internal sealed class NcViewerSession : IDisposable
                 return SceneState();
             case "meimadSceneImport":
                 return await ImportCimatronFilesAsync();
+            case "meimadWorkOffsets":
+                return await NcViewerWorkOffsets.LoadAsync(request.WorkOffsets);
             default:
                 throw new InvalidOperationException($"The NC viewer host has no '{method}' method.");
         }

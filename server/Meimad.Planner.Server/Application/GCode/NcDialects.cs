@@ -1,4 +1,5 @@
 using System.Globalization;
+using Meimad.Planner.Server.Application.MachineEvidence;
 using Meimad.Planner.Server.Domain.Machines;
 
 namespace Meimad.Planner.Server.Application.GCode;
@@ -113,6 +114,15 @@ internal abstract class NcDialectProfile
 
     /// <summary>Characters the control's print statement cannot carry are replaced before rendering.</summary>
     internal virtual string SanitizePrintedText(string value) => value;
+
+    /// <summary>
+    /// The stored name of a work offset this control has (G54-G59 and its additional offsets), or null
+    /// when the control has no work offset of that name (measured work offsets, schema v116).
+    /// </summary>
+    internal abstract string? NormalizeWorkOffset(WorkOffsetName name);
+
+    /// <summary>The work offset report program that prints measured offsets as MEIMAD/OFFSET lines (NcWorkOffsetReports).</summary>
+    internal abstract NcWorkOffsetReport WorkOffsetReport(NcWorkOffsetReportRequest request);
 
     protected static string Invariant(int value) => value.ToString(CultureInfo.InvariantCulture);
 
@@ -242,6 +252,18 @@ internal sealed class HaasNgcDialect : NcDialectProfile
 
     internal override string ToolOffsetProgramLogicalPath => "tool-offsets/O01991.nc";
 
+    /// <summary>G54-G59 and G154 P1-P99; G110-G129 are the same registers as G154 P1-P20.</summary>
+    internal override string? NormalizeWorkOffset(WorkOffsetName name) => name.Family switch
+    {
+        WorkOffsetFamily.Standard => name.Canonical,
+        WorkOffsetFamily.G154 when name.Number <= 99 => name.Canonical,
+        WorkOffsetFamily.HaasAlias => new WorkOffsetName(WorkOffsetFamily.G154, name.Number - 109).Canonical,
+        _ => null
+    };
+
+    internal override NcWorkOffsetReport WorkOffsetReport(NcWorkOffsetReportRequest request) =>
+        NcWorkOffsetReports.MacroB(request, Id, haas: true);
+
     /// <summary>Shared by every custom-macro-B control; only the look-ahead barrier around it is Haas-specific.</summary>
     internal static IEnumerable<string> MacroBCycleBody(
         string eventCode, string idSuffix, int ncIdentityToken, int macroVersion, int sequenceVariable)
@@ -351,6 +373,17 @@ internal sealed class FanucMacroBDialect : NcDialectProfile
         MacroBToolOffsetProgram(comments, offsetLines);
 
     internal override string ToolOffsetProgramLogicalPath => "tool-offsets/O01991.nc";
+
+    /// <summary>G54-G59 and the additional offsets G54.1 P1-P300 (P49-P300 with the 300-set option).</summary>
+    internal override string? NormalizeWorkOffset(WorkOffsetName name) => name.Family switch
+    {
+        WorkOffsetFamily.Standard => name.Canonical,
+        WorkOffsetFamily.G54Point1 when name.Number <= 300 => name.Canonical,
+        _ => null
+    };
+
+    internal override NcWorkOffsetReport WorkOffsetReport(NcWorkOffsetReportRequest request) =>
+        NcWorkOffsetReports.MacroB(request, Id, haas: false);
 }
 
 /// <summary>
@@ -471,4 +504,11 @@ internal sealed class OkumaOspDialect : NcDialectProfile
     internal override string ToolOffsetProgramLogicalPath => "tool-offsets/O1991.MIN";
 
     internal override string SanitizePrintedText(string value) => value.Replace('\'', '_');
+
+    /// <summary>The OSP work coordinate systems G15 H1-H200; OSP has no G54-style names in its native mode.</summary>
+    internal override string? NormalizeWorkOffset(WorkOffsetName name) =>
+        name.Family == WorkOffsetFamily.OkumaH && name.Number <= 200 ? name.Canonical : null;
+
+    internal override NcWorkOffsetReport WorkOffsetReport(NcWorkOffsetReportRequest request) =>
+        NcWorkOffsetReports.Okuma(request, Id);
 }
