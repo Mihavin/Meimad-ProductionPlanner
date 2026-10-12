@@ -11,6 +11,7 @@ const REQUIRED_SCHEMA = 3;
 const THUMBNAIL_COLUMN_PX = 96;
 // A new picture that has not loaded after this long is given up for the placeholder (it still shows once it loads).
 const THUMBNAIL_LOAD_TIMEOUT_MS = 10000;
+const THUMBNAIL_RETRY_MS = 60000;
 const translations = {
   en: {
     machineStatus: "Machine status", language: "Language", waitingForStatus: "Waiting for machine status",
@@ -276,16 +277,21 @@ function samePart(a, b) {
 }
 
 // Loads a picture once per version; when it settles, the board is drawn again from the last snapshot (no request).
+// A picture that failed (Server briefly away) is tried again after a minute, not on every refresh.
 function loadPicture(part) {
   const version = part.version;
   if (state.images[version]) return;
   state.images[version] = "loading";
+  const failed = () => {
+    if (state.images[version] !== "loading") return;
+    state.images[version] = "failed";
+    scheduleRerender();
+    setTimeout(() => { if (state.images[version] === "failed") delete state.images[version]; }, THUMBNAIL_RETRY_MS);
+  };
   const image = new Image();
   image.onload = () => { state.images[version] = "loaded"; scheduleRerender(); };
-  image.onerror = () => { state.images[version] = "failed"; scheduleRerender(); };
-  setTimeout(() => {
-    if (state.images[version] === "loading") { state.images[version] = "failed"; scheduleRerender(); }
-  }, THUMBNAIL_LOAD_TIMEOUT_MS);
+  image.onerror = failed;
+  setTimeout(failed, THUMBNAIL_LOAD_TIMEOUT_MS);
   image.src = part.url;
 }
 
@@ -301,7 +307,12 @@ function shownPart(machine) {
   const key = machine.machineId;
   const shown = state.shownParts[key] || null;
   if (!next) { delete state.shownParts[key]; return null; }
-  if (samePart(shown, next)) { state.shownParts[key] = next; return next; }
+  if (samePart(shown, next)) {
+    state.shownParts[key] = next;
+    // The same part whose picture failed earlier: try it again once the retry delay has passed.
+    if (next.version && next.url && !state.images[next.version]) loadPicture(next);
+    return next;
+  }
   const status = next.version ? state.images[next.version] : "none";
   if (next.version && next.url && status !== "loaded" && status !== "failed") {
     loadPicture(next);

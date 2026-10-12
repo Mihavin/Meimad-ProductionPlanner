@@ -36,6 +36,11 @@ public sealed class TvDashboardPageTests : IDisposable
           timers = timers.filter(function (timer) { return timer.delay !== 0; });
           due.forEach(function (timer) { timer.callback(); });
         }
+        function runTimersWithDelay(delay) {
+          var due = timers.filter(function (timer) { return timer.delay === delay; });
+          timers = timers.filter(function (timer) { return timer.delay !== delay; });
+          due.forEach(function (timer) { timer.callback(); });
+        }
         var pictures = [];
         function Image() { pictures.push(this); }
         var document = {
@@ -121,10 +126,18 @@ public sealed class TvDashboardPageTests : IDisposable
         Assert.Contains("thumb-placeholder", Grid());
         Assert.Contains("<span class=\"thumb-part\">PN-300</span>", Grid());
 
+        // A failed picture is not fetched again on every refresh, only after the retry delay.
+        engine.Execute("render(board([machine('M1', 'PN-300', 30, '1-ccc')]));");
+        Assert.Equal(2, Number("pictures.length"));
+        engine.Execute("runTimersWithDelay(60000); render(board([machine('M1', 'PN-300', 30, '1-ccc')]));");
+        Assert.Equal(3, Number("pictures.length"));
+        engine.Execute("pictures[2].onload(); runDueTimers();");
+        Assert.Contains("thumbnails/1-ccc", Grid());
+
         // No picture at all: the placeholder with the Part Number, at once, and nothing is fetched.
         engine.Execute("render(board([machine('M1', 'PN-400', 40, null)]));");
         Assert.Contains("<span class=\"thumb-part\">PN-400</span>", Grid());
-        Assert.Equal(2, Number("pictures.length"));
+        Assert.Equal(3, Number("pictures.length"));
     }
 
     [Fact]
