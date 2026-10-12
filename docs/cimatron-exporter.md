@@ -97,6 +97,43 @@ network folder the Server reads, and the Server refuses packages outside its app
 
 ## Launch without manual steps
 
+## One-click export (exporter 0.2.0)
+
+Starting `Meimad.CimatronExporter.exe` with no argument (or `--ui`) opens the **Cimatron → Meimad export** window. It
+reads the active NC document and fills every field; the user checks them and presses **Export to Meimad**:
+
+| Field | Filled from |
+| --- | --- |
+| Toolpath | the document's toolpaths with their setups; the one last exported from this document, else the first |
+| Operation | remembered per document and toolpath |
+| Post-processor | the ten posts used last (editable) |
+| Post relative to UCS | the UCS used last, `MODEL` at first (the document's UCS names are listed) |
+| Case working folder | remembered per document, else the last one used (`…` to browse) |
+| Case name | remembered per document, else the part number the document name starts with (`30P450172200-002SOFI_NC1` → `30P450172200-002`) |
+| Target / fixture STL | `Meimad geometry\<toolpath>\` beside the NC document, else `Meimad geometry\`, when it holds STL files (`…` to choose another) |
+
+The package goes to `<Case working folder>\Gcode\<Case name>\<Operation>\cimatron-export`, as with the BAT launcher, and
+the window shows the report (and **Open package folder**). What it remembers is per Windows user in
+`%APPDATA%\Meimad\CimatronExporter\settings.json`; it only fills the window. Cimatron is called on its own thread, so the
+window stays responsive during the half-minute export. Only one window opens at a time.
+
+Three ways to start it:
+
+1. **Desktop / Start-menu shortcut.** Double-click `install-shortcuts.cmd` in the exporter folder (as the CAM user, not
+   as administrator): it creates *Cimatron to Meimad* on the desktop and in Start → Meimad (`install-shortcuts.cmd -Remove`
+   deletes them).
+2. **Cimatron toolbar button.** In Cimatron's toolbar customisation, add a user command that runs
+   `C:\cimatron-exporter\Meimad.CimatronExporter.exe` with the argument `--ui`, and place it on a toolbar. The exact
+   Cimatron 2026.0 dialog is to be confirmed on the CAM PC; the shortcut works in any case.
+3. **End of the post-processor.** The post's last block runs
+   `"C:\cimatron-exporter\Meimad.CimatronExporter.exe" --from-post --toolpath <toolpath name>` through the GPP2 command
+   that starts an external program (the post writer confirms the command and the toolpath-name variable). `--from-post`
+   starts the window as a separate process and returns at once, so the post never waits. Add `--auto` to export without a
+   click once every field is known (every post, trial posts included, then makes a package). The exporter posts the
+   toolpath again itself: while it exports it holds a session lock (`Local\Meimad.CimatronExporter.Export`), and a
+   `--from-post` call that finds that lock or the open window starts nothing, so its own post cannot loop. The console
+   exporter and the BAT launcher hold the same lock.
+
 **BAT launcher** (`Launch\export-to-meimad.bat`, copied beside the exe):
 
 ```bat
@@ -181,6 +218,16 @@ matrices of the UCS the procedures use, and `process-manager.xml` (Cimatron's
 `cimatron-api.txt` beside the exe: the classes, interfaces, methods, properties and enum values of every type library in
 the Program folder, read from the files (Cimatron need not run for this part). `CimatronComApi.Members` is matched to
 that listing.
+
+### One-click check on the CAM PC (exporter 0.2.0)
+
+1. Unzip `installer\artifacts\cimatron-exporter.zip` over `C:\cimatron-exporter\` and double-click
+   `install-shortcuts.cmd`.
+2. With the NC document open, double-click *Cimatron to Meimad*: the window lists the toolpaths; fill the Case working
+   folder once and press **Export to Meimad**.
+3. Put the target/fixture Multi STL export in `Meimad geometry` beside the NC document and press **Refresh**: the field
+   fills by itself.
+4. Add the toolbar button and, with the post writer, the `--from-post` call.
 
 ### Next run on the CAM PC (state of 2026-10-12, after the first published package)
 

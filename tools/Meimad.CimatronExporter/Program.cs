@@ -10,6 +10,8 @@ return exitCode;
 
 static int Run(string[] args)
 {
+    // No argument, --ui or --from-post: the one-click exporter window (toolbar button, shortcut, post-processor hook).
+    if (LauncherPlan.ParseStart(args) is { } start) return LauncherHost.Run(start);
 
     // Meimad.CimatronExporter: Cimatron -> Meimad simulation package (exporter definition §11–§12).
     // Exit codes: 0 package written, 1 blocked (nothing published), 2 usage error, 3 Cimatron not available.
@@ -139,6 +141,15 @@ static int Run(string[] args)
             }
 
             return 0;
+        }
+
+        // Held while exporting: the exporter posts the toolpath again, and a post-processor hook that finds it held is this
+        // export's own post and starts nothing.
+        using var held = ExporterLocks.TryTake(ExporterLocks.Export);
+        if (held is null)
+        {
+            Console.Error.WriteLine("export_running: another Meimad export is running; wait for it to finish.");
+            return 1;
         }
 
         var result = new PackageExporter(api, TimeProvider.System).Export(options);

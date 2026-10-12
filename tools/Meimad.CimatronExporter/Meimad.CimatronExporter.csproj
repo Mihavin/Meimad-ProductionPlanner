@@ -14,9 +14,17 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>Meimad.CimatronExporter</RootNamespace>
     <AssemblyName>Meimad.CimatronExporter</AssemblyName>
-    <Version>0.1.8</Version>
+    <Version>0.2.0</Version>
     <IsPackable>false</IsPackable>
+    <!-- The one-click exporter window (started with no argument, ui or from-post) is Windows Forms. -->
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Keep the console code free of Windows Forms names; the window files import them explicitly. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\shared\Meimad.Planner.SimulationPackage\Meimad.Planner.SimulationPackage.csproj" />
@@ -24,6 +32,8 @@
 
   <ItemGroup>
     <None Include="Launch\*.bat" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Beside the exe, so the CAM user double-clicks install-shortcuts.cmd in the exporter folder. -->
+    <None Include="Launch\install-shortcuts.ps1;Launch\install-shortcuts.cmd" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

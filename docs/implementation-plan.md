@@ -283,7 +283,12 @@ simultaneously in 3 axes during a 2.5X procedure`, procedure 5 of `TP_MODEL`); e
 rebuilt by the Mazak's orbit-home macro O9013 (`G65 P9013 I57 A… C…`), and turned back by Rz(C)·Rx(A) 99.9% of the tilted
 cutting points fall within 20 mm of the stock. The 0.1.7 package recorded work offset G54 while the program cuts in G57 only; exporter 0.1.8 takes the
 work offset from the NC when `--work-offset` is not given (`work_offset_several`, `work_offset_default`,
-`work_offset_not_in_nc` warnings). **Open item:** the NC engine has no Mazak Variaxis i-500 profile (only
+`work_offset_not_in_nc` warnings). Exporter 0.2.0 adds the one-click window (no argument or `--ui`; `--from-post` for the post-processor hook,
+relaunched detached; `--auto`), which fills every field from the active document and per-user memory, writes to
+`<Case working folder>\Gcode\<Case name>\<Operation>\cimatron-export`, finds the target/fixture STL in `Meimad geometry`
+beside the NC document, and holds a session lock while exporting so the exporter's own post cannot start another export.
+Not yet seen on the CAM PC: the window against Cimatron, the Cimatron 2026.0 toolbar dialog, and the GPP2 command that
+starts an external program. **Open item:** the NC engine has no Mazak Variaxis i-500 profile (only
 Haas UMC-500 with its O09013 rule, Doosan DVF-5000, Chevalier), so the viewer cannot place these tilted sections until one
 is added with the machine's A/C senses. Still to confirm: the import and NC viewer check, and the layout check on a
 tilted active UCS.
@@ -303,7 +308,7 @@ post UCS (`--ucs`): procedures in other UCS give the warning `ucs_procedures_dif
 package stays blocked (`ucs_mismatch`) only with `ExecutePostToAllNcProcedures`, whose output frame is unknown. Reversible
 in `PackageExporter.ValidateState`; awaiting the owner's confirmation. Tests: `CimatronAccessorTests`,
 `CimatronBinderTests`, `CimatronExporterTests` (frame of the stock export, stock discovery); `SimulationPackages` suite
-92 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
+99 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
 ## TV Dashboard part picture in every Machine row (2026-10-12, schema v118; implemented locally on branch ws/tv)
 
 **Owner request (2026-10-12, `nc-viewer-visualization-spec.md` "TV Dashboard: картинка детали в строке станка",

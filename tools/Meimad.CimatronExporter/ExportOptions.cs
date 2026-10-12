@@ -92,6 +92,11 @@ internal sealed record ExportOptions
           --nc-file <name>           the NC file to take when the post writes several
           --package-name <name>      package folder name (default cimatron-export)
           --report <path>            also write the human-readable report there
+          (no argument) or --ui      open the one-click export window (toolbar button, desktop shortcut);
+                                     presets: --toolpath, --post, --ucs, --operation, --case-folder,
+                                     --case-name; --auto exports at once when every field is known
+          --from-post                for the Cimatron post-processor hook: starts the window detached and
+                                     returns at once; ignored while an export or the window is running
           --probe                    list the Cimatron API members this PC exposes and exit; without
                                      Cimatron automation, list what this PC has of it
           --progid <name>            the Cimatron automation ProgID (default CimAppAccess.AppAccess)
