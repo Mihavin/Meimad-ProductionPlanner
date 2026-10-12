@@ -256,7 +256,14 @@ then `IFilterType.Add(cmUcs)`), looks for `STOCK*.stl` in the `NC` folder holdin
 (probe only). The seventh probe confirmed 54 procedures with their UCS, 68 named UCS with matrices, and a 12-triangle
 box from the stock procedure. Adapter `cimatron-com-5` uses that box as the initial stock (part-model coordinates;
 mode A needs `--stock-file`), leaves the target-part and stock procedures out of the export, and compares the active
-UCS with `IModel.Active2ModelTranslate` to settle the matrix layout.
+UCS with `IModel.Active2ModelTranslate` to settle the matrix layout. The eighth probe and the first real export showed
+three setups, each with its own stock procedure and toolpath; the export stopped at `stock_unavailable`. Adapter
+`cimatron-com-6` makes one package per toolpath: `--toolpath` (required when the document has several; `toolpath_required`
+lists them) posts only that toolpath with `PostByUcsByIdVec` (its procedure ids when the toolpath node writes nothing)
+and takes its setup's stock procedure as the initial stock. It also reads Cimatron's 9-value matrix as UCS axes in rows
+and transposes it: the face UCS origins of the eighth probe lie on stock faces with their Z axis pointing outward only
+in that reading. Still to confirm on the CAM PC: the layout check on a tilted active UCS and the nodes
+`PostByUcsByIdVec` accepts.
 
 **Open decision (Proposed, 2026-10-12): procedures with their own UCS.** The exporter definition (§6, §18) says the NC
 and the geometry share one "procedure UCS", the frame the post writes the NC in. In the Meimad 5-axis document probed on
@@ -266,7 +273,7 @@ post UCS (`--ucs`): procedures in other UCS give the warning `ucs_procedures_dif
 package stays blocked (`ucs_mismatch`) only with `ExecutePostToAllNcProcedures`, whose output frame is unknown. Reversible
 in `PackageExporter.ValidateState`; awaiting the owner's confirmation. Tests: `CimatronAccessorTests`,
 `CimatronBinderTests`, `CimatronExporterTests` (frame of the stock export, stock discovery); `SimulationPackages` suite
-80 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
+85 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
 ## TV Dashboard part picture in every Machine row (2026-10-12, schema v118; implemented locally on branch ws/tv)
 
 **Owner request (2026-10-12, `nc-viewer-visualization-spec.md` "TV Dashboard: картинка детали в строке станка",

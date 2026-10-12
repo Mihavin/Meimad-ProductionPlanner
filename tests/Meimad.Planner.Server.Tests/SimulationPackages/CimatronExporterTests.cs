@@ -265,6 +265,52 @@ public sealed class CimatronExporterTests : IDisposable
     }
 
     [Fact]
+    public void A_document_with_several_toolpaths_exports_the_chosen_one_with_its_setup_stock()
+    {
+        // The Meimad document of 2026-10-12: three setups, each with its own stock procedure and toolpath.
+        CimatronToolpath[] toolpaths = [new(4, "TP_MODEL", "NC_Setup", 3), new(105, "TP_MODEL_0", "NC_Setup", 107), new(202, "NISAYON", null, null)];
+        CimatronProcedure[] procedures =
+        [
+            new(17, "OP010_ROUGH", "UCS_OP010", true, "TP_MODEL"),
+            new(117, "ROUGH_COPY", "UCS_OP010", true, "TP_MODEL_0"),
+            new(118, "FINISH_COPY", "UCS_OP010", true, "TP_MODEL_0")
+        ];
+        using var first = new FakeCimatronApi { SupportsInitialStock = false, Toolpaths = toolpaths, Procedures = procedures, SelectedPostNeedsProcedures = true };
+        var api = first;
+
+        var unchosen = Run(api, Options());
+        Assert.Contains(unchosen.Log.Entries, entry => entry.Code == "toolpath_required" && entry.Message.Contains("TP_MODEL_0"));
+        Assert.Equal(0, api.PostCalls);
+
+        Directory.Delete(Output, true);
+        var unknown = Run(api, Options("--toolpath", "TP_OTHER"));
+        Assert.Contains(unknown.Log.Entries, entry => entry.Code == "toolpath_not_found");
+
+        // Geometry in the procedure UCS (mode A): the stock procedure's stock exists in part-model coordinates only.
+        Directory.Delete(Output, true);
+        var modeA = Run(api, Options("--toolpath", "TP_MODEL_0"));
+        Assert.Contains(modeA.Log.Entries, entry => entry.Code == "stock_frame_unavailable");
+
+        // Part-model coordinates (mode B).
+        Directory.Delete(Output, true);
+        using var modelApi = new FakeCimatronApi
+        {
+            SupportsInitialStock = false, GeometryInUcs = false, UcsMatrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+            Toolpaths = toolpaths, Procedures = procedures, SelectedPostNeedsProcedures = true
+        };
+        api = modelApi;
+        var chosen = Run(api, Options("--toolpath", "tp_model_0"));
+        Assert.True(chosen.Complete, chosen.Log.ToReport());
+        // The toolpath node first; Cimatron wrote nothing for it, so its procedures.
+        Assert.Equal(new[] { new[] { 105 }, new[] { 117, 118 } }, api.SelectedPosts.Select(ids => ids.ToArray()));
+        Assert.Contains(chosen.Log.Entries, entry => entry.Code == "post_by_procedures");
+        Assert.Equal(107, api.RemainingStockProcedure);
+        Assert.Equal(CimatronUcsFrame.Model, api.RemainingStockFrame);
+        var manifest = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(chosen.PackagePath!, "manifest.json")));
+        Assert.Contains("stock-procedure", manifest.GetRawText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Command_line_requires_output_post_and_ucs()
     {
         Assert.NotNull(ExportOptions.Parse(["--probe"]).Options);
@@ -347,6 +393,11 @@ internal sealed class FakeCimatronApi : ICimatronApi
 
     public bool HasDocument { get; init; } = true;
     public bool SupportsPostByUcs { get; init; } = true;
+    public bool SupportsPostSelected { get; init; } = true;
+    public bool SelectedPostNeedsProcedures { get; init; }
+    public IReadOnlyList<CimatronToolpath> Toolpaths { get; init; } = [];
+    public IReadOnlyList<CimatronProcedure> Procedures { get; init; } = [new(17, "OP010_ROUGH", "UCS_OP010", true, "Pocket")];
+    public List<IReadOnlyList<int>> SelectedPosts { get; } = [];
     public bool SupportsGeometry { get; init; } = true;
     public bool SupportsInitialStock { get; init; } = true;
     public bool GeometryInUcs { get; init; } = true;
@@ -369,12 +420,20 @@ internal sealed class FakeCimatronApi : ICimatronApi
     public CimatronCapabilities Capabilities => new(
         PostByUcs: SupportsPostByUcs, PostToAll: true, CuttersAndHoldersCsv: true, JobsXml: true, RemainingStock: true,
         InitialStock: SupportsInitialStock, EntityExport: SupportsGeometry, MultiStl: false, UcsTransform: UcsMatrix is not null,
-        GeometryInUcs: GeometryInUcs, ToolList: true);
+        GeometryInUcs: GeometryInUcs, ToolList: true, PostSelected: SupportsPostSelected);
 
     public CimatronDocumentInfo GetActiveNcDocument() =>
         HasDocument ? new("GOLDEN-PART.elt", DocumentPath, null) : throw new CimatronApiException("cimatron_no_nc_document", "No document is open.");
 
-    public IReadOnlyList<CimatronProcedure> GetProcedures() => [new(17, "OP010_ROUGH", "UCS_OP010", true, "Pocket")];
+    public IReadOnlyList<CimatronProcedure> GetProcedures() => Procedures;
+
+    public IReadOnlyList<CimatronToolpath> GetToolpaths() => Toolpaths;
+
+    public IReadOnlyList<string> PostSelected(string postName, string outputFolder, IReadOnlyList<int> nodeIds, string ucsName, string outputName)
+    {
+        SelectedPosts.Add(nodeIds);
+        return SelectedPostNeedsProcedures && nodeIds.Any(id => Toolpaths.Any(toolpath => toolpath.Id == id)) ? [] : Post(outputFolder);
+    }
 
     public IReadOnlyList<string> GetUcsNames() => UcsNames;
 

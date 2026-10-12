@@ -8,8 +8,11 @@ namespace Meimad.CimatronExporter;
 /// that define stock (outside any toolpath, e.g. Cimatron's "Stock By Contours").
 /// </summary>
 internal sealed record ProcessManagerData(IReadOnlyList<CimatronProcedure> Procedures, IReadOnlyList<string> UcsNames,
-    IReadOnlyList<int>? StockProcedureIds = null, IReadOnlyList<int>? NonMachiningIds = null)
+    IReadOnlyList<int>? StockProcedureIds = null, IReadOnlyList<int>? NonMachiningIds = null,
+    IReadOnlyList<CimatronToolpath>? ToolpathList = null)
 {
+    internal IReadOnlyList<CimatronToolpath> Toolpaths => ToolpathList ?? [];
+
     internal IReadOnlyList<int> StockProcedures => StockProcedureIds ?? [];
 
     /// <summary>Procedures outside every toolpath (target part, stock): not NC, left out of the export.</summary>
@@ -52,6 +55,7 @@ internal static class ProcessManagerXml
         var stock = new List<int>();
         var nonMachining = new List<int>();
         var seen = new HashSet<int>();
+        var procedureSetups = new Dictionary<int, XElement>();
         var hasToolpaths = document.Descendants().Any(IsToolpath);
         foreach (var element in document.Descendants())
         {
@@ -72,11 +76,26 @@ internal static class ProcessManagerXml
             if (ucs is not null) ucsNames.Add(ucs);
             var machining = !hasToolpaths || toolpath is not null;
             if (!machining) nonMachining.Add(id.Value);
+            if (element.Ancestors().FirstOrDefault(IsSetup) is { } procedureSetup) procedureSetups[id.Value] = procedureSetup;
             if (!machining && IsStockDefinition(element, name)) stock.Add(id.Value);
             procedures.Add(new CimatronProcedure(id.Value, name, ucs, machining && HasToolpath(element), OperationOf(element)));
         }
 
-        return new ProcessManagerData(procedures, ucsNames.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), stock, nonMachining);
+        // Each toolpath with its setup and the one stock-defining procedure of that setup.
+        var toolpaths = new List<CimatronToolpath>();
+        foreach (var toolpath in document.Descendants().Where(IsToolpath))
+        {
+            var id = Int(Attribute(toolpath, IdNames));
+            if (id is null) continue;
+            var setup = toolpath.Ancestors().FirstOrDefault(IsSetup);
+            var setupStock = setup is null
+                ? stock
+                : stock.Where(stockId => procedureSetups.TryGetValue(stockId, out var owner) && owner == setup).ToList();
+            toolpaths.Add(new CimatronToolpath(id.Value, Attribute(toolpath, NameNames)!.Trim(),
+                setup is null ? null : Attribute(setup, NameNames), setupStock.Count == 1 ? setupStock[0] : null));
+        }
+
+        return new ProcessManagerData(procedures, ucsNames.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), stock, nonMachining, toolpaths);
     }
 
     // An element that is one procedure: its name says so (a single word such as "Procedure"; parameter rows such as
@@ -112,6 +131,13 @@ internal static class ProcessManagerXml
         return local.Contains("toolpath", StringComparison.OrdinalIgnoreCase) && !local.Contains('_')
             && !local.EndsWith("Folder", StringComparison.OrdinalIgnoreCase) && !local.EndsWith("Parameters", StringComparison.OrdinalIgnoreCase)
             && Attribute(element, NameNames) is not null;
+    }
+
+    // A setup ("Setup Name=… ID=…"), not its folder or parameter block.
+    private static bool IsSetup(XElement element)
+    {
+        var local = element.Name.LocalName;
+        return local.Equals("Setup", StringComparison.OrdinalIgnoreCase) || local.Equals("NcSetup", StringComparison.OrdinalIgnoreCase);
     }
 
     // A stock-defining procedure outside the toolpaths: a Stock_Type parameter, or a name such as "Stock By Contours_3".
@@ -228,7 +254,9 @@ internal static class ProcessManagerXml
 /// Builds the row-major 4×4 UCS→model matrix from what Cimatron's <c>IModelTransformation</c> returns (<c>Matrix</c>
 /// and <c>Vector</c>, Cimatron 2026.0): 16 values, 12 values (3×4), or 9 values plus a 3-value translation. Whether
 /// Cimatron stores the translation in the last column or the last row is not documented; a 16-value matrix with the
-/// translation in the last row (and zeros in the last column) is transposed, and the choice is reported.
+/// translation in the last row (and zeros in the last column) is transposed, and the choice is reported. Cimatron 2026.0
+/// returns 9 values holding the UCS axes as rows and a Vector holding the UCS origin (Meimad probe of 2026-10-12: the
+/// Z row of each face UCS points out of the stock face its origin lies on); they are composed into columns.
 /// </summary>
 internal static class UcsMatrix
 {
@@ -250,18 +278,18 @@ internal static class UcsMatrix
                 return ([.. matrix, 0, 0, 0, 1], "12 values (3×4) row-major");
             case 9 when translation is not null:
                 return ([
-                    matrix[0], matrix[1], matrix[2], translation[0],
-                    matrix[3], matrix[4], matrix[5], translation[1],
-                    matrix[6], matrix[7], matrix[8], translation[2],
+                    matrix[0], matrix[3], matrix[6], translation[0],
+                    matrix[1], matrix[4], matrix[7], translation[1],
+                    matrix[2], matrix[5], matrix[8], translation[2],
                     0, 0, 0, 1
-                ], "3×3 matrix plus vector");
+                ], "3×3 matrix (UCS axes as rows) plus vector (UCS origin)");
             case 9:
                 return ([
-                    matrix[0], matrix[1], matrix[2], 0,
-                    matrix[3], matrix[4], matrix[5], 0,
-                    matrix[6], matrix[7], matrix[8], 0,
+                    matrix[0], matrix[3], matrix[6], 0,
+                    matrix[1], matrix[4], matrix[7], 0,
+                    matrix[2], matrix[5], matrix[8], 0,
                     0, 0, 0, 1
-                ], "3×3 matrix, no vector: origin assumed at the model origin");
+                ], "3×3 matrix (UCS axes as rows), no vector: origin assumed at the model origin");
             default:
                 return null;
         }

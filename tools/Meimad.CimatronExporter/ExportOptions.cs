@@ -23,6 +23,9 @@ internal sealed record ExportOptions
     public string? OperationNumber { get; init; }
     public string? OperationName { get; init; }
     public int? ProcedureId { get; init; }
+
+    /// <summary>The Cimatron toolpath to export (one package per toolpath); required when the document has several.</summary>
+    public string? Toolpath { get; init; }
     public string? PartNumber { get; init; }
     public string? PartName { get; init; }
     public string? MachineExternalId { get; init; }
@@ -68,6 +71,8 @@ internal sealed record ExportOptions
           --ucs <name>               procedure UCS the NC is posted to and the geometry is placed in
         Operation and machine:
           --operation <number>       Operation number (e.g. 010); --operation-name <text>
+          --toolpath <name>          the Cimatron toolpath to export (required when the document has several):
+                                     only it is posted, and its setup's stock procedure gives the initial stock
           --procedure <id>           NC procedure id when the API cannot list procedures
           --part-number <text>       part number (Case); --part-name <text>
           --machine-id <id>          external machine id; --machine-name <text>; --axes <B_C|A_C|XYZ>
@@ -132,6 +137,7 @@ internal sealed record ExportOptions
                     "--operation" => options with { OperationNumber = Value() },
                     "--operation-name" => options with { OperationName = Value() },
                     "--procedure" => options with { ProcedureId = Int(Value()) },
+                    "--toolpath" => options with { Toolpath = Value() },
                     "--part-number" => options with { PartNumber = Value() },
                     "--part-name" => options with { PartName = Value() },
                     "--machine-id" => options with { MachineExternalId = Value() },

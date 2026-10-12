@@ -14,7 +14,8 @@ internal sealed record CimatronCapabilities(
     bool GeometryInUcs,
     bool ToolList,
     bool Procedures = true,
-    bool UcsNames = true)
+    bool UcsNames = true,
+    bool PostSelected = false)
 {
     public IEnumerable<(string Name, bool Available)> All()
     {
@@ -22,6 +23,7 @@ internal sealed record CimatronCapabilities(
         yield return ("UCS list", UcsNames);
         yield return ("PostByUcsToAllNcProcedures", PostByUcs);
         yield return ("ExecutePostToAllNcProcedures", PostToAll);
+        yield return ("PostByUcsByIdVec (post one toolpath)", PostSelected);
         yield return ("ExportCuttersAndHoldersToCSV", CuttersAndHoldersCsv);
         yield return ("NcExportJobsData", JobsXml);
         yield return ("ExportProceduresRemainingStock", RemainingStock);
@@ -47,6 +49,12 @@ internal enum CimatronUcsFrame
 }
 
 internal sealed record CimatronProcedure(int Id, string Name, string? UcsName, bool HasToolpath, string? OperationName = null);
+
+/// <summary>
+/// A Cimatron toolpath (one machine program) with its setup and the stock-defining procedure of that setup (null when
+/// the setup has none or several). A package holds one toolpath.
+/// </summary>
+internal sealed record CimatronToolpath(int Id, string Name, string? SetupName, int? StockProcedureId);
 
 /// <summary>A UCS as a row-major 4×4 matrix mapping UCS coordinates into part-model coordinates (mm).</summary>
 internal sealed record CimatronUcs(string Name, IReadOnlyList<double> Matrix);
@@ -88,6 +96,9 @@ internal interface ICimatronApi : IDisposable
 
     IReadOnlyList<CimatronProcedure> GetProcedures();
 
+    /// <summary>The toolpaths of the NC document (empty when the API cannot tell).</summary>
+    IReadOnlyList<CimatronToolpath> GetToolpaths();
+
     IReadOnlyList<string> GetUcsNames();
 
     CimatronUcs? GetUcs(string name);
@@ -96,6 +107,12 @@ internal interface ICimatronApi : IDisposable
 
     /// <summary>Posts every NC procedure relative to <paramref name="ucsName"/>; returns the NC files created.</summary>
     IReadOnlyList<string> PostByUcs(string postName, string outputFolder, bool startHome, string ucsName);
+
+    /// <summary>
+    /// Posts only the given nodes (a toolpath id, or procedure ids) relative to <paramref name="ucsName"/>
+    /// (<c>PostByUcsByIdVec</c>) into a file named <paramref name="outputName"/>; returns the NC files created.
+    /// </summary>
+    IReadOnlyList<string> PostSelected(string postName, string outputFolder, IReadOnlyList<int> nodeIds, string ucsName, string outputName);
 
     /// <summary>Fallback post of every NC procedure (the procedure UCS is still recorded by the exporter).</summary>
     IReadOnlyList<string> PostToAll(string postName, string outputFolder, bool startHome);

@@ -24,7 +24,7 @@ namespace Meimad.CimatronExporter;
 /// </summary>
 internal sealed class CimatronComApi : ICimatronApi
 {
-    internal const string Version = "cimatron-com-5";
+    internal const string Version = "cimatron-com-6";
     internal const string AppAccessProgId = "CimAppAccess.AppAccess";
 
     /// <summary>How the last <see cref="Connect"/> reached Cimatron (null: the registered ProgID).</summary>
@@ -48,6 +48,7 @@ internal sealed class CimatronComApi : ICimatronApi
         internal const string ProcessManagerXml = "GetProcessManagerAsXML";
         internal const string PostByUcs = "PostByUcsToAllNcProcedures";
         internal const string PostToAll = "ExecutePostToAllNcProcedures";
+        internal const string PostSelected = "PostByUcsByIdVec";
         internal const string CuttersCsv = "ExportCuttersAndHoldersToCSV";
         internal const string JobsXml = "NcExportJobsData";
         internal const string RemainingStock = "ExportProceduresRemainingStock";
@@ -98,13 +99,12 @@ internal sealed class CimatronComApi : ICimatronApi
         Capabilities = new CimatronCapabilities(
             PostByUcs: Find(Members.PostByUcs) is not null,
             PostToAll: Find(Members.PostToAll) is not null,
+            PostSelected: Find(Members.PostSelected) is not null,
             CuttersAndHoldersCsv: Find(Members.CuttersCsv) is not null,
             JobsXml: Find(Members.JobsXml) is not null,
             RemainingStock: Find(Members.RemainingStock) is not null,
-            // Cimatron 2026.0 has no initial-stock export; the remaining stock of the one stock-defining procedure
-            // ("Stock By Contours") is the initial stock (probe of 2026-10-12: a 12-triangle box).
-            InitialStock: FindAny(Members.InitialStock) is not null
-                || (Find(Members.RemainingStock) is not null && ProcessManager() is { StockProcedures.Count: 1 }),
+            // Cimatron 2026.0 has none; the exporter then takes the remaining stock of the toolpath's stock procedure.
+            InitialStock: FindAny(Members.InitialStock) is not null,
             EntityExport: FindAny(Members.EntityExport) is not null,
             MultiStl: FindAny(Members.MultiStl) is not null,
             UcsTransform: ucsQuery || activeUcs,
@@ -486,6 +486,22 @@ internal sealed class CimatronComApi : ICimatronApi
         return Created(outputFolder, before, outputs);
     }
 
+    /// <summary>
+    /// <c>PostByUcsByIdVec(post, folder, nodes, ucs, outputFileName, out result)</c>: posts only the given tree nodes
+    /// (toolpath or procedure ids from the process manager) into <paramref name="outputName"/> in the folder.
+    /// </summary>
+    public IReadOnlyList<string> PostSelected(string postName, string outputFolder, IReadOnlyList<int> nodeIds, string ucsName, string outputName)
+    {
+        var before = Snapshot(outputFolder);
+        var (result, outputs) = Invoke(Require(Members.PostSelected), Members.PostSelected, postName, outputFolder, nodeIds.ToArray(), ucsName, outputName);
+        var created = Created(outputFolder, before, outputs);
+        if (created.Length == 0 && (outputs.OfType<bool>().Cast<bool?>().LastOrDefault() ?? result as bool?) == false)
+            throw new CimatronApiException("cimatron_call_failed", $"PostByUcsByIdVec answered false for nodes {string.Join(", ", nodeIds)}.");
+        return created;
+    }
+
+    public IReadOnlyList<CimatronToolpath> GetToolpaths() => ProcessManager()?.Toolpaths ?? [];
+
     public IReadOnlyList<string> PostToAll(string postName, string outputFolder, bool startHome)
     {
         var before = Snapshot(outputFolder);
@@ -527,21 +543,9 @@ internal sealed class CimatronComApi : ICimatronApi
 
     public void ExportInitialStock(CimatronUcsFrame frame, string stlPath)
     {
-        var owner = FindAny(Members.InitialStock);
-        if (owner is not null)
-        {
-            Call(owner.Value.Target, owner.Value.Name, frame == CimatronUcsFrame.Procedure ? Members.ProcedureUcsType : Members.ModelUcsType, stlPath);
-            return;
-        }
-
-        if (Find(Members.RemainingStock) is null || ProcessManager() is not { StockProcedures.Count: 1 } data)
-            throw new CimatronApiException("capability_unavailable", "This Cimatron exposes no initial-stock export and the NC document has not exactly one stock-defining procedure.");
-
-        // The stock procedure has no machining UCS of its own: its stock is exported in part-model coordinates only.
-        if (frame == CimatronUcsFrame.Procedure)
-            throw new CimatronApiException("capability_unavailable",
-                $"The initial stock comes from Cimatron's stock procedure {data.StockProcedures[0]} in part-model coordinates only; export in part-model coordinates (without --geometry-in-ucs) or give --stock-file.");
-        ExportRemainingStock(data.StockProcedures[0], CimatronUcsFrame.Model, stlPath);
+        var owner = FindAny(Members.InitialStock)
+            ?? throw new CimatronApiException("capability_unavailable", "This Cimatron exposes no initial-stock export.");
+        Call(owner.Target, owner.Name, frame == CimatronUcsFrame.Procedure ? Members.ProcedureUcsType : Members.ModelUcsType, stlPath);
     }
 
     public IReadOnlyList<CimatronGeometryFile> ExportPartGeometry(string ucsName, string folder)

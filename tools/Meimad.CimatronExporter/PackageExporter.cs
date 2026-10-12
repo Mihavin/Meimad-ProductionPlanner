@@ -165,7 +165,7 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
     /// coordinates = mode B). The stock export uses the same frame as the fixtures and the part.
     /// </summary>
     private sealed record ExportState(CimatronDocumentInfo Document, IReadOnlyList<CimatronProcedure> Procedures, string? StockFile,
-        bool StockFileDiscovered, bool GeometryInProcedureUcs)
+        bool StockFileDiscovered, bool GeometryInProcedureUcs, CimatronToolpath? Toolpath = null)
     {
         public CimatronUcsFrame Frame => GeometryInProcedureUcs ? CimatronUcsFrame.Procedure : CimatronUcsFrame.Model;
     }
@@ -190,6 +190,34 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         }
 
         var procedures = api.GetProcedures();
+
+        // One package is one toolpath (one machine program): choose it when the document has several.
+        var toolpaths = api.GetToolpaths();
+        CimatronToolpath? toolpath = null;
+        if (options.Toolpath is not null)
+        {
+            toolpath = toolpaths.FirstOrDefault(item => string.Equals(item.Name, options.Toolpath, StringComparison.OrdinalIgnoreCase));
+            if (toolpath is null)
+            {
+                log.Error("state", "toolpath_not_found", $"Toolpath '{options.Toolpath}' does not exist; the NC document has {DescribeToolpaths(toolpaths)}.");
+                return null;
+            }
+
+            procedures = procedures.Where(item => string.Equals(item.OperationName, toolpath.Name, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (!api.Capabilities.PostSelected)
+                log.Error("state", "post_selection_unavailable", "This Cimatron cannot post one toolpath (no PostByUcsByIdVec).");
+        }
+        else if (toolpaths.Count == 1)
+        {
+            toolpath = toolpaths[0];
+        }
+        else if (toolpaths.Count > 1 && options.ProcedureId is null)
+        {
+            log.Error("state", "toolpath_required",
+                $"The NC document has {toolpaths.Count} toolpaths ({DescribeToolpaths(toolpaths)}); a package holds one: choose it with --toolpath <name>.");
+            return null;
+        }
+
         if (options.ProcedureId is { } chosen)
         {
             procedures = procedures.Count == 0
@@ -232,7 +260,9 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
 
         var stockFile = options.StockFile;
         var stockDiscovered = false;
-        if (stockFile is null && !api.Capabilities.InitialStock && !(api.Capabilities.RemainingStock && options.StockProcedureId is not null))
+        var stockFromProcedure = api.Capabilities.RemainingStock && toolpath?.StockProcedureId is not null;
+        if (stockFile is null && !api.Capabilities.InitialStock && !stockFromProcedure
+            && !(api.Capabilities.RemainingStock && options.StockProcedureId is not null))
         {
             // Cimatron 2026.0 has no initial-stock export: a single STOCK*.stl Cimatron left beside the document is the fallback.
             var found = StockFileDiscovery.Find(document.FilePath);
@@ -247,7 +277,9 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
             }
             else
             {
-                log.Error("state", "stock_unavailable", "No stock can be exported: give --stock-file, or --stock-procedure on Cimatron 2026+.");
+                log.Error("state", "stock_unavailable", toolpath is null && toolpaths.Count > 1
+                    ? "No stock can be exported: choose the toolpath with --toolpath (its setup's stock procedure gives the stock), or give --stock-file."
+                    : "No stock can be exported: give --stock-file, or --stock-procedure on Cimatron 2026+.");
             }
         }
 
@@ -255,8 +287,21 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
             log.Warning("state", "geometry_unavailable", "No target/fixture export is available; the package will have no part or fixture (give --geometry-folder).");
         if (log.HasErrors) return null;
         var inUcs = GeometryInProcedureUcs(options);
-        log.Ok("state", $"Active NC document '{document.Name}', {procedures.Count} procedure(s), UCS '{options.Ucs}', geometry in {(inUcs ? "the procedure UCS (mode A)" : "part-model coordinates (mode B)")}.");
-        return new ExportState(document, procedures, stockFile, stockDiscovered, inUcs);
+        log.Ok("state", $"Active NC document '{document.Name}'{(toolpath is null ? "" : $", toolpath '{toolpath.Name}'")}, {procedures.Count} procedure(s), UCS '{options.Ucs}', geometry in {(inUcs ? "the procedure UCS (mode A)" : "part-model coordinates (mode B)")}.");
+        return new ExportState(document, procedures, stockFile, stockDiscovered, inUcs, toolpath);
+    }
+
+    private static string DescribeToolpaths(IReadOnlyList<CimatronToolpath> toolpaths) =>
+        toolpaths.Count == 0
+            ? "no readable toolpath"
+            : string.Join(", ", toolpaths.Select(item => item.SetupName is null ? $"'{item.Name}'" : $"'{item.Name}' (setup '{item.SetupName}')"));
+
+    // A file name for the posted NC from the toolpath name.
+    private static string NcOutputName(string toolpath)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var name = new string(toolpath.Select(character => invalid.Contains(character) || character == ' ' ? '_' : character).ToArray());
+        return name.Length == 0 ? "toolpath" : name;
     }
 
     /// <summary>Step 3: post by UCS (fallback: post all, the UCS is still recorded). The NC text is never changed.</summary>
@@ -266,7 +311,19 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         IReadOnlyList<string> files;
         try
         {
-            if (api.Capabilities.PostByUcs)
+            if (options.Toolpath is not null && state.Toolpath is { } toolpath)
+            {
+                // PostByUcsByIdVec with the toolpath node; if Cimatron writes nothing for it, with its procedures.
+                var name = NcOutputName(toolpath.Name);
+                files = api.PostSelected(options.Post!, folder, [toolpath.Id], options.Ucs!, name);
+                if (!files.Any(path => PackagePaths.IsUnder(path, folder) && File.Exists(path)))
+                {
+                    log.Warning("nc", "post_by_procedures",
+                        $"Posting toolpath node {toolpath.Id} wrote nothing; posted its {state.Procedures.Count} procedure(s) instead.");
+                    files = api.PostSelected(options.Post!, folder, state.Procedures.Select(item => item.Id).ToArray(), options.Ucs!, name);
+                }
+            }
+            else if (api.Capabilities.PostByUcs)
             {
                 files = api.PostByUcs(options.Post!, folder, options.StartHome, options.Ucs!);
             }
@@ -449,6 +506,29 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
                 };
             }
 
+            if (!api.Capabilities.InitialStock && api.Capabilities.RemainingStock && state.Toolpath?.StockProcedureId is { } stockProcedure)
+            {
+                // Cimatron 2026.0 exports no initial stock; the result of the setup's stock procedure ("Stock By
+                // Contours") is that stock. It has no machining UCS, so it is exported in part-model coordinates only.
+                if (state.GeometryInProcedureUcs)
+                {
+                    log.Error("stock", "stock_frame_unavailable",
+                        $"The initial stock comes from Cimatron's stock procedure {stockProcedure}, in part-model coordinates only; export without --geometry-in-ucs or give --stock-file.");
+                    return null;
+                }
+
+                var stockPath = Path.Combine(staging, "geometry", "stock.stl");
+                api.ExportRemainingStock(stockProcedure, CimatronUcsFrame.Model, stockPath);
+                if (!File.Exists(stockPath))
+                {
+                    log.Error("stock", "stock_export_failed", $"Cimatron wrote no STL for stock procedure {stockProcedure}.");
+                    return null;
+                }
+
+                log.Ok("stock", $"Initial stock from Cimatron's stock procedure {stockProcedure}{(state.Toolpath.SetupName is null ? "" : $" of setup '{state.Toolpath.SetupName}'")}, in part-model coordinates.");
+                return new StockFileReference { Path = "geometry/stock.stl", Kind = StockKinds.Initial, FoundBy = "stock-procedure" };
+            }
+
             api.ExportInitialStock(state.Frame, Path.Combine(staging, "geometry", "stock.stl"));
             if (!File.Exists(Path.Combine(staging, "geometry", "stock.stl")))
             {
@@ -456,7 +536,7 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
                 return null;
             }
 
-            log.Ok("stock", "Initial stock exported by Cimatron (on Cimatron 2026.0: the remaining stock of the stock-defining procedure, in part-model coordinates).");
+            log.Ok("stock", "Initial stock exported.");
             return new StockFileReference { Path = "geometry/stock.stl", Kind = StockKinds.Initial, FoundBy = "stock-procedure" };
         }
         catch (CimatronApiException exception)

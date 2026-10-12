@@ -113,6 +113,11 @@ static int Run(string[] args)
                 var procedures = api.GetProcedures();
                 foreach (var procedure in procedures)
                     Console.WriteLine($"  procedure {procedure.Id} '{procedure.Name}' UCS {procedure.UcsName ?? "?"} toolpath {procedure.HasToolpath}{(procedure.OperationName is null ? "" : $" in '{procedure.OperationName}'")}");
+                var toolpaths = api.GetToolpaths();
+                Console.WriteLine($"Toolpaths ({toolpaths.Count}; one package per toolpath, chosen with --toolpath):");
+                foreach (var toolpath in toolpaths)
+                    Console.WriteLine($"  toolpath {toolpath.Id} '{toolpath.Name}' setup '{toolpath.SetupName ?? "?"}' stock procedure {toolpath.StockProcedureId?.ToString() ?? "none"}, "
+                        + $"{procedures.Count(procedure => procedure.OperationName == toolpath.Name)} procedure(s)");
                 var ucsNames = api.GetUcsNames();
                 Console.WriteLine("UCS: " + (ucsNames.Count == 0 ? "(none read)" : string.Join(", ", ucsNames)));
                 // The matrices of the UCS the procedures use (the ones a package can be exported in).

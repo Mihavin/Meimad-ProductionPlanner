@@ -85,6 +85,7 @@ public sealed class CimatronAccessorTests
         Assert.Equal(new CimatronProcedure(59, "Drill 5x_59", "MODEL", false, "TP_MODEL"), data.Procedures[3]);
         Assert.Equal([3], data.StockProcedures);
         Assert.Equal([2, 3], data.NonMachining);
+        Assert.Equal([new CimatronToolpath(4, "TP_MODEL", "NC_Setup", 3)], data.Toolpaths);
         Assert.Equal([6, 59], data.Machining.Select(item => item.Id));
         Assert.Equal(["MODEL-1", "MODEL", "FAZA----11111"], data.UcsNames);
     }
@@ -103,8 +104,13 @@ public sealed class CimatronAccessorTests
         Assert.Equal(rowMajor, transposed!.Value.Matrix);
         Assert.Contains("transposed", transposed.Value.Layout);
 
-        var threeByThree = UcsMatrix.Compose([0, 0, 1, 0, 1, 0, -1, 0, 0], [80, 0, 40]);
+        var threeByThree = UcsMatrix.Compose([0, 0, -1, 0, 1, 0, 1, 0, 0], [80, 0, 40]);
         Assert.Equal(rowMajor, threeByThree!.Value.Matrix);
+        Assert.Contains("axes as rows", threeByThree.Value.Layout);
+
+        // Meimad's "---90" (probe of 2026-10-12): origin on the stock face x = -69.85, so the UCS Z axis is -X.
+        var minus90 = UcsMatrix.Compose([0, 1, 0, 0, 0, -1, -1, 0, 0], [-69.85, 0, 17.9171])!.Value.Matrix;
+        Assert.Equal([-1.0, 0, 0], new[] { minus90[2], minus90[6], minus90[10] });
         Assert.Equal(rowMajor, UcsMatrix.Compose(rowMajor.Take(12).ToArray(), null)!.Value.Matrix);
         Assert.Equal(0, UcsMatrix.Compose([1, 0, 0, 0, 1, 0, 0, 0, 1], null)!.Value.Matrix[3]);
         Assert.Null(UcsMatrix.Compose([1, 2, 3], null));
