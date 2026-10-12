@@ -486,6 +486,29 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         }
 
         var fromApi = api.GetTools().GroupBy(tool => tool.Number).ToDictionary(group => group.Key, group => group.First());
+        if (cutters is not null)
+        {
+            // Cimatron 2026.0 has no tool-list API; its cutters/holders CSV has the sizes, keyed by magazine (T) number.
+            try
+            {
+                var fromCsv = CimatronToolCsv.Read(Path.Combine(staging, "tools", "cutters.csv"),
+                    holders is null ? null : Path.Combine(staging, "tools", "holders.csv"));
+                var shared = fromCsv.GroupBy(tool => tool.Number).Where(group => group.Count() > 1 && nc.ToolNumbers.Contains(group.Key)).ToArray();
+                if (shared.Length > 0)
+                    log.Warning("tools", "tool_number_shared",
+                        "Several Cimatron cutters share a magazine number; the first one is used: "
+                        + string.Join("; ", shared.Select(group => $"T{group.Key} = {string.Join(", ", group.Select(tool => tool.Name))}")) + ".");
+                var added = new List<int>();
+                foreach (var tool in fromCsv.Where(tool => nc.ToolNumbers.Contains(tool.Number)))
+                    if (fromApi.TryAdd(tool.Number, tool)) added.Add(tool.Number);
+                if (added.Count > 0) log.Ok("tools", $"Tool sizes and holders from cutters.csv for T{string.Join(", T", added.Order())}.");
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or FormatException)
+            {
+                log.Warning("tools", "cutters_csv_unreadable", exception.Message);
+            }
+        }
+
         var numbers = fromApi.Keys.Union(nc.ToolNumbers).Order().ToArray();
         var missing = nc.ToolNumbers.Where(number => !fromApi.ContainsKey(number)).ToArray();
         if (missing.Length > 0)
@@ -509,6 +532,7 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
                     CornerRadiusMm = tool.CornerRadiusMm,
                     FluteLengthMm = tool.FluteLengthMm,
                     GaugeLengthMm = tool.GaugeLengthMm,
+                    TaperAngleDeg = tool.TaperAngleDeg,
                     Holder = tool.HolderName is null && tool.HolderDiameterMm is null && tool.HolderLengthMm is null
                         ? null
                         : new ToolHolder { Name = tool.HolderName, DiameterMm = tool.HolderDiameterMm, LengthMm = tool.HolderLengthMm }
@@ -802,8 +826,10 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         "flat" or "end mill" or "endmill" => "flat",
         "ball" or "ball mill" => "ball",
         "bull" or "bull-nose" or "bullnose" or "radius" => "bull-nose",
-        "drill" => "drill",
+        "drill" or "center" => "drill",
         "tap" => "tap",
+        "full radius" => "ball",
+        "corner radius" => "bull-nose",
         "taper" => "taper",
         "chamfer" => "chamfer",
         null or "" => null,

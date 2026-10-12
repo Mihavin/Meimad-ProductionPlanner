@@ -60,7 +60,8 @@ internal sealed record CimatronToolpath(int Id, string Name, string? SetupName, 
 internal sealed record CimatronUcs(string Name, IReadOnlyList<double> Matrix);
 
 internal sealed record CimatronTool(int Number, string Name, string? Type, double? DiameterMm, double? CornerRadiusMm,
-    double? FluteLengthMm, double? GaugeLengthMm, string? HolderName, double? HolderDiameterMm, double? HolderLengthMm);
+    double? FluteLengthMm, double? GaugeLengthMm, string? HolderName, double? HolderDiameterMm, double? HolderLengthMm,
+    double? TaperAngleDeg = null);
 
 internal static class GeometryRoles
 {

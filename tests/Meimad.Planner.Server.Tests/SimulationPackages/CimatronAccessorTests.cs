@@ -11,6 +11,46 @@ namespace Meimad.Planner.Server.Tests.SimulationPackages;
 public sealed class CimatronAccessorTests
 {
     [Fact]
+    public void Cimatron_cutters_and_holders_csv_give_sizes_by_magazine_number()
+    {
+        var folder = Directory.CreateTempSubdirectory("meimad-tool-csv-").FullName;
+        try
+        {
+            var cutters = Path.Combine(folder, "cutters.csv");
+            var holders = Path.Combine(folder, "holders.csv");
+            CimatronToolCsvSamples.Write(cutters, holders);
+            var tools = CimatronToolCsv.Read(cutters, holders).ToDictionary(tool => tool.Number);
+
+            Assert.Equal([3, 29, 40], tools.Keys.Order());
+            var flat = tools[29];
+            Assert.Equal(("MERASEK_16", "flat", 16.0, 20.0, 52.0), (flat.Name, flat.Type, flat.DiameterMm!.Value, flat.FluteLengthMm!.Value, flat.GaugeLengthMm!.Value));
+            Assert.Null(flat.CornerRadiusMm); // 0 means none
+            Assert.Equal(("HOLDER-50_NEW", 50.0, 65.0), (flat.HolderName, flat.HolderDiameterMm!.Value, flat.HolderLengthMm!.Value));
+
+            // A tapered cutter keeps its angle; the holder is three stages (the spindle stage after them does not count).
+            var taper = tools[40];
+            Assert.Equal(("taper", 45.0), (taper.Type, taper.TaperAngleDeg!.Value));
+            Assert.Equal((63.0, 99.5), (taper.HolderDiameterMm!.Value, taper.HolderLengthMm!.Value));
+
+            var ball = tools[3];
+            Assert.Equal(("ball", 3.0), (ball.Type, ball.CornerRadiusMm!.Value));
+            Assert.Null(ball.HolderDiameterMm); // holder not in holders.csv
+
+            // An inch file is converted to millimetres.
+            File.WriteAllText(cutters, CimatronToolCsvSamples.Cutters().Replace("|Units:|mm|Holders", "|Units:|inch|Holders"), System.Text.Encoding.Unicode);
+            Assert.Equal(16 * 25.4, CimatronToolCsv.Read(cutters, null).Single(tool => tool.Number == 29).DiameterMm!.Value, 6);
+
+            // The fake's plain CSV is not Cimatron's format: nothing is read.
+            File.WriteAllText(cutters, "T,Name,Diameter\r\n1,D10 FLAT,10\r\n");
+            Assert.Empty(CimatronToolCsv.Read(cutters, null));
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    [Fact]
     public void Several_posted_programs_are_one_main_program_only_when_it_calls_the_others()
     {
         var folder = Directory.CreateTempSubdirectory("meimad-nc-set-").FullName;

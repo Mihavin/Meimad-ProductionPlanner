@@ -272,8 +272,10 @@ program that calls the others as the main program and describes each program whe
 Exporter 0.1.3 published the first package (2026-10-12): Cimatron writes the posted NC into
 `<document>.DIR\<post>\` below the output folder, `6000.EIA` calls `5999.EIA` and the machine program `9013`, and the stock
 came from the setup's stock procedure; the package passed the validation. Exporter 0.1.4 names called programs the post
-did not write (`nc_calls_unposted_programs`) and leaves `T0` out of the tool lists. Still to confirm: the import and NC
-viewer check, tool sizes from Cimatron's cutters/holders CSV (layout unseen), and the layout check on a tilted active UCS.
+did not write (`nc_calls_unposted_programs`) and leaves `T0` out of the tool lists. The cutters/holders CSV of that export (UTF-16, `|`, column-ID rows) give every NC tool by
+magazine number; exporter 0.1.5 fills `tool-table.json` from them (diameter, corner radius, cut length, clear length as
+gauge length, tip type, taper angle, holder diameter and length from the holder stages). Still to confirm: the import
+and NC viewer check, and the layout check on a tilted active UCS.
 
 **Open decision (Proposed, 2026-10-12): subprograms in a simulation package.** The package manifest has one `files.nc`
 and no subprogram role, while a Mazak post can write a main program plus subprogram files. Until decided, the exporter
@@ -290,7 +292,7 @@ post UCS (`--ucs`): procedures in other UCS give the warning `ucs_procedures_dif
 package stays blocked (`ucs_mismatch`) only with `ExecutePostToAllNcProcedures`, whose output frame is unknown. Reversible
 in `PackageExporter.ValidateState`; awaiting the owner's confirmation. Tests: `CimatronAccessorTests`,
 `CimatronBinderTests`, `CimatronExporterTests` (frame of the stock export, stock discovery); `SimulationPackages` suite
-89 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
+91 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
 ## TV Dashboard part picture in every Machine row (2026-10-12, schema v118; implemented locally on branch ws/tv)
 
 **Owner request (2026-10-12, `nc-viewer-visualization-spec.md` "TV Dashboard: картинка детали в строке станка",

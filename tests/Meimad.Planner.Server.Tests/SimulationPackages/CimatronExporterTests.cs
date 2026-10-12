@@ -3,6 +3,7 @@ using Meimad.CimatronExporter;
 using Meimad.Planner.SimulationPackage.Diagnostics;
 using Meimad.Planner.SimulationPackage.Geometry;
 using Meimad.Planner.SimulationPackage.Manifest;
+using Meimad.Planner.SimulationPackage.Tools;
 using Meimad.Planner.SimulationPackage.Validation;
 
 namespace Meimad.Planner.Server.Tests.SimulationPackages;
@@ -249,6 +250,20 @@ public sealed class CimatronExporterTests : IDisposable
     }
 
     [Fact]
+    public void Tool_sizes_come_from_cimatrons_cutters_csv_when_the_api_has_no_tool_list()
+    {
+        using var api = new FakeCimatronApi { CimatronToolCsv = true, NoApiTools = true };
+        var result = Run(api, Options());
+        Assert.True(result.Complete, result.Log.ToReport());
+        Assert.DoesNotContain(result.Log.Entries, entry => entry.Code == "tool_data_from_nc");
+        Assert.Contains(result.Log.Entries, entry => entry.Message.Contains("from cutters.csv for T1, T2"));
+        var table = ToolTableDocument.Parse(File.ReadAllText(Path.Combine(result.PackagePath!, "tools", "tool-table.json")));
+        var t1 = table.Tools.Single(tool => tool.Number == 1);
+        Assert.Equal(("MERASEK_16", 16.0, "HOLDER-50_NEW", 50.0), (t1.Name, t1.DiameterMm!.Value, t1.Holder!.Name, t1.Holder.DiameterMm!.Value));
+        Assert.Equal(45.0, table.Tools.Single(tool => tool.Number == 2).TaperAngleDeg);
+    }
+
+    [Fact]
     public void A_main_program_with_its_subprogram_is_exported_without_a_choice()
     {
         using var api = new FakeCimatronApi { WritesSubprogram = true };
@@ -446,6 +461,8 @@ internal sealed class FakeCimatronApi : ICimatronApi
     public bool WritesPostReports { get; init; }
     public string? NcSubfolder { get; init; }
     public bool WritesSubprogram { get; init; }
+    public bool CimatronToolCsv { get; init; }
+    public bool NoApiTools { get; init; }
     public IReadOnlyList<string> UcsNames { get; init; } = ["UCS_OP010", "UCS_OP020"];
     public IReadOnlyList<double>? UcsMatrix { get; init; }
     public int FixtureCount { get; set; } = 2;
@@ -481,7 +498,7 @@ internal sealed class FakeCimatronApi : ICimatronApi
 
     public CimatronUcs? GetUcs(string name) => UcsMatrix is null ? null : new(name, UcsMatrix);
 
-    public IReadOnlyList<CimatronTool> GetTools() =>
+    public IReadOnlyList<CimatronTool> GetTools() => NoApiTools ? [] :
     [
         new(1, "D10 FLAT", "flat", 10, 0, 30, 90, "BT40 ER32", 50, 60),
         new(2, "D6.8 DRILL", "drill", 6.8, 0, 40, 100, "BT40 ER20", 40, 55)
@@ -525,6 +542,14 @@ internal sealed class FakeCimatronApi : ICimatronApi
 
     public void ExportCuttersAndHolders(string cuttersCsv, string holdersCsv, string materialsCsv)
     {
+        if (CimatronToolCsv)
+        {
+            // Cimatron 2026.0's layout; magazine numbers 1 and 2 are the NC's T1 and T2.
+            CimatronToolCsvSamples.Write(cuttersCsv, holdersCsv, 1, 2);
+            File.WriteAllText(materialsCsv, "Name\r\nAL6061\r\n");
+            return;
+        }
+
         File.WriteAllText(cuttersCsv, "T,Name,Diameter\r\n1,D10 FLAT,10\r\n2,D6.8 DRILL,6.8\r\n");
         File.WriteAllText(holdersCsv, "Name,Diameter,Length\r\nBT40 ER32,50,60\r\nBT40 ER20,40,55\r\n");
         File.WriteAllText(materialsCsv, "Name\r\nAL6061\r\n");
