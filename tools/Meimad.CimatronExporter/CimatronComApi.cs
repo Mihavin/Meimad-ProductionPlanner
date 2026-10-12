@@ -5,29 +5,39 @@ using System.Runtime.InteropServices;
 namespace Meimad.CimatronExporter;
 
 /// <summary>
-/// <see cref="ICimatronApi"/> over a running Cimatron through late-bound COM (IDispatch), so no
-/// Cimatron interop assembly is needed to build or ship the exporter. Adapter version
-/// <see cref="Version"/>: it connects through <c>CimAppAccess.AppAccess.GetApplication()</c>
-/// (exporter definition §3.1), takes the active document, and finds each API method by name on the
-/// active document first and the application second. Capability detection asks IDispatch for the
-/// member names before anything is called, so a Cimatron version without a method reports it as
-/// unavailable instead of failing half-way. The method names in <see cref="Members"/> follow the
-/// exporter definition; the procedure, UCS, tool and geometry accessors are best guesses.
-/// UNVERIFIED: this adapter has never run against a real Cimatron — run <c>--probe</c> first.
+/// <see cref="ICimatronApi"/> over a running Cimatron through late-bound COM, so no Cimatron interop
+/// assembly is needed to build or ship the exporter. Adapter version <see cref="Version"/>: it connects
+/// through <c>CimAppAccess.AppAccess.GetApplication()</c> (exporter definition §3.1), takes the active
+/// document and its NC model, and finds each API method by name on the model, the document and the
+/// application in that order. A member is called through the vtable interfaces of Cimatron's installed
+/// interop assemblies when they have it (<see cref="CimatronBinder"/>), else through IDispatch.
+/// Capability detection looks the member names up before anything is called, so a Cimatron version
+/// without a method reports it as unavailable instead of failing half-way. The names in
+/// <see cref="Members"/> are those of the Cimatron 2026.0 type libraries (probe of 2026-10-12); the
+/// procedure, UCS, tool and geometry accessors are still best guesses.
+/// UNVERIFIED: this adapter has never completed a call against a real Cimatron — run <c>--probe</c> first.
 /// </summary>
 internal sealed class CimatronComApi : ICimatronApi
 {
-    internal const string Version = "cimatron-com-1";
+    internal const string Version = "cimatron-com-2";
     internal const string AppAccessProgId = "CimAppAccess.AppAccess";
 
     /// <summary>How the last <see cref="Connect"/> reached Cimatron (null: the registered ProgID).</summary>
     internal static string? ConnectedThrough { get; private set; }
 
+    /// <summary>The vtable binder over Cimatron's interop assemblies (null: IDispatch only).</summary>
+    internal static CimatronBinder? Binder { get; private set; }
+
+    /// <summary>Problems loading Cimatron's interop assemblies, for the probe.</summary>
+    internal static List<string> BinderProblems { get; } = [];
+
     /// <summary>The late-bound member names, in one place so a field test can adjust them.</summary>
     internal static class Members
     {
-        internal const string GetApplication = "GetApplication";
+        internal static readonly string[] GetApplication = ["GetApplication", "GetActiveApplication"];
         internal const string GetActiveDoc = "GetActiveDoc";
+        internal const string Model = "Model";
+        internal const string ProcessManagerXml = "GetProcessManagerAsXML";
         internal const string PostByUcs = "PostByUcsToAllNcProcedures";
         internal const string PostToAll = "ExecutePostToAllNcProcedures";
         internal const string CuttersCsv = "ExportCuttersAndHoldersToCSV";
@@ -42,17 +52,19 @@ internal sealed class CimatronComApi : ICimatronApi
         internal static readonly string[] EntityExport = ["ExportProcedureGeometry", "ExportPartsToStl"];
         internal static readonly string[] MultiStl = ["ExportMultiStl", "ExportSimulatorMultiStl"];
         internal static readonly string[] Version = ["Version", "GetVersion"];
-        internal static readonly string[] Name = ["Name", "GetName"];
-        internal static readonly string[] Path = ["Path", "FullName", "GetPath"];
+        internal static readonly string[] Name = ["Title", "Name", "GetName"];
+        internal static readonly string[] Path = ["GetPath", "Path", "FullName"];
     }
 
     private readonly object application;
     private readonly object? document;
+    private readonly object? model;
 
-    private CimatronComApi(object application, object? document)
+    private CimatronComApi(object application, object? document, object? model)
     {
         this.application = application;
         this.document = document;
+        this.model = model;
         CimatronVersion = TryGetString(application, Members.Version);
         Capabilities = new CimatronCapabilities(
             PostByUcs: Find(Members.PostByUcs) is not null,
@@ -81,6 +93,9 @@ internal sealed class CimatronComApi : ICimatronApi
         if (!OperatingSystem.IsWindows())
             throw new CimatronApiException("cimatron_not_available", "Cimatron automation needs Windows.");
         var type = Type.GetTypeFromProgID(name, throwOnError: false);
+        var programFolder = CimatronTypeLibrary.FindProgramFolder(cimatronFolder);
+        BinderProblems.Clear();
+        Binder = CimatronBinder.FromProgramFolder(programFolder, BinderProblems);
         object access;
         try
         {
@@ -92,7 +107,7 @@ internal sealed class CimatronComApi : ICimatronApi
             else
             {
                 // Not registered: AppAccess straight from the Cimatron Program folder (CimatronTypeLibrary).
-                var folder = CimatronTypeLibrary.FindProgramFolder(cimatronFolder)
+                var folder = programFolder
                     ?? throw new CimatronApiException("cimatron_not_installed",
                         $"The Cimatron automation server '{name}' is not registered and no Cimatron Program folder with {CimatronTypeLibrary.AppAccessDll} was found (use --cimatron-folder).");
                 access = CimatronTypeLibrary.CreateAppAccess(folder);
@@ -104,19 +119,22 @@ internal sealed class CimatronComApi : ICimatronApi
             throw new CimatronApiException("cimatron_not_available", "Cimatron is not running or refused the connection.", exception);
         }
 
-        var application = Call(access, Members.GetApplication)
-            ?? throw new CimatronApiException("cimatron_not_available", "Cimatron returned no application object.");
+        var getApplication = Members.GetApplication.FirstOrDefault(member => HasMember(access, member)) ?? Members.GetApplication[0];
+        var application = Call(access, getApplication)
+            ?? throw new CimatronApiException("cimatron_not_available", "Cimatron returned no application object (is Cimatron open?).");
         object? document = null;
+        object? model = null;
         try
         {
             document = Call(application, Members.GetActiveDoc);
+            if (document is not null && HasMember(document, Members.Model)) model = CallOrGet(document, Members.Model);
         }
         catch (CimatronApiException)
         {
             // Reported by GetActiveNcDocument.
         }
 
-        return new CimatronComApi(application, document);
+        return new CimatronComApi(application, document, model);
     }
 
     /// <summary>Lists which known members the application and the active document expose (read-only probe).</summary>
@@ -124,13 +142,14 @@ internal sealed class CimatronComApi : ICimatronApi
     {
         var names = new[]
         {
-            Members.GetActiveDoc, Members.PostByUcs, Members.PostToAll, Members.CuttersCsv, Members.JobsXml, Members.RemainingStock
+            Members.GetActiveDoc, Members.Model, Members.ProcessManagerXml, Members.PostByUcs, Members.PostToAll, Members.CuttersCsv, Members.JobsXml, Members.RemainingStock
         }.Concat(Members.InitialStock).Concat(Members.Procedures).Concat(Members.UcsList).Concat(Members.Ucs)
          .Concat(Members.Tools).Concat(Members.EntityExport).Concat(Members.MultiStl).Distinct();
         foreach (var name in names)
         {
             yield return ("application", name, HasMember(application, name));
             if (document is not null) yield return ("document", name, HasMember(document, name));
+            if (model is not null) yield return ("model", name, HasMember(model, name));
         }
     }
 
@@ -257,8 +276,16 @@ internal sealed class CimatronComApi : ICimatronApi
             .ToArray();
     }
 
+    /// <summary>
+    /// Writes Cimatron's process manager (procedures, UCS, tools) as XML to <paramref name="path"/>; read-only towards
+    /// Cimatron. The probe saves one so the procedure accessors can be matched to the real format.
+    /// </summary>
+    internal void ExportProcessManagerXml(string path) =>
+        Call(Require(Members.ProcessManagerXml), Members.ProcessManagerXml, true, path);
+
     public void Dispose()
     {
+        if (model is not null && Marshal.IsComObject(model)) Marshal.FinalReleaseComObject(model);
         if (document is not null && Marshal.IsComObject(document)) Marshal.FinalReleaseComObject(document);
         if (Marshal.IsComObject(application)) Marshal.FinalReleaseComObject(application);
     }
@@ -268,6 +295,7 @@ internal sealed class CimatronComApi : ICimatronApi
 
     private object? Find(string member)
     {
+        if (model is not null && HasMember(model, member)) return model;
         if (document is not null && HasMember(document, member)) return document;
         return HasMember(application, member) ? application : null;
     }
@@ -292,15 +320,16 @@ internal sealed class CimatronComApi : ICimatronApi
     {
         try
         {
+            if (Binder is not null && Binder.TryInvoke(target, member, arguments, out var result, out _)) return result;
             return target.GetType().InvokeMember(member, BindingFlags.InvokeMethod, null, target, arguments, CultureInfo.InvariantCulture);
         }
-        catch (TargetInvocationException exception) when (exception.InnerException is COMException com)
+        catch (TargetInvocationException exception) when (exception.InnerException is COMException or InvalidCastException)
         {
-            throw new CimatronApiException("cimatron_call_failed", $"Cimatron {member} failed: {com.Message}", com);
+            throw Failed(member, exception.InnerException!);
         }
-        catch (COMException exception)
+        catch (Exception exception) when (exception is COMException or InvalidCastException)
         {
-            throw new CimatronApiException("cimatron_call_failed", $"Cimatron {member} failed: {exception.Message}", exception);
+            throw Failed(member, exception);
         }
         catch (MissingMethodException exception)
         {
@@ -308,13 +337,26 @@ internal sealed class CimatronComApi : ICimatronApi
         }
     }
 
+    // TYPE_E_LIBNOTREGISTERED, REGDB_E_IIDNOTREG and E_NOINTERFACE: Windows cannot pass the call to Cimatron without
+    // Cimatron's type libraries (and with them its interfaces) registered.
+    private static CimatronApiException Failed(string member, Exception exception)
+    {
+        var registration = exception is InvalidCastException
+            || exception.HResult is unchecked((int)0x8002801D) or unchecked((int)0x80040155) or unchecked((int)0x80004002);
+        var hint = registration
+            ? " Cimatron's type libraries are not registered on this PC: run the exporter once with --register-cimatron (current user, no administrator), or repair the Cimatron installation."
+            : "";
+        return new CimatronApiException("cimatron_call_failed", $"Cimatron {member} failed: {exception.Message}{hint}", exception);
+    }
+
     private static object? CallOrGet(object target, string member)
     {
         try
         {
+            if (Binder is not null && Binder.TryInvoke(target, member, [], out var result, out _)) return result;
             return target.GetType().InvokeMember(member, BindingFlags.GetProperty | BindingFlags.InvokeMethod, null, target, null, CultureInfo.InvariantCulture);
         }
-        catch (Exception exception) when (exception is COMException or TargetInvocationException or MissingMethodException)
+        catch (Exception exception) when (exception is COMException or TargetInvocationException or MissingMethodException or InvalidCastException)
         {
             return null;
         }
@@ -387,9 +429,10 @@ internal sealed class CimatronComApi : ICimatronApi
         return null;
     }
 
-    /// <summary>Asks IDispatch whether the object has a member, without calling it.</summary>
+    /// <summary>Asks the interop interfaces, then IDispatch, whether the object has a member, without calling it.</summary>
     internal static bool HasMember(object target, string member)
     {
+        if (Binder is not null && Binder.Has(target, member)) return true;
         if (!OperatingSystem.IsWindows() || !Marshal.IsComObject(target))
             return target.GetType().GetMember(member, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase).Length > 0;
         if (target is not IDispatchNames dispatch) return false;

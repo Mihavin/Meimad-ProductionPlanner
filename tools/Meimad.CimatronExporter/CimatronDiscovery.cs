@@ -46,14 +46,22 @@ internal static class CimatronDiscovery
             yield return "  " + line;
         }
         if (files == 0) yield return "  (none found below Program Files)";
-        yield return "Running objects (Cimatron must be open):";
+        yield return "Cimatron processes:";
+        var processes = 0;
+        foreach (var line in Processes())
+        {
+            processes += 1;
+            yield return "  " + line;
+        }
+        if (processes == 0) yield return "  (none: Cimatron is not running for this user)";
+        yield return "Running object table (all entries; Cimatron may register itself under a class id):";
         var running = 0;
         foreach (var line in RunningObjects())
         {
             running += 1;
             yield return "  " + line;
         }
-        if (running == 0) yield return "  (none mentioning Cimatron)";
+        if (running == 0) yield return "  (empty)";
     }
 
     // "Cimatron", "3D Systems", or a name starting with "Cim" + a capital other than I (CimAppAccess, CimBaseAPI...;
@@ -168,6 +176,29 @@ internal static class CimatronDiscovery
         return lines;
     }
 
+    private static IEnumerable<string> Processes()
+    {
+        var lines = new List<string>();
+        foreach (var process in System.Diagnostics.Process.GetProcesses())
+        {
+            using (process)
+            {
+                if (!process.ProcessName.StartsWith("cim", StringComparison.OrdinalIgnoreCase)) continue;
+                string? path = null;
+                try
+                {
+                    path = process.MainModule?.FileName;
+                }
+                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
+                {
+                    // Another user's or an elevated process.
+                }
+                lines.Add($"{process.ProcessName} pid {process.Id} session {process.SessionId} {path ?? "(path not readable: elevated or another user)"}");
+            }
+        }
+        return lines;
+    }
+
     [DllImport("ole32.dll")]
     private static extern int GetRunningObjectTable(int reserved, out IRunningObjectTable table);
 
@@ -187,7 +218,8 @@ internal static class CimatronDiscovery
                 try
                 {
                     batch[0].GetDisplayName(context, null, out var name);
-                    if (Mentions(name)) lines.Add(name);
+                    lines.Add(name);
+                    if (lines.Count >= 60) break;
                 }
                 catch (COMException)
                 {

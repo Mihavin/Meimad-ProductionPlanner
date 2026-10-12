@@ -11,8 +11,9 @@ namespace Meimad.CimatronExporter;
 /// <c>CimatronE.tlb</c>, …) but <c>CimAppAccess.AppAccess</c> is not registered. The AppAccess object is then made directly
 /// from the DLL: its class id comes from the type library, the DLL is loaded from the Program folder (its dependencies
 /// beside it) and its class factory creates the object. Nothing is written to the registry.
-/// It also lists the type libraries' classes, interfaces and members for <c>--probe</c>, so the late-bound member names
-/// can be matched to the installed version.
+/// It also lists the type libraries' classes, interfaces, members and enum values for <c>--probe</c>, so the late-bound
+/// member names can be matched to the installed version, and registers the type libraries for the current user on
+/// request (<c>--register-cimatron</c>): Windows needs them registered to pass calls between the exporter and Cimatron.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal static class CimatronTypeLibrary
@@ -31,6 +32,12 @@ internal static class CimatronTypeLibrary
 
     [DllImport("oleaut32.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
     private static extern int LoadTypeLibEx(string file, int regKind, out ITypeLib library);
+
+    [DllImport("oleaut32.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
+    private static extern int RegisterTypeLibForUser(ITypeLib library, string fullPath, string? helpDirectory);
+
+    [DllImport("oleaut32.dll", PreserveSig = true)]
+    private static extern int UnRegisterTypeLibForUser(ref Guid libraryId, ushort major, ushort minor, int lcid, SYSKIND sysKind);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
@@ -171,7 +178,101 @@ internal static class CimatronTypeLibrary
         }
     }
 
-    /// <summary>Every class and interface of a type library with its methods and properties (for the probe).</summary>
+    /// <summary>
+    /// Registers (or with <paramref name="unregister"/> removes) every type library in the Cimatron Program folder for the
+    /// current Windows user only (HKEY_CURRENT_USER; no administrator rights, Cimatron's files are not touched). Libraries
+    /// that import another one are retried until no more succeed. Returns one line per library.
+    /// </summary>
+    internal static IReadOnlyList<string> RegisterForUser(string programFolder, bool unregister)
+    {
+        var lines = new List<string>();
+        var pending = Directory.EnumerateFiles(programFolder, "*.tlb").Order(StringComparer.OrdinalIgnoreCase).ToList();
+        var failures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        while (pending.Count > 0)
+        {
+            var progress = false;
+            foreach (var file in pending.ToArray())
+            {
+                var outcome = RegisterOne(file, unregister);
+                if (outcome is null)
+                {
+                    lines.Add($"  {(unregister ? "unregistered" : "registered")}  {Path.GetFileName(file)}");
+                    pending.Remove(file);
+                    failures.Remove(file);
+                    progress = true;
+                }
+                else
+                {
+                    failures[file] = outcome;
+                }
+            }
+
+            if (!progress || unregister) break;
+        }
+
+        lines.AddRange(pending.Select(file => $"  failed        {Path.GetFileName(file)}: {failures.GetValueOrDefault(file)}"));
+        return lines;
+    }
+
+    private static string? RegisterOne(string file, bool unregister)
+    {
+        var result = LoadTypeLibEx(file, RegKindNone, out var library);
+        if (result != 0) return $"could not be read (HRESULT 0x{result:X8})";
+        try
+        {
+            if (!unregister)
+            {
+                result = RegisterTypeLibForUser(library, file, Path.GetDirectoryName(file));
+                return result == 0 ? null : $"HRESULT 0x{result:X8}";
+            }
+
+            library.GetLibAttr(out var pointer);
+            try
+            {
+                var attributes = Marshal.PtrToStructure<TYPELIBATTR>(pointer);
+                var id = attributes.guid;
+                result = UnRegisterTypeLibForUser(ref id, (ushort)attributes.wMajorVerNum, (ushort)attributes.wMinorVerNum, attributes.lcid, attributes.syskind);
+                // TYPE_E_REGISTRYACCESS: it was not registered for this user.
+                return result is 0 or unchecked((int)0x8002801C) ? null : $"HRESULT 0x{result:X8}";
+            }
+            finally
+            {
+                library.ReleaseTLibAttr(pointer);
+            }
+        }
+        finally
+        {
+            Marshal.ReleaseComObject(library);
+        }
+    }
+
+    /// <summary>Whether Windows finds a type library file's LIBID and version in the registry (for the probe).</summary>
+    internal static string RegistrationStatus(string file)
+    {
+        if (!File.Exists(file)) return "not found";
+        if (LoadTypeLibEx(file, RegKindNone, out var library) != 0) return "could not be read";
+        try
+        {
+            library.GetLibAttr(out var pointer);
+            try
+            {
+                var attributes = Marshal.PtrToStructure<TYPELIBATTR>(pointer);
+                var key = $@"TypeLib\{attributes.guid:B}\{attributes.wMajorVerNum:x}.{attributes.wMinorVerNum:x}";
+                using var registered = Registry.ClassesRoot.OpenSubKey(key);
+                return registered is null ? $"NOT registered ({attributes.guid:B} {attributes.wMajorVerNum}.{attributes.wMinorVerNum})" : "registered";
+            }
+            finally
+            {
+                library.ReleaseTLibAttr(pointer);
+            }
+        }
+        finally
+        {
+            Marshal.ReleaseComObject(library);
+        }
+    }
+
+    /// <summary>Every class, interface and enum of a type library with its members and values (for the probe).</summary>
     internal static IEnumerable<string> Describe(string library)
     {
         var lines = new List<string>();
@@ -205,6 +306,7 @@ internal static class CimatronTypeLibrary
                         break;
                     case TYPEKIND.TKIND_ENUM:
                         lines.Add($"enum {typeName}");
+                        foreach (var value in EnumValues(info)) lines.Add("  " + value);
                         break;
                 }
                 Marshal.ReleaseComObject(info);
@@ -228,6 +330,31 @@ internal static class CimatronTypeLibrary
         {
             info.ReleaseTypeAttr(pointer);
         }
+    }
+
+    private static IEnumerable<string> EnumValues(ITypeInfo info)
+    {
+        var lines = new List<string>();
+        var variables = WithAttributes(info, attributes => (int)attributes.cVars);
+        for (var index = 0; index < variables; index += 1)
+        {
+            info.GetVarDesc(index, out var pointer);
+            try
+            {
+                var description = Marshal.PtrToStructure<VARDESC>(pointer);
+                info.GetDocumentation(description.memid, out var name, out _, out _, out _);
+                var value = description.varkind == VARKIND.VAR_CONST && description.desc.lpvarValue != IntPtr.Zero
+                    ? Marshal.GetObjectForNativeVariant(description.desc.lpvarValue)
+                    : null;
+                lines.Add($"{name} = {value}");
+            }
+            finally
+            {
+                info.ReleaseVarDesc(pointer);
+            }
+        }
+
+        return lines;
     }
 
     private static IEnumerable<string> Members(ITypeInfo info)

@@ -97,10 +97,26 @@ written to the registry) in the newest installed Cimatron, or the folder given w
 on a single-threaded apartment, as Cimatron's objects expect. A registered ProgID is still used first (`--progid` or
 `MEIMAD_CIMATRON_PROGID` names another one).
 
-`--probe` writes everything to standard output (redirect it to a file) and also writes `cimatron-api.txt` beside the
-exe: the classes, interfaces, methods and properties of `CimAppAccess.tlb`, `CimatronE.tlb`, `CimNcAPI.tlb`,
-`CimBaseAPI.tlb`, `CimServicesAPI.tlb` and `CimMdlrAPI.tlb`, read from the files (Cimatron need not run for this part).
-`CimatronComApi.Members` is matched to that listing.
+With AppAccess made that way, the first call (`GetApplication`) still failed at Meimad with *Library not registered*
+(`TYPE_E_LIBNOTREGISTERED`): Cimatron's objects answer IDispatch calls only when Cimatron's type libraries are
+registered, and Windows needs them registered to pass calls between the exporter and the Cimatron process. Two changes
+(adapter `cimatron-com-2`):
+
+- Members are called through the vtable interfaces of Cimatron's own interop assemblies (`interop.*.dll` in the Program
+  folder) when they declare them, IDispatch only as a fallback (`CimatronBinder`). Some members exist only there:
+  `PostByUcsToAllNcProcedures` is on `INcModel`, not on the dispatch `_INcModel`. The adapter now goes application →
+  `GetActiveDoc` → document `Model` (the NC model) and looks for each member on the model, the document and the
+  application.
+- `--register-cimatron` registers every type library in the Program folder for the current Windows user
+  (`HKEY_CURRENT_USER`, no administrator rights; Cimatron's files are not changed); `--unregister-cimatron` removes them
+  again. Repairing the Cimatron installation as an administrator registers them for every user instead.
+
+`--probe` writes everything to standard output (redirect it to a file): the Cimatron processes, the whole running object
+table, whether each type library is registered, how many interop interfaces were loaded, and, when connected, the
+members found and `process-manager.xml` (Cimatron's `GetProcessManagerAsXML`, for matching the procedure and UCS
+accessors). It also writes `cimatron-api.txt` beside the exe: the classes, interfaces, methods, properties and enum values
+of `CimAppAccess.tlb`, `CimatronE.tlb`, `CimNcAPI.tlb`, `CimBaseAPI.tlb`, `CimServicesAPI.tlb` and `CimMdlrAPI.tlb`, read
+from the files (Cimatron need not run for this part). `CimatronComApi.Members` is matched to that listing.
 
 ## Before production use
 

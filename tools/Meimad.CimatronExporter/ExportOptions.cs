@@ -7,6 +7,9 @@ internal sealed record ExportOptions
 {
     public bool ActiveCimatron { get; init; }
     public bool Probe { get; init; }
+    /// <summary>Register (or remove) Cimatron's type libraries for the current Windows user, then exit.</summary>
+    public bool RegisterCimatron { get; init; }
+    public bool UnregisterCimatron { get; init; }
     /// <summary>The Cimatron automation ProgID when it is not CimAppAccess.AppAccess (also MEIMAD_CIMATRON_PROGID).</summary>
     public string? ProgId { get; init; }
     /// <summary>The Cimatron Program folder when CimAppAccess is not registered (default: the newest installed Cimatron).</summary>
@@ -56,6 +59,7 @@ internal sealed record ExportOptions
 
           Meimad.CimatronExporter.exe --active-cimatron --output <folder> --post <post name> --ucs <UCS name> [options]
           Meimad.CimatronExporter.exe --probe
+          Meimad.CimatronExporter.exe --register-cimatron
 
         Required:
           --active-cimatron          use the running Cimatron (the only source in this version)
@@ -87,6 +91,9 @@ internal sealed record ExportOptions
           --progid <name>            the Cimatron automation ProgID (default CimAppAccess.AppAccess)
           --cimatron-folder <path>   Cimatron's Program folder, used when the ProgID is not registered
                                      (default: the newest installed Cimatron)
+          --register-cimatron        register Cimatron's type libraries for the current Windows user (no
+                                     administrator; needed when Cimatron calls fail with "Library not
+                                     registered") and exit; --unregister-cimatron removes them again
 
         Exit codes: 0 package written (maybe with warnings), 1 blocked, 2 usage error, 3 Cimatron not available.
         """;
@@ -110,6 +117,8 @@ internal sealed record ExportOptions
                 {
                     "--active-cimatron" => options with { ActiveCimatron = true },
                     "--probe" => options with { Probe = true },
+                    "--register-cimatron" => options with { RegisterCimatron = true },
+                    "--unregister-cimatron" => options with { UnregisterCimatron = true },
                     "--progid" => options with { ProgId = Value() },
                     "--cimatron-folder" => options with { CimatronFolder = Value() },
                     "--output" => options with { Output = Value() },
@@ -145,7 +154,8 @@ internal sealed record ExportOptions
             }
         }
 
-        if (options.Probe) return (options, null);
+        if (options.RegisterCimatron && options.UnregisterCimatron) return (null, "--register-cimatron and --unregister-cimatron exclude each other.");
+        if (options.Probe || options.RegisterCimatron || options.UnregisterCimatron) return (options, null);
         if (!options.ActiveCimatron) return (null, "--active-cimatron is required (the exporter reads the running Cimatron).");
         if (string.IsNullOrWhiteSpace(options.Output) || !Path.IsPathFullyQualified(options.Output)) return (null, "--output must be a full folder path.");
         if (string.IsNullOrWhiteSpace(options.Post)) return (null, "--post is required.");
