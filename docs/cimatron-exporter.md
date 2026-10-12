@@ -90,7 +90,7 @@ Case → Operations → *Cimatron setup* → **Import Cimatron package...** (see
 ## Connecting to Cimatron without a COM registration
 
 At Meimad (Cimatron 2026.0 SP3P1, probe of 2026-10-12) the API files are in
-`C:\Program Files\Cimatron\Cimatron6.0\Program` (`CimAppAccess.dll`, `CimAppAccess.tlb`, `CimatronE.tlb`,
+`C:\Program Files\Cimatron\Cimatron\2026.0\Program` (`CimAppAccess.dll`, `CimAppAccess.tlb`, `CimatronE.tlb`,
 `CimNcAPI.tlb`, `interop.*.dll`) but `CimAppAccess.AppAccess` is not registered for COM. The exporter then makes the
 AppAccess object directly from `CimAppAccess.dll` (class id from `CimAppAccess.tlb`, the DLL's class factory; nothing is
 written to the registry) in the newest installed Cimatron, or the folder given with `--cimatron-folder`. The export runs
