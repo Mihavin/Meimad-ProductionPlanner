@@ -14,11 +14,17 @@ if (options is null)
 CimatronComApi api;
 try
 {
-    api = CimatronComApi.Connect();
+    api = CimatronComApi.Connect(options.ProgId ?? Environment.GetEnvironmentVariable("MEIMAD_CIMATRON_PROGID"));
 }
 catch (CimatronApiException exception)
 {
     Console.Error.WriteLine($"{exception.Code}: {exception.Message}");
+    if (options.Probe && OperatingSystem.IsWindows())
+    {
+        // The probe's output goes to the console and a redirected file alike.
+        Console.WriteLine($"{exception.Code}: {exception.Message}");
+        foreach (var line in CimatronDiscovery.Report()) Console.WriteLine(line);
+    }
     return 3;
 }
 

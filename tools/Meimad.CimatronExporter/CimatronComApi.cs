@@ -72,13 +72,14 @@ internal sealed class CimatronComApi : ICimatronApi
     public CimatronCapabilities Capabilities { get; }
 
     /// <summary>Connects to the running Cimatron; throws <see cref="CimatronApiException"/> when it cannot.</summary>
-    internal static CimatronComApi Connect()
+    internal static CimatronComApi Connect(string? progId = null)
     {
+        var name = string.IsNullOrWhiteSpace(progId) ? AppAccessProgId : progId.Trim();
         if (!OperatingSystem.IsWindows())
             throw new CimatronApiException("cimatron_not_available", "Cimatron automation needs Windows.");
-        var type = Type.GetTypeFromProgID(AppAccessProgId, throwOnError: false)
+        var type = Type.GetTypeFromProgID(name, throwOnError: false)
             ?? throw new CimatronApiException("cimatron_not_installed",
-                $"The Cimatron automation server '{AppAccessProgId}' is not registered on this PC.");
+                $"The Cimatron automation server '{name}' is not registered on this PC.");
         object access;
         try
         {

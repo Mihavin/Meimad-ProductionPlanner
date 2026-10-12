@@ -7,6 +7,8 @@ internal sealed record ExportOptions
 {
     public bool ActiveCimatron { get; init; }
     public bool Probe { get; init; }
+    /// <summary>The Cimatron automation ProgID when it is not CimAppAccess.AppAccess (also MEIMAD_CIMATRON_PROGID).</summary>
+    public string? ProgId { get; init; }
     public string? Output { get; init; }
     public string PackageFolderName { get; init; } = "cimatron-export";
     public string? Post { get; init; }
@@ -78,7 +80,9 @@ internal sealed record ExportOptions
           --nc-file <name>           the NC file to take when the post writes several
           --package-name <name>      package folder name (default cimatron-export)
           --report <path>            also write the human-readable report there
-          --probe                    list the Cimatron API members this PC exposes and exit
+          --probe                    list the Cimatron API members this PC exposes and exit; without
+                                     Cimatron automation, list what this PC has of it
+          --progid <name>            the Cimatron automation ProgID (default CimAppAccess.AppAccess)
 
         Exit codes: 0 package written (maybe with warnings), 1 blocked, 2 usage error, 3 Cimatron not available.
         """;
@@ -102,6 +106,7 @@ internal sealed record ExportOptions
                 {
                     "--active-cimatron" => options with { ActiveCimatron = true },
                     "--probe" => options with { Probe = true },
+                    "--progid" => options with { ProgId = Value() },
                     "--output" => options with { Output = Value() },
                     "--package-name" => options with { PackageFolderName = Value() },
                     "--post" => options with { Post = Value() },
