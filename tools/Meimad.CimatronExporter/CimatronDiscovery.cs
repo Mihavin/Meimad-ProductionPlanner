@@ -194,7 +194,17 @@ internal static class CimatronDiscovery
                 {
                     // Another user's or an elevated process.
                 }
-                lines.Add($"{process.ProcessName} pid {process.Id} session {process.SessionId} {path ?? "(path not readable: elevated or another user)"}");
+                string started;
+                try
+                {
+                    started = process.StartTime.ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+                }
+                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
+                {
+                    started = "?";
+                }
+                var window = string.IsNullOrWhiteSpace(process.MainWindowTitle) ? "no window" : $"window '{process.MainWindowTitle}'";
+                lines.Add($"{process.ProcessName} pid {process.Id} started {started}, {window}  {path ?? "(path not readable: elevated or another user)"}");
             }
         }
         return lines;

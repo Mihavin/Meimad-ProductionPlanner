@@ -118,6 +118,11 @@ class id, else any entry with the `IApplication` interface). That table is per l
 exporter must run from a normal PowerShell, not "Run as administrator", while Cimatron is open. If Cimatron does not put
 itself there, the remaining fix is registering Cimatron's COM classes (repair the installation as an administrator).
 
+After `--register-cimatron`, `GetApplication` connected (Cimatron 2026,0301,2064,782) but reached an instance with no
+active document while the user had one open; several `CimatronE.exe` processes were running. The exporter now asks
+`GetActiveApplication` first, then `GetApplication`, and takes the first instance whose `GetActiveDoc` returns a document;
+the probe lists each Cimatron process's window title and start time, and the open documents of the instance it reached.
+
 `--probe` writes everything to standard output (redirect it to a file): the connection attempts, whether the exporter
 runs as administrator, the Cimatron processes, how many of Cimatron's COM classes are registered, the whole running object
 table, whether each type library is registered, how many interop interfaces were loaded, and, when connected, the

@@ -37,7 +37,7 @@ internal sealed class CimatronComApi : ICimatronApi
     /// <summary>The late-bound member names, in one place so a field test can adjust them.</summary>
     internal static class Members
     {
-        internal static readonly string[] GetApplication = ["GetApplication", "GetActiveApplication"];
+        internal static readonly string[] GetApplication = ["GetActiveApplication", "GetApplication"];
         internal const string GetActiveDoc = "GetActiveDoc";
         internal const string Model = "Model";
         internal const string ProcessManagerXml = "GetProcessManagerAsXML";
@@ -122,19 +122,38 @@ internal sealed class CimatronComApi : ICimatronApi
             throw new CimatronApiException("cimatron_not_available", "Cimatron is not running or refused the connection.", exception);
         }
 
-        var getApplication = Members.GetApplication.FirstOrDefault(member => HasMember(access, member)) ?? Members.GetApplication[0];
+        // GetActiveApplication first: at Meimad (2026-10-12) GetApplication reached a Cimatron instance with no open
+        // document while the user's Cimatron had one. The first instance with an active document wins.
         ConnectTrace.Clear();
         object? application = null;
+        object? document = null;
         CimatronApiException? accessFailure = null;
-        try
+        foreach (var member in Members.GetApplication.Where(member => HasMember(access, member)))
         {
-            application = Call(access, getApplication);
-            ConnectTrace.Add($"AppAccess.{getApplication}: {(application is null ? "no object" : "ok")}");
-        }
-        catch (CimatronApiException exception)
-        {
-            accessFailure = exception;
-            ConnectTrace.Add($"AppAccess.{getApplication}: {exception.Message}");
+            object? candidate;
+            try
+            {
+                candidate = Call(access, member);
+            }
+            catch (CimatronApiException exception)
+            {
+                accessFailure ??= exception;
+                ConnectTrace.Add($"AppAccess.{member}: {exception.Message}");
+                continue;
+            }
+
+            if (candidate is null)
+            {
+                ConnectTrace.Add($"AppAccess.{member}: no object");
+                continue;
+            }
+
+            var candidateDocument = ActiveDocument(candidate, $"AppAccess.{member}");
+            application ??= candidate;
+            if (candidateDocument is null) continue;
+            application = candidate;
+            document = candidateDocument;
+            break;
         }
 
         if (application is null)
@@ -148,20 +167,51 @@ internal sealed class CimatronComApi : ICimatronApi
             }
 
             ConnectedThrough = $"{ConnectedThrough ?? "the registered " + name}; application object from the running object table";
+            document = ActiveDocument(application, "running object table");
         }
-        object? document = null;
+
+        if (document is null) TraceOpenDocuments(application);
         object? model = null;
-        try
+        if (document is not null && HasMember(document, Members.Model))
         {
-            document = Call(application, Members.GetActiveDoc);
-            if (document is not null && HasMember(document, Members.Model)) model = CallOrGet(document, Members.Model);
-        }
-        catch (CimatronApiException)
-        {
-            // Reported by GetActiveNcDocument.
+            model = CallOrGet(document, Members.Model);
+            ConnectTrace.Add($"document.Model: {(model is null ? "no object" : "ok")}");
         }
 
         return new CimatronComApi(application, document, model);
+    }
+
+    // The application's active document, with what happened in the connection trace.
+    private static object? ActiveDocument(object application, string source)
+    {
+        try
+        {
+            var document = Call(application, Members.GetActiveDoc);
+            var title = document is null ? null : TryGetString(document, Members.Name);
+            ConnectTrace.Add($"{source} -> GetActiveDoc: {(document is null ? "no active document" : $"'{title ?? "(no title)"}'")}");
+            return document;
+        }
+        catch (CimatronApiException exception)
+        {
+            ConnectTrace.Add($"{source} -> GetActiveDoc: {exception.Message}");
+            return null;
+        }
+    }
+
+    // Read-only: how many documents this Cimatron instance has open (IPdm.GetOpenDocuments), for the probe.
+    private static void TraceOpenDocuments(object application)
+    {
+        try
+        {
+            var pdm = HasMember(application, "GetPdm") ? Call(application, "GetPdm") : null;
+            var open = pdm is not null && HasMember(pdm, "GetOpenDocuments") ? Call(pdm, "GetOpenDocuments") : null;
+            var titles = Enumerate(open).Select(item => item as string ?? TryGetString(item, Members.Name) ?? item.ToString()).ToArray();
+            ConnectTrace.Add($"open documents in this Cimatron instance: {(open is null ? "unknown" : titles.Length == 0 ? "none" : string.Join(", ", titles))}");
+        }
+        catch (CimatronApiException exception)
+        {
+            ConnectTrace.Add($"open documents: {exception.Message}");
+        }
     }
 
     /// <summary>Lists which known members the application and the active document expose (read-only probe).</summary>
