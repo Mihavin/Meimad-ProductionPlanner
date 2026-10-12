@@ -249,6 +249,17 @@ public sealed class CimatronExporterTests : IDisposable
     }
 
     [Fact]
+    public void An_nc_file_posted_into_a_subfolder_keeps_its_folder_in_the_package()
+    {
+        using var api = new FakeCimatronApi { NcSubfolder = "TP_MODEL", WritesPostReports = true };
+        var result = Run(api, Options());
+        Assert.True(result.Complete, result.Log.ToReport());
+        var manifest = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(result.PackagePath!, "manifest.json")));
+        Assert.Equal("nc/TP_MODEL/O1001.nc", manifest.GetProperty("files").GetProperty("nc").GetProperty("path").GetString());
+        Assert.True(File.Exists(Path.Combine(result.PackagePath!, "nc", "TP_MODEL", "O1001.nc")));
+    }
+
+    [Fact]
     public void Post_reports_are_not_nc_and_the_tool_report_is_kept()
     {
         using var api = new FakeCimatronApi { WritesPostReports = true };
@@ -421,6 +432,7 @@ internal sealed class FakeCimatronApi : ICimatronApi
     public bool FailRemainingStock { get; init; }
     public bool ExtraNcFile { get; init; }
     public bool WritesPostReports { get; init; }
+    public string? NcSubfolder { get; init; }
     public IReadOnlyList<string> UcsNames { get; init; } = ["UCS_OP010", "UCS_OP020"];
     public IReadOnlyList<double>? UcsMatrix { get; init; }
     public int FixtureCount { get; set; } = 2;
@@ -470,7 +482,8 @@ internal sealed class FakeCimatronApi : ICimatronApi
     {
         PostCalls++;
         if (FailPost) throw new CimatronApiException("cimatron_call_failed", "The post-processor stopped with an error.");
-        var path = Path.Combine(folder, "O1001.nc");
+        var ncFolder = NcSubfolder is null ? folder : Directory.CreateDirectory(Path.Combine(folder, NcSubfolder)).FullName;
+        var path = Path.Combine(ncFolder, "O1001.nc");
         File.WriteAllBytes(path, NcBytes);
         if (WritesPostReports)
         {

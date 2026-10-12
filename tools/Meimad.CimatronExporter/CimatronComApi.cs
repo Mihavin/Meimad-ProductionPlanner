@@ -703,17 +703,18 @@ internal sealed class CimatronComApi : ICimatronApi
     }
 
     private static HashSet<string> Snapshot(string folder) =>
-        Directory.Exists(folder) ? new(Directory.GetFiles(folder), StringComparer.OrdinalIgnoreCase) : new(StringComparer.OrdinalIgnoreCase);
+        Directory.Exists(folder) ? new(Directory.GetFiles(folder, "*", SearchOption.AllDirectories), StringComparer.OrdinalIgnoreCase) : new(StringComparer.OrdinalIgnoreCase);
 
-    // New files in the folder, plus the file Cimatron named in an out parameter (oOutputFileName) when it exists.
+    // New files in the folder and its subfolders, plus the file Cimatron named in an out parameter (oOutputFileName) when it
+    // exists.
     private static string[] Created(string folder, HashSet<string> before, object?[] outputs)
     {
         var created = Directory.Exists(folder)
-            ? Directory.GetFiles(folder).Where(path => !before.Contains(path)).ToList()
+            ? Directory.GetFiles(folder, "*", SearchOption.AllDirectories).Where(path => !before.Contains(path)).ToList()
             : [];
         foreach (var named in outputs.OfType<string>().Where(text => !string.IsNullOrWhiteSpace(text)))
         {
-            var path = Path.IsPathRooted(named) ? named : Path.Combine(folder, named);
+            var path = Path.GetFullPath(Path.IsPathRooted(named) ? named : Path.Combine(folder, named));
             if (File.Exists(path) && !created.Contains(path, StringComparer.OrdinalIgnoreCase)) created.Add(path);
         }
 

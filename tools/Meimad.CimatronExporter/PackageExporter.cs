@@ -392,8 +392,27 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
             selected = inside[0];
         }
 
-        log.Ok("nc", $"Posted {Path.GetFileName(selected)} with '{options.Post}' by UCS '{options.Ucs}' ({state.Procedures.Count} procedure(s)).");
-        return new PackageFileReference { Path = "nc/" + Path.GetFileName(selected) };
+        // The package path keeps the folder Cimatron wrote into (2026-10-12: the NC was listed but not found at nc/<name>).
+        var relative = Path.GetRelativePath(staging, selected).Replace('\\', '/');
+        if (!File.Exists(selected))
+        {
+            log.Error("nc", "post_output_missing",
+                $"Cimatron reported {relative}, but the file is gone. The post folder now holds: {DescribeFolder(staging, folder)}.");
+            return null;
+        }
+
+        log.Ok("nc", $"Posted {relative} with '{options.Post}' by UCS '{options.Ucs}' ({state.Procedures.Count} procedure(s)); "
+            + $"the post wrote {string.Join(", ", written.Select(path => Path.GetRelativePath(staging, path).Replace('\\', '/')))}.");
+        return new PackageFileReference { Path = relative };
+    }
+
+    private static string DescribeFolder(string staging, string folder)
+    {
+        var files = Directory.Exists(folder)
+            ? Directory.GetFiles(folder, "*", SearchOption.AllDirectories)
+                .Select(path => $"{Path.GetRelativePath(staging, path).Replace('\\', '/')} ({new FileInfo(path).Length} bytes)").ToArray()
+            : [];
+        return files.Length == 0 ? "nothing" : string.Join(", ", files);
     }
 
     private sealed record ToolFiles(PackageFileReference ToolTable, PackageFileReference? Cutters, PackageFileReference? Holders,
