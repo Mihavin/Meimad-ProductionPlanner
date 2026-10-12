@@ -83,6 +83,33 @@ headless Chrome. Not verified in the NC viewer window on the factory PCs.
 - Whether the Server account can read `\\192.168.0.240\data` is confirmed only by the copy service's log after
   installation.
 
+## Cimatron tool sizes in the NC viewer (2026-10-11; implemented locally)
+
+**Found:** Cimatron's tool report (`*.TOOLS.mht`, released as the Operation's tool table) gives every tool its Dia,
+LENGTH (stick-out), CUT, Shank and Holder. `ReleasedToolTableParser.ReadGeometryAsync` already read them, but only for
+the Tool Requirements report. The NC viewer received the released rows' names alone, so a tool the Tool Room had not
+measured got its diameter from the name and no length. A survey of a Vericut-from-Cimatron launcher
+(`Run_VC_from_Cim.bat`) found an empty file, so nothing was taken from it.
+
+**Implemented:**
+- Server: `GET /api/v1/cases/{caseId}/operations/{caseOperationId}/tool-table-releases/{toolTableReleaseId}/geometry`
+  (`GCodeService.ReadToolTableGeometryAsync`) reads the immutable stored file again and returns, per row,
+  `toolIdentifier`, `name`, `diameter`, `stickOut`, `cutLength` and `holder` in millimetres (null when the file has
+  none). Read-only, no schema change; an unknown release or a release of another Operation is `404`.
+- Windows client: `NcViewerOperationToolTable.WithFileSizes` fills the diameter and the stick-out length of every
+  tool the Tool Room has not measured or described; Tool Room values always win, rows match by identifier, else by
+  T number, and the type still comes from the Tool Room shape or the description. `NcViewerRequests` asks for the
+  sizes of the Tool Room's or the release's tool table; without them (older Server, offline) the table is unchanged.
+  The status bar adds `+ file sizes`.
+
+**Verified locally:** `GCodeReleaseApiTests.Tool_table_geometry_returns_the_cimatron_sizes_and_holders_of_the_stored_file`
+and `NcViewerOperationToolTableTests` (file sizes fill unmeasured tools, Tool Room values stay, tables without sizes
+unchanged). Not verified in the WPF window against a real factory release.
+
+**Open:** the holder and cut length are returned but not drawn; the viewer still hangs only the cutter from the gauge
+line for unmeasured tools. The Work CS (Cimatron MACSYS) still has to be typed; reading it needs the Cimatron API on
+the CAM PC or the real Vericut export script.
+
 ## Stock removal and stock reference fixes, Designer color palette (2026-10-11; implemented locally)
 
 **Found:** a diagnostic run of every cutting point of the largest Server releases (O2000, 2000, 1002, 3000, 7000, O1000)

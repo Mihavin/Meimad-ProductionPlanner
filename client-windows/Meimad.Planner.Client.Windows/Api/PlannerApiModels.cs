@@ -1328,6 +1328,20 @@ internal sealed record PlannerReleasedTool(
             : RequiresMagazinePosition ? "Required magazine tool" : "Required external tool";
 }
 
+/// <summary>The sizes a released tool table file states for its rows (millimetres; absent values are null).</summary>
+internal sealed record PlannerToolTableGeometry(
+    string ToolTableReleaseId,
+    IReadOnlyList<PlannerReleasedToolGeometry> Tools);
+
+/// <summary>One row of <see cref="PlannerToolTableGeometry"/>: the Cimatron report's Dia, LENGTH, CUT and Holder.</summary>
+internal sealed record PlannerReleasedToolGeometry(
+    string ToolIdentifier,
+    string Name,
+    double? Diameter,
+    double? StickOut,
+    double? CutLength,
+    string? Holder);
+
 internal sealed record PlannerProcessRevision(
     string ProcessRevisionId,
     int ProcessRevisionNumber,

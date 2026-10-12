@@ -98,6 +98,39 @@ internal sealed record NcViewerOperationToolTable(
         return table is null ? null : FromRows(table.Tools, table.RevisionNumber, table.OriginalFileName);
     }
 
+    /// <summary>
+    /// The table with the sizes its released file states (the Cimatron report's Dia and LENGTH
+    /// stick-out) for the tools the Tool Room has not measured or described. Rows match by tool
+    /// identifier, else by T number. A Tool Room value always wins; the type still comes from the
+    /// Tool Room shape or the description.
+    /// </summary>
+    internal NcViewerOperationToolTable WithFileSizes(IReadOnlyList<PlannerReleasedToolGeometry>? sizes)
+    {
+        if (sizes is not { Count: > 0 }) return this;
+        var byIdentifier = sizes
+            .GroupBy(size => size.ToolIdentifier.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var byNumber = sizes
+            .Select(size => (Number: ToolNumber(size.ToolIdentifier), Size: size))
+            .Where(entry => entry.Number is not null)
+            .GroupBy(entry => entry.Number!.Value)
+            .ToDictionary(group => group.Key, group => group.First().Size);
+        var applied = false;
+        var tools = Tools.Select(tool =>
+        {
+            var size = byIdentifier.GetValueOrDefault(tool.Identifier.Trim()) ?? byNumber.GetValueOrDefault(tool.Number);
+            if (size is null || (tool.Diameter is not null && tool.Length is not null)) return tool;
+            var diameter = tool.Diameter ?? Positive(size.Diameter);
+            var length = tool.Length ?? Positive(size.StickOut);
+            if (diameter == tool.Diameter && length == tool.Length) return tool;
+            applied = true;
+            return tool with { Diameter = diameter, Length = length };
+        }).ToArray();
+        return applied ? this with { Source = $"{Source} + file sizes", Tools = tools } : this;
+    }
+
+    private static double? Positive(double? value) => value is > 0 && double.IsFinite(value.Value) ? value : null;
+
     /// <summary>The rows whose type or diameter must come from the engine's reading of the description.</summary>
     internal IReadOnlyList<NcEngineToolDescription> DescriptionsToInfer =>
         Tools.Where(tool => (!tool.ShapeKnown || tool.Diameter is null) && tool.Description.Length > 0)

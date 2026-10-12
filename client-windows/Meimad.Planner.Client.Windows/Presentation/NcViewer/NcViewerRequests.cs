@@ -30,11 +30,14 @@ internal static class NcViewerRequests
         // with the Batch Operation known, the Tool Room's shapes and measurements come with it;
         // otherwise the released rows of the release's tool table alone.
         NcViewerOperationToolTable? operationToolTable = null;
+        string? preparationReleaseId = null;
         if (batchOperationId is not null)
         {
             try
             {
-                operationToolTable = NcViewerOperationToolTable.From(await api.GetToolPreparationAsync(batchOperationId, cancellationToken, context));
+                var preparation = await api.GetToolPreparationAsync(batchOperationId, cancellationToken, context);
+                operationToolTable = NcViewerOperationToolTable.From(preparation);
+                if (operationToolTable is not null) preparationReleaseId = preparation.ToolTableReleaseId;
             }
             catch (Exception exception) when (IsTransient(exception))
             {
@@ -53,6 +56,8 @@ internal static class NcViewerRequests
             // The file is enough to show the program; the release details are optional.
         }
         operationToolTable ??= NcViewerOperationToolTable.FromCatalog(catalog, release?.ToolTableReleaseId);
+        operationToolTable = await WithFileSizesAsync(api, caseId, caseOperationId, operationToolTable,
+            preparationReleaseId ?? release?.ToolTableReleaseId, cancellationToken);
         var machines = await MachinesAsync(api, cancellationToken);
         var programFolders = NcProgramFolders.ForOperation(
             api,
@@ -115,6 +120,31 @@ internal static class NcViewerRequests
             or UnauthorizedAccessException or InvalidOperationException or NotSupportedException)
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Adds the sizes the released tool table file states (Cimatron's Dia and stick-out) to the tools
+    /// the Tool Room has not measured. Without them, or with the Server unavailable, the table stays
+    /// as it is and the sizes come from the descriptions.
+    /// </summary>
+    private static async Task<NcViewerOperationToolTable?> WithFileSizesAsync(
+        IPlannerApiClient api,
+        string caseId,
+        string caseOperationId,
+        NcViewerOperationToolTable? table,
+        string? toolTableReleaseId,
+        CancellationToken cancellationToken)
+    {
+        if (table is null || toolTableReleaseId is null) return table;
+        try
+        {
+            var geometry = await api.GetToolTableGeometryAsync(caseId, caseOperationId, toolTableReleaseId, cancellationToken);
+            return table.WithFileSizes(geometry.Tools);
+        }
+        catch (Exception exception) when (IsTransient(exception))
+        {
+            return table;
         }
     }
 

@@ -864,6 +864,69 @@ public sealed class GCodeReleaseApiTests
     }
 
     [Fact]
+    public async Task Tool_table_geometry_returns_the_cimatron_sizes_and_holders_of_the_stored_file()
+    {
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditorHeaders(client);
+            var cimatronMht = Encoding.UTF8.GetBytes("""
+                MIME-Version: 1.0
+                Content-Type: multipart/related; boundary="cam-boundary"
+
+                --cam-boundary
+                Content-Transfer-Encoding: quoted-printable
+                Content-Type: text/html; charset="us-ascii"
+
+                <html><body><table class=3DMsoTableGrid>
+                <tr><td>Number</td><td>Name</td><td>Dia</td><td>LENGTH</td><td>CUT</td><td>Shank</td><td>Holder</td></tr>
+                <tr><td><b>T29</b></td><td>MERASEK=5F16</td><td>16.</td><td>52.</td><td>20.</td><td>52.</td><td>HOLDER-50=5FNEW</td></tr>
+                <tr><td><b>T40</b></td><td>MERCUZ=5F8</td><td>0.01</td><td>52.</td><td>4.</td><td>52.</td><td>HOLDER-28-OLD</td></tr>
+                </table></body></html>
+                --cam-boundary--
+                """);
+            await ReleaseAsync(
+                client,
+                "post-a",
+                "NEW_PROCESS_REVISION",
+                "Cimatron tool report with sizes",
+                Encoding.UTF8.GetBytes("T29 M06\nT40 M06\nM30\n"),
+                cimatronMht,
+                confirmNewProcess: true,
+                reuseActiveTools: false,
+                processDescription: "Initial Cimatron manufacturing process",
+                toolFileName: "TP_MODEL.TOOLS.mht");
+            using var catalogResponse = await client.GetAsync("/api/v1/cases/case-1/operations/case-op-1/gcode");
+            catalogResponse.EnsureSuccessStatusCode();
+            using var catalog = JsonDocument.Parse(await catalogResponse.Content.ReadAsStringAsync());
+            var releaseId = catalog.RootElement.GetProperty("activeProcessRevision").GetProperty("toolTable")
+                .GetProperty("toolTableReleaseId").GetString()!;
+
+            using var response = await client.GetAsync(
+                $"/api/v1/cases/case-1/operations/case-op-1/tool-table-releases/{releaseId}/geometry");
+            response.EnsureSuccessStatusCode();
+            using var geometry = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal(releaseId, geometry.RootElement.GetProperty("toolTableReleaseId").GetString());
+            var tools = geometry.RootElement.GetProperty("tools").EnumerateArray().ToArray();
+            Assert.Equal(2, tools.Length);
+            Assert.Equal("T29", tools[0].GetProperty("toolIdentifier").GetString());
+            Assert.Equal("MERASEK_16", tools[0].GetProperty("name").GetString());
+            Assert.Equal(16, tools[0].GetProperty("diameter").GetDouble());
+            Assert.Equal(52, tools[0].GetProperty("stickOut").GetDouble());
+            Assert.Equal(20, tools[0].GetProperty("cutLength").GetDouble());
+            Assert.Equal("HOLDER-50_NEW", tools[0].GetProperty("holder").GetString());
+            Assert.Equal(0.01, tools[1].GetProperty("diameter").GetDouble());
+
+            using var unknown = await client.GetAsync(
+                "/api/v1/cases/case-1/operations/case-op-1/tool-table-releases/missing-release/geometry");
+            Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+            using var otherOperation = await client.GetAsync(
+                $"/api/v1/cases/case-1/operations/case-op-other/tool-table-releases/{releaseId}/geometry");
+            Assert.Equal(HttpStatusCode.NotFound, otherOperation.StatusCode);
+        });
+    }
+
+    [Fact]
     public async Task Required_distinct_magazine_tools_drive_live_machine_capacity_and_block_start()
     {
         await RunAsync(async (application, client, _) =>

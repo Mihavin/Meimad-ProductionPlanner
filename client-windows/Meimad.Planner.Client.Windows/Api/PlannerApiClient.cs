@@ -401,6 +401,11 @@ internal interface IPlannerApiClient : IDisposable
         string caseId, string caseOperationId, string releaseId,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    /// <summary>The sizes and holders the released tool table file states for its rows.</summary>
+    Task<PlannerToolTableGeometry> GetToolTableGeometryAsync(
+        string caseId, string caseOperationId, string toolTableReleaseId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     /// <summary>The released tool rows of the operation on its assigned Machine with the latest saved measurements.</summary>
     Task<PlannerToolPreparation> GetToolPreparationAsync(
         string batchOperationId,
@@ -2551,6 +2556,16 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(caseOperationId)}/tool-table-releases/{Uri.EscapeDataString(releaseId)}/file",
             cancellationToken);
         return await ReadBytesSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task<PlannerToolTableGeometry> GetToolTableGeometryAsync(
+        string caseId, string caseOperationId, string toolTableReleaseId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(caseOperationId)}/tool-table-releases/{Uri.EscapeDataString(toolTableReleaseId)}/geometry",
+            cancellationToken);
+        return await ReadSuccessAsync<PlannerToolTableGeometry>(response, cancellationToken);
     }
 
     public async Task<PlannerToolPreparation> GetToolPreparationAsync(

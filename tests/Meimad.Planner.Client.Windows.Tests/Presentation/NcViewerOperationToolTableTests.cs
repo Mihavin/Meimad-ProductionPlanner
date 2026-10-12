@@ -203,6 +203,63 @@ public sealed class NcViewerOperationToolTableTests
     }
 
     [Fact]
+    public void File_sizes_fill_the_unmeasured_tools_and_never_replace_tool_room_values()
+    {
+        var sizes = new PlannerReleasedToolGeometry[]
+        {
+            // Measured in the Tool Room: its 12.5 / 101.25 stay.
+            new("T1", "FIN_12_R1.5", 12, 40, 20, "HOLDER-50_NEW"),
+            // Shape known without a measured length: the stick-out fills the length only.
+            new("t2", "CADURI_8", 7.9, 52, 20, "HOLDER-29_NEW"),
+            // Matched by T number although the file writes it differently.
+            new("T 3", "DRILL_8.5", 8.5, 65, 25, "BT40 ER32 X 100"),
+            new("T9", "NOT_IN_TABLE", 4, 20, 8, null)
+        };
+        var table = NcViewerOperationToolTable.From(Preparation())!.WithFileSizes(sizes);
+        Assert.Equal("Tool table r1 (tools.csv) + Tool Room v2 + file sizes", table.Source);
+        var byNumber = table.Tools.ToDictionary(tool => tool.Number);
+        Assert.Equal((12.5, 101.25), (byNumber[1].Diameter, byNumber[1].Length));
+        Assert.Equal((8.0, 52.0), (byNumber[2].Diameter, byNumber[2].Length));
+        Assert.Equal((8.5, 65.0), (byNumber[3].Diameter, byNumber[3].Length));
+        Assert.Equal((6.8, 80.0), (byNumber[7].Diameter, byNumber[7].Length));
+        // T3 still has no Tool Room shape, so the engine reads its type from the description.
+        Assert.Equal([3], table.DescriptionsToInfer.Select(row => row.Number));
+
+        var readings = new Dictionary<int, NcEngineInferredTool>
+        {
+            [3] = new(3, "drill", 8, 30, 0, 0, null, "DRILL 8.5MM")
+        };
+        var tools = table.ApplyTo(JsonDocument.Parse(Editable).RootElement, readings, out _)["tools"]!.AsArray();
+        Assert.Equal("drill", tools[2]!["type"]!.GetValue<string>());
+        Assert.Equal(8.5, tools[2]!["diameter"]!.GetValue<double>());
+        Assert.Equal(65, tools[2]!["length"]!.GetValue<double>());
+    }
+
+    [Fact]
+    public void Released_rows_take_the_cimatron_size_and_stick_out_and_tables_without_sizes_stay_unchanged()
+    {
+        var rows = new PlannerReleasedTool[]
+        {
+            new("row-1", 1, "T29", "MERASEK_16", true, true, true, "29"),
+            new("row-2", 2, "T40", "MERCUZ_8", true, true, true, "40")
+        };
+        var table = NcViewerOperationToolTable.FromRows(rows, 3, "TP_MODEL.TOOLS.mht")!;
+        Assert.Same(table, table.WithFileSizes(null));
+        Assert.Same(table, table.WithFileSizes([]));
+        Assert.Same(table, table.WithFileSizes([new("T29", "MERASEK_16", null, null, null, "HOLDER-50_NEW")]));
+
+        var sized = table.WithFileSizes(
+        [
+            new("T29", "MERASEK_16", 16, 52, 20, "HOLDER-50_NEW"),
+            // Cimatron writes a centre drill's tip; the material core takes the body size from the name.
+            new("T40", "MERCUZ_8", 0.01, 52, 4, "HOLDER-28-OLD")
+        ]);
+        Assert.Equal([(16.0, 52.0), (0.01, 52.0)], sized.Tools.Select(tool => (tool.Diameter!.Value, tool.Length!.Value)));
+        // Types still come from the names.
+        Assert.Equal([29, 40], sized.DescriptionsToInfer.Select(row => row.Number));
+    }
+
+    [Fact]
     public void Nothing_is_applied_without_a_table_or_without_released_rows()
     {
         Assert.Null(NcViewerOperationToolTable.From(null));

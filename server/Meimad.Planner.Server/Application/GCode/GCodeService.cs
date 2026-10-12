@@ -349,6 +349,20 @@ internal sealed class GCodeService
         return await ResolveDownloadAsync(file, cancellationToken);
     }
 
+    /// <summary>
+    /// The size and holder of each row of a released tool table, read again from the immutable
+    /// stored file (the Cimatron report's Dia, LENGTH, CUT and Holder columns, or the matching CSV or
+    /// JSON columns). A format without sizes gives an empty list.
+    /// </summary>
+    internal async Task<IReadOnlyList<ReleasedToolGeometry>> ReadToolTableGeometryAsync(
+        string operationId,
+        string toolTableReleaseId,
+        CancellationToken cancellationToken = default)
+    {
+        var file = await OpenToolTableFileAsync(operationId, toolTableReleaseId, cancellationToken);
+        return await ReleasedToolTableParser.ReadGeometryAsync(file.AbsolutePath, file.OriginalFileName, cancellationToken);
+    }
+
     internal async Task<ReleasedFileDownload> OpenProgramToolTableFileAsync(
         string programId,
         string toolTableReleaseId,

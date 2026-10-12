@@ -16,6 +16,7 @@ internal static class GCodeEndpoints
         operations.MapGet(
             "/gcode-releases/{releaseId}/subprograms/{subprogramId}/file", DownloadSubprogramAsync);
         operations.MapGet("/tool-table-releases/{toolTableReleaseId}/file", DownloadToolTableAsync);
+        operations.MapGet("/tool-table-releases/{toolTableReleaseId}/geometry", ReadToolTableGeometryAsync);
         // Stateless text transformation and check for the NC viewer; they store nothing, so they
         // need no Edit Mode.
         endpoints.MapPost("/api/v1/nc-programs/meimad-format", FormatTemplate);
@@ -203,6 +204,29 @@ internal static class GCodeEndpoints
         }
     }
 
+    /// <summary>
+    /// The sizes and holders the released tool table file states for its rows (the NC viewer draws
+    /// unmeasured tools with them). Read-only; a format without sizes gives an empty list.
+    /// </summary>
+    private static async Task<IResult> ReadToolTableGeometryAsync(
+        string caseOperationId,
+        string toolTableReleaseId,
+        HttpContext context,
+        GCodeService service,
+        CancellationToken token)
+    {
+        try
+        {
+            var tools = await service.ReadToolTableGeometryAsync(caseOperationId, toolTableReleaseId, token);
+            return Results.Ok(new ToolTableGeometryResponse(
+                toolTableReleaseId, tools.Select(ReleasedToolGeometryResponse.FromDomain).ToArray()));
+        }
+        catch (Exception exception) when (TryMap(exception, context, out var mapped))
+        {
+            return mapped!;
+        }
+    }
+
     private static bool TryMap(Exception exception, HttpContext context, out IResult? result)
     {
         result = exception switch
@@ -277,6 +301,23 @@ internal sealed record ReleasedToolResponse(
         value.ReleasedToolId, value.RowNumber, value.ToolIdentifier,
         value.Description, value.IsRequired, value.RequiresMagazinePosition,
         value.IsActive, value.MagazinePosition);
+}
+
+internal sealed record ToolTableGeometryResponse(
+    string ToolTableReleaseId,
+    IReadOnlyList<ReleasedToolGeometryResponse> Tools);
+
+/// <summary>One row's size as the file states it, in millimetres; absent values are null.</summary>
+internal sealed record ReleasedToolGeometryResponse(
+    string ToolIdentifier,
+    string Name,
+    double? Diameter,
+    double? StickOut,
+    double? CutLength,
+    string? Holder)
+{
+    internal static ReleasedToolGeometryResponse FromDomain(ReleasedToolGeometry value) => new(
+        value.ToolIdentifier, value.Name, value.Diameter, value.Length, value.CutLength, value.Holder);
 }
 
 internal sealed record ProcessRevisionResponse(
