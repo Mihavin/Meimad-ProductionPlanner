@@ -120,7 +120,10 @@ internal sealed class DatabaseMigrator
         new SchemaV112LocalCorpusFormatsMigration(),
         new SchemaV113NcViewerGeometryMigration(),
         new SchemaV114MachineSimulationDefinitionsMigration(),
-        new SchemaV115CasePicturesMigration()
+        new SchemaV115CasePicturesMigration(),
+        // ws/tv branch only: stand-ins for the parallel v116/v117 workstreams; drop at merge.
+        new SchemaV116ParallelWorkstreamPlaceholderMigration(),
+        new SchemaV117ParallelWorkstreamPlaceholderMigration()
     ];
 
     internal static int LatestVersion => Migrations.Max(m => m.Version);
