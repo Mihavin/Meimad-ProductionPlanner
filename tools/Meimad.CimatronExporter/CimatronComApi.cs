@@ -128,8 +128,17 @@ internal sealed class CimatronComApi : ICimatronApi
         object? application = null;
         object? document = null;
         CimatronApiException? accessFailure = null;
+        // GetApplication starts a new, empty Cimatron when it cannot reach a running one (Meimad, 2026-10-12: two empty
+        // instances left behind by probes). With Cimatron already running only GetActiveApplication is asked.
+        var cimatronRunning = OperatingSystem.IsWindows() && CimatronRunningApplication.CimatronRunning();
         foreach (var member in Members.GetApplication.Where(member => HasMember(access, member)))
         {
+            if (cimatronRunning && member == "GetApplication")
+            {
+                ConnectTrace.Add("AppAccess.GetApplication: skipped, it would start another Cimatron while Cimatron is already running");
+                continue;
+            }
+
             object? candidate;
             try
             {
@@ -420,9 +429,11 @@ internal sealed class CimatronComApi : ICimatronApi
     {
         var registration = exception is InvalidCastException
             || exception.HResult is unchecked((int)0x8002801D) or unchecked((int)0x80040155) or unchecked((int)0x80004002);
-        var hint = registration
-            ? " Cimatron's type libraries are not registered on this PC: run the exporter once with --register-cimatron (current user, no administrator), or repair the Cimatron installation."
-            : "";
+        var elevated = OperatingSystem.IsWindows() && CimatronRunningApplication.Elevated;
+        var hint = !registration ? ""
+            : elevated
+                ? " The exporter runs as administrator: Windows ignores the per-user registration of --register-cimatron for administrator processes. Run it from a normal window (Win+R, cmd, Enter), or repair the Cimatron installation as an administrator."
+                : " Cimatron's type libraries are not registered on this PC: run the exporter once with --register-cimatron (current user, no administrator), or repair the Cimatron installation.";
         return new CimatronApiException("cimatron_call_failed", $"Cimatron {member} failed: {exception.Message}{hint}", exception);
     }
 

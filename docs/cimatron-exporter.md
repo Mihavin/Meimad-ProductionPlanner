@@ -123,6 +123,12 @@ active document while the user had one open; several `CimatronE.exe` processes w
 `GetActiveApplication` first, then `GetApplication`, and takes the first instance whose `GetActiveDoc` returns a document;
 the probe lists each Cimatron process's window title and start time, and the open documents of the instance it reached.
 
+The next probe showed that `GetApplication` starts a new, empty Cimatron when it cannot reach a running one (two empty
+instances, started at the probe times, beside eight user instances with NC documents), and that `GetActiveApplication`
+failed with *Interface not registered* because the exporter ran as administrator, where Windows ignores per-user
+registrations. The exporter therefore skips `GetApplication` while any `CimatronE.exe` runs, and its error names the
+administrator cause. Run it from a normal window; with several Cimatron windows, the active one is used.
+
 `--probe` writes everything to standard output (redirect it to a file): the connection attempts, whether the exporter
 runs as administrator, the Cimatron processes, how many of Cimatron's COM classes are registered, the whole running object
 table, whether each type library is registered, how many interop interfaces were loaded, and, when connected, the
