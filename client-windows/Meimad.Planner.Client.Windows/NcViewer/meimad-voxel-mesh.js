@@ -115,7 +115,8 @@
     return mask ? V.voxel(mask, i, j, k) === V.MAT : false;
   }
 
-  // The mesh of one render chunk: { key, positions, normals, colors, index } (index Uint32) or null.
+  // The mesh of one render chunk: { key, positions (Float32), normals (Int8, normalized), colors (Uint8,
+  // normalized, linear), index (Uint16 or Uint32) } or null.
   // view: { deviation?: boolean, target?: mask, palette?: "depth" | "plain" }.
   function meshChunk(g, key, view) {
     const n = chunkCounts(g);
@@ -232,12 +233,19 @@
       }
     }
     if (!index.length) return null;
+    // Normals and colours as normalized bytes (a quarter of the memory of floats; the 7 M triangle
+    // stock of a long 5-axis program stays within reach of an office PC).
+    const normalBytes = new Int8Array(normals.length);
+    for (let n = 0; n < normals.length; n += 1) normalBytes[n] = Math.max(-127, Math.min(127, Math.round(normals[n] * 127)));
+    const colorBytes = new Uint8Array(colors.length);
+    for (let n = 0; n < colors.length; n += 1) colorBytes[n] = Math.max(0, Math.min(255, Math.round(colors[n] * 255)));
+    const vertexCount = positions.length / 3;
     return {
       key,
       positions: Float32Array.from(positions),
-      normals: Float32Array.from(normals),
-      colors: Float32Array.from(colors),
-      index: Uint32Array.from(index)
+      normals: normalBytes,
+      colors: colorBytes,
+      index: vertexCount < 65536 ? Uint16Array.from(index) : Uint32Array.from(index)
     };
   }
 

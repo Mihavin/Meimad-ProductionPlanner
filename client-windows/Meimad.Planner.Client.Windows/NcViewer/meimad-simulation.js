@@ -921,8 +921,8 @@
     for (const part of data.meshes || []) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.BufferAttribute(part.positions, 3));
-      geometry.setAttribute("normal", new THREE.BufferAttribute(part.normals, 3));
-      geometry.setAttribute("color", new THREE.BufferAttribute(part.colors, 3));
+      geometry.setAttribute("normal", new THREE.BufferAttribute(part.normals, 3, true));
+      geometry.setAttribute("color", new THREE.BufferAttribute(part.colors, 3, true));
       geometry.setIndex(new THREE.BufferAttribute(part.index, 1));
       geometry.computeBoundingSphere();
       const old = chunkMeshes.get(part.key);
