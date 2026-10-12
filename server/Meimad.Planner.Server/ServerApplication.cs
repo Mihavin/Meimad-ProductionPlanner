@@ -95,6 +95,8 @@ using Meimad.Planner.Server.Application.ToolRequirements;
 using Meimad.Planner.Server.Api.ToolRequirements;
 using Meimad.Planner.Server.Application.Accounts;
 using Meimad.Planner.Server.Api.Accounts;
+using Meimad.Planner.Server.Api.SimulationPackages;
+using Meimad.Planner.Server.Application.SimulationPackages;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.FileProviders;
@@ -149,6 +151,7 @@ public static class ServerApplication
             builder.Environment.ContentRootPath);
         var setupEstimationOptions = SetupEstimationOptions.FromConfiguration(builder.Configuration);
         var legacyImportOptions = LegacyImportOptions.FromConfiguration(builder.Configuration);
+        var simulationPackageOptions = SimulationPackageOptions.FromConfiguration(builder.Configuration);
 
         builder.Services.AddSingleton(serverOptions);
         builder.Services.AddSingleton(databaseOptions);
@@ -217,6 +220,11 @@ public static class ServerApplication
         builder.Services.AddSingleton<CaseModelFileService>();
         builder.Services.AddSingleton<ICaseOperationCamSetupRepository, SqliteCaseOperationCamSetupRepository>();
         builder.Services.AddSingleton<CaseOperationCamSetupService>();
+        builder.Services.AddSingleton(simulationPackageOptions);
+        builder.Services.AddSingleton<SqliteSimulationPackageRepository>();
+        builder.Services.AddSingleton<SimulationPackageImportService>();
+        builder.Services.AddSingleton<SimulationPackageWatcherService>();
+        builder.Services.AddHostedService(provider => provider.GetRequiredService<SimulationPackageWatcherService>());
         builder.Services.AddSingleton<CasePictureStore>();
         builder.Services.AddSingleton<SqliteCasePictureRepository>();
         builder.Services.AddSingleton<CasePictureCopyService>();
@@ -508,6 +516,7 @@ public static class ServerApplication
         application.MapCaseEndpoints();
         application.MapCaseModelFileEndpoints();
         application.MapCaseOperationCamSetupEndpoints();
+        application.MapSimulationPackageEndpoints();
         application.MapCasePictureEndpoints();
         application.MapAdministrativeSetupEndpoints();
         application.MapPlanningDeletionEndpoints();

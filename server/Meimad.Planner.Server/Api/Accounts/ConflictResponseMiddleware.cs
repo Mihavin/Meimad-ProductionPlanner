@@ -22,6 +22,7 @@ internal sealed class ConflictResponseMiddleware(RequestDelegate next)
         ["components"] = "Case Component",
         ["model-files"] = "Case model file",
         ["cam-setup"] = "Operation CAM setup",
+        ["simulation-packages"] = "Cimatron simulation package",
         ["orders"] = "Order",
         ["batches"] = "Work Order",
         ["batch-operations"] = "Work Order operation",
