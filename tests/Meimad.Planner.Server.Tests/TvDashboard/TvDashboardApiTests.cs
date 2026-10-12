@@ -22,8 +22,8 @@ public sealed class TvDashboardApiTests
             Assert.NotNull(response.Headers.ETag);
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var root = document.RootElement;
-            Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
-            Assert.Equal("0.1.38", root.GetProperty("dashboardBuild").GetString());
+            Assert.Equal(3, root.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal("0.1.39", root.GetProperty("dashboardBuild").GetString());
             Assert.Equal(15, root.GetProperty("refreshAfterSeconds").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("machineCount").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("urgentBatchCount").GetInt32());
@@ -40,7 +40,22 @@ public sealed class TvDashboardApiTests
             Assert.Equal("started", machine.GetProperty("current").GetProperty("progress").GetProperty("statusCode").GetString());
             Assert.Equal("setup", machine.GetProperty("current").GetProperty("progress").GetProperty("phase").GetString());
             Assert.Equal(JsonValueKind.Number, machine.GetProperty("current").GetProperty("progress").GetProperty("setupPercent").ValueKind);
-            Assert.Contains("/api/v1/cases/case-tv/preview", machine.GetProperty("current").GetProperty("previewUrl").GetString(), StringComparison.Ordinal);
+            // The picture link of the Case is not served to the TV: without a stored picture the row gets the placeholder,
+            // and no Case id or file path is sent (owner request 2026-10-12).
+            var current = machine.GetProperty("current");
+            Assert.False(current.TryGetProperty("previewUrl", out _));
+            Assert.Equal("placeholder", current.GetProperty("thumbnailSource").GetString());
+            Assert.Equal(JsonValueKind.Null, current.GetProperty("thumbnailUrl").ValueKind);
+            Assert.Equal(JsonValueKind.Null, current.GetProperty("thumbnailVersion").ValueKind);
+            Assert.Equal("PN-TV - TV Part", current.GetProperty("thumbnailAlt").GetString());
+            Assert.Equal("PN-TV", current.GetProperty("partNumber").GetString());
+            Assert.Equal("TV Part", current.GetProperty("partName").GetString());
+            Assert.Equal("Rough mill", current.GetProperty("operationName").GetString());
+            Assert.Equal("SETUP", machine.GetProperty("displayStatus").GetString());
+            // No setup worker is qualified for the Machine, so the Timeline blocks the current Operation: a small warning.
+            Assert.Equal("planning_blocked", machine.GetProperty("warning").GetProperty("code").GetString());
+            Assert.Equal(JsonValueKind.Null, machine.GetProperty("idlePart").ValueKind);
+            Assert.DoesNotContain("preview.png", document.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
             Assert.True(machine.GetProperty("downtime").GetProperty("isCurrent").GetBoolean());
             Assert.Empty(machine.GetProperty("conflicts").EnumerateArray());
 
@@ -50,9 +65,6 @@ public sealed class TvDashboardApiTests
             Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
             Assert.Empty(await unchanged.Content.ReadAsByteArrayAsync());
 
-            using var preview = await client.GetAsync(machine.GetProperty("current").GetProperty("previewUrl").GetString());
-            Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
-            Assert.Equal("image/png", preview.Content.Headers.ContentType?.MediaType);
             Directory.Delete(Path.GetDirectoryName(previewPath)!, recursive: true);
         });
     }
@@ -124,7 +136,7 @@ public sealed class TvDashboardApiTests
             Assert.Contains("const identity = `<div class=\"cell machine-identity\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machine.connection", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain(">${escapeHtml(connectionState)}</div>", javascript, StringComparison.Ordinal);
-            Assert.Contains("DASHBOARD_BUILD = \"0.1.38\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("DASHBOARD_BUILD = \"0.1.39\"", javascript, StringComparison.Ordinal);
             Assert.Contains("data.dashboardBuild !== DASHBOARD_BUILD", javascript, StringComparison.Ordinal);
             Assert.Contains("machineStatus: \"מצב מכונות\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machineStatus: \"Состояние станков\"", javascript, StringComparison.Ordinal);
@@ -154,6 +166,31 @@ public sealed class TvDashboardApiTests
             Assert.DoesNotContain("?Q600", javascript, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("5051", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("smb://", javascript, StringComparison.OrdinalIgnoreCase);
+
+            // Part pictures (owner request 2026-10-12): a fixed 96 px column, loaded once per thumbnailVersion and swapped
+            // together with the Part Number; a placeholder with a part icon otherwise; only Server-given opaque URLs.
+            Assert.Contains("THUMBNAIL_COLUMN_PX = 96", javascript, StringComparison.Ordinal);
+            Assert.Contains("REQUIRED_SCHEMA = 3", javascript, StringComparison.Ordinal);
+            Assert.Contains("function shownPart(machine)", javascript, StringComparison.Ordinal);
+            Assert.Contains("state.images[version] = \"loading\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("source.thumbnailVersion", javascript, StringComparison.Ordinal);
+            Assert.Contains("thumb-placeholder", javascript, StringComparison.Ordinal);
+            Assert.Contains("machine.idlePart", javascript, StringComparison.Ordinal);
+            Assert.Contains("machine.warning", javascript, StringComparison.Ordinal);
+            Assert.Contains("machine.displayStatus === \"ERROR\"", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("previewUrl", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("/api/v1/cases", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("machine.conflicts", javascript, StringComparison.Ordinal);
+            Assert.Contains("offlineSnapshot: \"Offline \u00b7 data from {time}\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("offlineSnapshot: \"לא מחובר \u00b7 נתונים מ-{time}\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("offlineSnapshot: \"Нет связи \u00b7 данные от {time}\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("idle: \"פנויה\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("idle: \"Простой\"", javascript, StringComparison.Ordinal);
+            Assert.Contains(".thumb {", css, StringComparison.Ordinal);
+            Assert.Contains("flex: 0 0 96px;", css, StringComparison.Ordinal);
+            Assert.Contains(".warning-sign", css, StringComparison.Ordinal);
+            Assert.Contains("styles.css?v=0.1.39", html, StringComparison.Ordinal);
+            Assert.Contains("app.js?v=0.1.39", html, StringComparison.Ordinal);
 
             using var post = await client.PostAsync("/api/v1/tv-dashboard", null);
             Assert.Equal(HttpStatusCode.MethodNotAllowed, post.StatusCode);

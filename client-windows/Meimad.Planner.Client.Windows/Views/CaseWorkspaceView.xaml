@@ -370,6 +370,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -703,6 +704,35 @@
                                         <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" VerticalAlignment="Center"/>
                                     </DockPanel>
                                 </StackPanel>
+                            </Border>
+                            <Border Grid.Row="6" Margin="0,14,0,0" Padding="14" Background="{DynamicResource RaisedBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" DataContext="{Binding TvPicture}"
+                                    AutomationProperties.Name="TV picture of the selected Operation">
+                                <DockPanel>
+                                    <Border DockPanel.Dock="Right" Width="192" Height="120" Margin="12,0,0,0" Background="{DynamicResource PanelBrush}"
+                                            BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3">
+                                        <Image Source="{Binding Preview}" Stretch="Uniform" Margin="4" AutomationProperties.Name="Operation thumbnail preview"/>
+                                    </Border>
+                                    <StackPanel>
+                                        <TextBlock Text="TV picture of the selected Operation" FontSize="17" FontWeight="Bold"/>
+                                        <TextBlock Text="The TV Dashboard shows the Case picture first, then the package thumbnail from the Cimatron simulation package, then the snapshot stored here, then a placeholder with the Part Number."
+                                                   Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,6"/>
+                                        <TextBlock Text="{Binding TvSummary}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding PackageText}" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding SnapshotText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                        <WrapPanel>
+                                            <Button Content="Choose image..." Click="ChooseOperationThumbnail_Click" IsEnabled="{Binding CanEdit}"
+                                                    ToolTip="Upload an image as the snapshot of this Operation" Margin="0,0,8,4"/>
+                                            <Button Content="Use Case picture" Command="{Binding UseCasePictureCommand}"
+                                                    ToolTip="Store the Case picture as the snapshot of this Operation" Margin="0,0,8,4"/>
+                                            <Button Content="Use 3D view snapshot" Click="SnapshotOperationThumbnail_Click" IsEnabled="{Binding CanEdit}"
+                                                    ToolTip="Store the current view of the 3D Models tab as the snapshot of this Operation" Margin="0,0,8,4"/>
+                                            <Button Content="Remove snapshot" Command="{Binding RemoveSnapshotCommand}" Margin="0,0,8,4"/>
+                                            <Button Content="Remove package thumbnail" Command="{Binding RemovePackageCommand}" Margin="0,0,0,4"/>
+                                        </WrapPanel>
+                                        <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </DockPanel>
                             </Border>
                             <Border Grid.Row="4" Margin="0,14,0,0" Padding="14" Background="{DynamicResource RaisedBrush}"
                                     BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" DataContext="{Binding Requirements}">

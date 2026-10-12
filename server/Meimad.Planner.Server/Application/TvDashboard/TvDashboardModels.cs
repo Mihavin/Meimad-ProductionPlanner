@@ -36,7 +36,28 @@ internal sealed record TvMachine(
     TvJob? Next,
     TvJob? Third,
     TvDowntime? Downtime,
-    IReadOnlyList<TvConflict> Conflicts);
+    IReadOnlyList<TvConflict> Conflicts,
+    // RUNNING, SETUP, PAUSED, WAITING, COMPLETED, IDLE or ERROR (a CNC alarm); the TV writes it as a word.
+    string DisplayStatus = "IDLE",
+    // One small warning (CNC alarm or a blocking planning conflict of the current Operation), or null.
+    TvWarning? Warning = null,
+    // The last part worked on the Machine, only when the Machine has no current Operation and
+    // TvDashboard:ShowLastPartImageWhenIdle is on.
+    TvIdlePart? IdlePart = null);
+
+/// <summary>A warning shown as a small icon with a word next to it; <c>Code</c> is cnc_alarm or planning_blocked.</summary>
+internal sealed record TvWarning(string Code, string Severity, string Label);
+
+/// <summary>The part last worked on an idle Machine, with its picture.</summary>
+internal sealed record TvIdlePart(
+    string PartNumber,
+    string? PartName,
+    int OperationNumber,
+    string OperationName,
+    string? ThumbnailUrl,
+    string? ThumbnailVersion,
+    string ThumbnailAlt,
+    string ThumbnailSource);
 
 internal sealed record TvConnectionStatus(
     string Code,
@@ -57,8 +78,16 @@ internal sealed record TvJob(
     DateTimeOffset? ProjectedFinish,
     bool Urgent,
     string? WorkFinishDate,
-    string? PreviewUrl,
-    TvOperationProgress Progress);
+    TvOperationProgress Progress,
+    // The Case name, when the Case has one.
+    string? PartName = null,
+    // The part picture of this Operation (Case picture, else package thumbnail, else snapshot): an opaque
+    // URL whose last segment is also the version, so a TV loads it once; null means the placeholder.
+    string? ThumbnailUrl = null,
+    string? ThumbnailVersion = null,
+    string ThumbnailAlt = "",
+    // case_picture, package, snapshot or placeholder.
+    string ThumbnailSource = "placeholder");
 
 internal sealed record TvOperationProgress(
     string StatusCode,

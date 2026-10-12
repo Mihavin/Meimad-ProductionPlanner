@@ -317,6 +317,9 @@ public static class ServerApplication
         builder.Services.AddSingleton<TimelineProjectionService>();
         builder.Services.AddSingleton<ITvDashboardRepository, SqliteTvDashboardRepository>();
         builder.Services.AddSingleton<TvDashboardService>();
+        builder.Services.AddSingleton<OperationThumbnailStore>();
+        builder.Services.AddSingleton<SqliteOperationThumbnailRepository>();
+        builder.Services.AddSingleton<TvThumbnailRenderer>();
         builder.Services.AddSingleton<IEInkDeviceRepository, SqliteEInkDeviceRepository>();
         builder.Services.AddSingleton<EInkDeviceService>();
         builder.Services.AddSingleton<IEInkDeviceRegistrationRepository, SqliteEInkDeviceRegistrationRepository>();
@@ -527,6 +530,7 @@ public static class ServerApplication
         application.MapCaseOperationCamSetupEndpoints();
         application.MapSimulationPackageEndpoints();
         application.MapCasePictureEndpoints();
+        application.MapCaseOperationThumbnailEndpoints();
         application.MapAdministrativeSetupEndpoints();
         application.MapPlanningDeletionEndpoints();
         application.MapOrderEndpoints();

@@ -201,6 +201,46 @@ mapping is CAM context: it never assigns the Operation to a Machine or changes a
 **Tool table and NC release.** The import records the NC and tool table SHA-256 and the tool numbers. `import.matchingGcodeReleaseId`
 is the Operation's G-code release whose file hash equals the package NC (when the planner released that file), so the
 tool table, the NC and the release are one identity. The import itself never creates an NC release.
+## TV Dashboard part pictures and Operation thumbnails (2026-10-12; schema v118)
+
+Owner request 2026-10-12: every TV row shows a picture of the part of its current Operation. Details of the projection
+fields are in §7.3.
+
+**Operation thumbnails** — `/api/v1/cases/{caseId}/operations/{operationId}/thumbnails`. Two slots per Case Operation:
+`package` (the finished-part thumbnail of the Cimatron simulation package) and `snapshot` (a screenshot or preview
+stored at import or uploaded from the Case Workspace / NC viewer).
+
+| Method and route | Permission | Precondition | Result |
+|---|---|---|---|
+| `GET …/thumbnails` | signed in | — | `{ caseOperationId, tvSource, items: [...] }`; `tvSource` is `case_picture`, `package`, `snapshot` or `placeholder` |
+| `GET …/thumbnails/{source}/image` | signed in | — | the stored image; `404 thumbnail_not_found` when the slot is empty |
+| `PUT …/thumbnails/{source}?name=<file>[&reference=<text>]` (create) | `cases.edit` | `If-None-Match: *` | `201` item + `ETag` |
+| `PUT …/thumbnails/{source}?name=<file>[&reference=<text>]` (replace) | `cases.edit` | `If-Match: "case-operation-thumbnail:{operationId}:{source}:v{n}"` | `200` item + `ETag` |
+| `DELETE …/thumbnails/{source}` | `cases.edit` | `If-Match` as above | `204` |
+
+- The PUT body is the raw image (PNG, JPEG, BMP or GIF, checked by content, at most 10 MB). `reference` is free text
+  (≤ 1000 characters) naming where the picture came from and is returned as `sourceReference`.
+- Item: `{ caseOperationId, source, fileName, mediaType, sizeBytes, sha256, sourceReference, version, entityTag,
+  updatedAt, updatedBy }`.
+- Errors: no precondition `428`; a stale tag, a create over an existing slot or a replace of a removed slot
+  `412 resource_version_stale` with `conflict { resource, changedBy, changedAt, advice }` (who/when) when known;
+  `invalid_thumbnail_source` (400); `thumbnail_format_unsupported`, `thumbnail_empty` (422); `thumbnail_too_large`
+  (413); unknown Case or Operation `404 resource_not_found`; without a session `401`; without `cases.edit` `403`.
+  The repository uses 412 for version mismatches (409 stays for edit-authority conflicts), as for CAM setups.
+- The Windows client calls them through `PlannerApiClient` (`ListOperationThumbnailsAsync`,
+  `GetOperationThumbnailImageAsync`, `UploadOperationThumbnailAsync`, `DeleteOperationThumbnailAsync`) and the
+  importer convenience `SetOperationThumbnailAsync`, which reads the slot's current tag and creates or replaces it.
+
+**TV picture** — `GET /api/v1/tv-dashboard/thumbnails/{version}` (sign-in exempt like the projection; GET only, any
+other method is `405`):
+
+- `{version}` is the projection's opaque `thumbnailVersion` (`<render revision>-<sha256 of the stored image>`); no Case
+  or Operation id or file path appears in the URL.
+- The response is a 192 × 192 PNG (the picture scaled to fit, aspect kept, transparent margins), re-encoded on the
+  Server; a TV never receives the original, a BMP or a model file.
+- `ETag: "tv-thumbnail:{version}"`, `Cache-Control: public, max-age=3600`; `If-None-Match` with that tag is `304`.
+- Only pictures of parts assigned to, or last worked on, an active display-enabled Machine are served; anything else,
+  a malformed version or an image Windows cannot decode is `404 thumbnail_not_found` / `thumbnail_unavailable`.
 
 ## Case pictures on the Server (2026-10-11; schema v115)
 
@@ -1613,6 +1653,7 @@ A Planner Work Order linked as `wo:<NUMBER>` matches Kitaron rows by `NUMBER`, a
 | `GET` | `/api/v1/timeline` | Deterministically calculate/read the timeline for the current manual plan and requested horizon/filter. |
 | `GET` | `/api/v1/conflicts` | Current explained conflicts, optionally filtered by Machine, Case, Batch, or severity. |
 | `GET` | `/api/v1/tv-dashboard` | Compact, read-only kiosk projection. |
+| `GET` | `/api/v1/tv-dashboard/thumbnails/{version}` | The small read-only part picture of a TV row (schema v118). |
 
 **Implemented now:** `GET /api/v1/planning-board` returns one SQLite read-transaction snapshot containing unfinished Batch Operations: each assigned one in exactly one Machine `backlog`, and in the unassigned `pool` only those with a non-blank Machine Type whose Production Batch `release_state` is `released` (2026-09-27; Production Notes are never included). Other unassigned operations are in neither list. Each operation includes Batch/Case display identity, operation number/name, required Machine type, current timing values, status, assignment position, Batch planned quantity, sorted distinct allocated Order Numbers, nullable estimated seconds, nullable `machineAssignmentId`/`assignmentVersion`, and `planningMode`. Unassigned pool rows use null assignment identity/version and `manual`; an assigned backlog row carries its authoritative schema-v24 values. Each Machine includes number/name, process/axis/capabilities, active state, ordered backlog, and `backlogStamp` (a fingerprint of its whole open backlog order, sent back as `expectedBacklogStamp` with a move; §3.3).
 
@@ -1842,12 +1883,25 @@ The list response wraps conflicts with `planRevision`, `calculatedAt`, `freshnes
 
 ### 7.3 TV Dashboard read-only projection
 
-`GET /api/v1/tv-dashboard` is implemented, supports `If-None-Match`, and needs no sign-in (it is a sign-in-exempt prefix, like the TV's live WebSocket `/api/v1/machines/live`, which accepts only a `subscribe` message and publishes Machine snapshots). An unchanged projection returns `304` with an empty body. There are currently no query parameters or display groups. The projection carries `schemaVersion` 2 and `dashboardBuild` (`0.1.38`): the page requires schema 2 and reloads itself once when the build differs from its own `DASHBOARD_BUILD`, then shows `Dashboard update required` rather than looping; change the build in `app.js`, `index.html`, `TvDashboardService` and `TvDashboardApiTests` together. The page polls every `refreshAfterSeconds` (5–300 s, configured by `TvDashboard:RefreshAfterSeconds`, default 15) besides the live socket, and does not render `previewUrl`.
+`GET /api/v1/tv-dashboard` is implemented, supports `If-None-Match`, and needs no sign-in (it is a sign-in-exempt prefix, like the TV's live WebSocket `/api/v1/machines/live`, which accepts only a `subscribe` message and publishes Machine snapshots). An unchanged projection returns `304` with an empty body. There are currently no query parameters or display groups. The projection carries `schemaVersion` 3 and `dashboardBuild` (`0.1.39`): the page requires schema 3 and reloads itself once when the build differs from its own `DASHBOARD_BUILD`, then shows `Dashboard update required` rather than looping; change the build in `app.js`, `index.html`, `TvDashboardService` and `TvDashboardApiTests` together. The page polls every `refreshAfterSeconds` (5–300 s, configured by `TvDashboard:RefreshAfterSeconds`, default 15) besides the live socket.
+
+Schema 3 (owner request 2026-10-12) adds the part picture and removes `previewUrl` (it named the Case id and needed a
+signed-in session the TV does not have). Each job carries `partName` (the Case name, or null), `thumbnailUrl`,
+`thumbnailVersion` (both null for the placeholder), `thumbnailAlt` (`"<Part Number> - <part name>"`, not translated)
+and `thumbnailSource`: the Case picture stored on the Server (`case_picture`), else the Operation's `package`
+thumbnail, else its `snapshot`, else `placeholder`. A stored file missing on disk is skipped. Because the picture,
+`partNumber` and `operationNumber`/`operationName` are fields of the same job, a change of the current Operation
+changes them in one projection. Each Machine adds `displayStatus` (`RUNNING`, `SETUP`, `PAUSED`, `WAITING`,
+`COMPLETED`, `IDLE`, or `ERROR` while the CNC reports `ALARM` or `EMERGENCY_STOP`), `warning` (`null` or
+`{ code, severity, label }` with code `cnc_alarm`, or `planning_blocked` when the calculated Timeline has a blocking
+conflict naming the current Operation; a simulation `collision` code is reserved and not produced yet) and `idlePart`
+(the last part worked on the Machine with its picture fields, only when the Machine has no current Operation and
+`TvDashboard:ShowLastPartImageWhenIdle` is true; default false, so it is null).
 
 ```json
 {
-  "schemaVersion": 2,
-  "dashboardBuild": "0.1.38",
+  "schemaVersion": 3,
+  "dashboardBuild": "0.1.39",
   "generatedAt": "2026-08-11T11:10:00Z",
   "freshness": "current",
   "refreshAfterSeconds": 15,
@@ -1897,7 +1951,11 @@ The list response wraps conflicts with `planRevision`, `calculatedAt`, `freshnes
         "projectedFinish": "2026-08-11T15:20:00Z",
         "urgent": true,
         "workFinishDate": "2026-08-12",
-        "previewUrl": "/api/v1/cases/case-1/preview",
+        "partName": "Housing",
+        "thumbnailUrl": "/api/v1/tv-dashboard/thumbnails/1-3f5a…",
+        "thumbnailVersion": "1-3f5a…",
+        "thumbnailAlt": "PN-100 - Housing",
+        "thumbnailSource": "package",
         "progress": {
           "statusCode": "waiting",
           "statusLabel": "Waiting",
@@ -1922,13 +1980,16 @@ The list response wraps conflicts with `planRevision`, `calculatedAt`, `freshnes
         "workFinishDate": null
       },
       "downtime": null,
-      "conflicts": []
+      "conflicts": [],
+      "displayStatus": "SETUP",
+      "warning": null,
+      "idlePart": null
     }
   ]
 }
 ```
 
-Only active Machines with `display_enabled = true` appear. `machineStatus` is the latest normalized telemetry state—for MTConnect, the agent's reported machine state such as `ACTIVE`, `IDLE`, or `STOPPED`; it is null when no state has been received. `current` prefers the active `in_progress` or `suspended` Operation, otherwise the first unfinished backlog item; if the backlog is fully finished, it may retain the latest completed Operation. `progress.statusCode` maps execution to `started`, `paused`, `waiting`, or `completed`. Setup percentage is elapsed active time divided by setup seconds. Production uses elapsed active time after setup divided by per-part cycle seconds to derive the displayed current part and Batch percentage; closed pauses are subtracted and an active pause freezes elapsed time at its start. Missing timing reports `Progress unavailable` rather than inventing a count. The TV web client renders only `current`, its preview and progress; it deliberately omits `next`, `third`, conflicts, downtime, urgent lists, and summary panels even when compatibility fields remain in the projection. Conflict arrays are empty in this display projection. Urgent Batches serve an active Order whose `workFinishDate` falls within `TvDashboard:UrgentWithinHours` using the current UTC-date baseline; the default is 48 hours. `refreshAfterSeconds` defaults to 15. `projectedFinish` comes from the Server Timeline projection when calculable. The dashboard projection contains only shop-floor display data and omits Working Folder paths, package links, customer details, credentials, edit authority, and mutation links.
+Only active Machines with `display_enabled = true` appear. `machineStatus` is the latest normalized telemetry state—for MTConnect, the agent's reported machine state such as `ACTIVE`, `IDLE`, or `STOPPED`; it is null when no state has been received. `current` prefers the active `in_progress` or `suspended` Operation, otherwise the first unfinished backlog item; if the backlog is fully finished, it may retain the latest completed Operation. `progress.statusCode` maps execution to `started`, `paused`, `waiting`, or `completed`. Setup percentage is elapsed active time divided by setup seconds. Production uses elapsed active time after setup divided by per-part cycle seconds to derive the displayed current part and Batch percentage; closed pauses are subtracted and an active pause freezes elapsed time at its start. Missing timing reports `Progress unavailable` rather than inventing a count. The TV web client renders only `current` (or `idlePart` on an idle row), its picture and progress; it fetches a picture once per `thumbnailVersion` and changes the picture and Part Number together after the new picture has loaded. It deliberately omits `next`, `third`, conflicts, downtime, urgent lists, and summary panels even when compatibility fields remain in the projection. Conflict arrays are empty in this display projection. Urgent Batches serve an active Order whose `workFinishDate` falls within `TvDashboard:UrgentWithinHours` using the current UTC-date baseline; the default is 48 hours. `refreshAfterSeconds` defaults to 15. `projectedFinish` comes from the Server Timeline projection when calculable. The dashboard projection contains only shop-floor display data and omits Working Folder paths, package links, customer details, credentials, edit authority, and mutation links.
 
 The implemented route is GET-only; POST/PUT/PATCH/DELETE do not match it. Credential-class enforcement and `403` behavior remain pending the authentication layer. The web client calls no Edit Mode or mutation route, sends conditional ETags, and preserves its last rendered snapshot when a refresh fails. Offline-display telemetry and plan revisions remain unimplemented.
 
@@ -3107,7 +3168,7 @@ TLS/certificate deployment, human identity provider/login, CSRF/browser strategy
 | Timeline calculation | `/timeline` | Read-only deterministic projection; never repairs the plan. |
 | Conflicts | `/conflicts` | Read-only explained projection; no dismiss/repair route. |
 | Accounts | `/auth/*`, `/permissions`, `/users`, `/user-types` | Implemented sign-in sessions, permissions per user type, administrator-only user management (§5); replaces Single Edit Mode. |
-| TV Dashboard | UI `/tv-dashboard/`; projection `/api/v1/tv-dashboard` | Implemented read-only TV UI and projection; auth pending. |
+| TV Dashboard | UI `/tv-dashboard/`; projection `/api/v1/tv-dashboard`; part pictures `/api/v1/tv-dashboard/thumbnails/{version}` | Implemented read-only TV UI, projection and part pictures (schema v118); auth pending. |
 | Official job packages | `POST /job-packages` | Implemented active-editor immutable generation/publication; no update/delete. |
 | E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; `/api/tablet/ping`; `/api/tablets/{tablet_id}/status` and `/events`; admin `/eink/device-registrations` | Implemented device-scoped GET data, active-editor registration administration, MAC-only discovery/bootstrap, Production-Run-backed physical status, and idempotent `SEND_TO_QC`; it is the only approved device mutation. |
 | Preparation Queues | `/preparation-queues/{stage}` | Implemented read-only NC Creator, Tool Room, and Setup projections; no Machine or send-next mutation. |

@@ -12,24 +12,36 @@ internal sealed class TvDashboardService
     private readonly TimelineProjectionService timelineService;
     private readonly TvDashboardOptions options;
     private readonly TimeProvider timeProvider;
+    private readonly OperationThumbnailStore thumbnailStore;
 
     public TvDashboardService(
         ITvDashboardRepository repository,
         TimelineProjectionService timelineService,
         TvDashboardOptions options,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        OperationThumbnailStore thumbnailStore)
     {
         this.repository = repository;
         this.timelineService = timelineService;
         this.options = options;
         this.timeProvider = timeProvider;
+        this.thumbnailStore = thumbnailStore;
     }
+
+    /// <summary>The projection's schema; the page requires it (schema 3 adds the part pictures, owner request 2026-10-12).</summary>
+    internal const int SchemaVersion = 3;
+
+    /// <summary>The TV page build; app.js, index.html and the tests carry the same value.</summary>
+    internal const string DashboardBuild = "0.1.39";
+
+    /// <summary>The route of the small TV picture; the last segment is the opaque thumbnail version.</summary>
+    internal const string ThumbnailRoute = "/api/v1/tv-dashboard/thumbnails/";
 
     internal async Task<TvDashboardResult> ReadAsync(CancellationToken cancellationToken = default)
     {
         var now = timeProvider.GetUtcNow();
         var horizonStart = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
-        var sourceTask = repository.ReadAsync(cancellationToken);
+        var sourceTask = repository.ReadAsync(options.ShowLastPartImageWhenIdle, cancellationToken);
         var timelineTask = timelineService.CalculateAsync(
             horizonStart,
             horizonStart.AddDays(options.CalculationHorizonDays),
@@ -55,12 +67,17 @@ internal sealed class TvDashboardService
                 group => group.Key,
                 group => (DateTimeOffset?)group.Max(interval => interval.EndsAt),
                 StringComparer.Ordinal);
+        var blockedOperations = timeline.Conflicts
+            .Where(conflict => string.Equals(conflict.Severity, "blocking", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(conflict => conflict.OperationIds)
+            .ToHashSet(StringComparer.Ordinal);
         var machines = source.Machines.Select(machine => ProjectMachine(
             machine,
             now,
             source.Downtimes,
             urgentDueByBatch,
-            projectedFinishByOperation)).ToArray();
+            projectedFinishByOperation,
+            blockedOperations)).ToArray();
         var machineNumberByBatch = source.Machines
             .SelectMany(machine => machine.Backlog.Select(operation => (operation.BatchId, machine.Number)))
             .GroupBy(value => value.BatchId, StringComparer.Ordinal)
@@ -78,8 +95,8 @@ internal sealed class TvDashboardService
             .ToArray();
         var criticalConflictCount = 0;
         var projection = new TvDashboardProjection(
-            2,
-            "0.1.38",
+            SchemaVersion,
+            DashboardBuild,
             now,
             "current",
             options.RefreshAfterSeconds,
@@ -93,12 +110,13 @@ internal sealed class TvDashboardService
         return new TvDashboardResult(projection, EntityTag(projection));
     }
 
-    private static TvMachine ProjectMachine(
+    private TvMachine ProjectMachine(
         TvSourceMachine machine,
         DateTimeOffset now,
         IReadOnlyList<TvSourceDowntime> allDowntimes,
         IReadOnlyDictionary<string, TvSourceBatchDueDate> urgentDueByBatch,
-        IReadOnlyDictionary<string, DateTimeOffset?> projectedFinishByOperation)
+        IReadOnlyDictionary<string, DateTimeOffset?> projectedFinishByOperation,
+        IReadOnlySet<string> blockedOperations)
     {
         var unfinished = machine.Backlog
             .Where(operation => operation.Status is not "completed" and not "complete" and not "cancelled")
@@ -122,22 +140,105 @@ internal sealed class TvDashboardService
             downtimeSource.Reason,
             downtimeSource.StartsAt <= now && downtimeSource.EndsAt > now);
         var status = Status(null, currentSource);
+        var machineStatus = NormalizeMachineStatus(machine.MachineStatus);
+        var current = Job(currentSource, now, urgentDueByBatch, projectedFinishByOperation);
+        var alarm = machineStatus is "ALARM" or "EMERGENCY_STOP";
+        var warning = alarm
+            ? new TvWarning("cnc_alarm", "error", "CNC alarm")
+            : current is not null && blockedOperations.Contains(current.OperationId)
+                ? new TvWarning("planning_blocked", "warning", "Planning conflict")
+                : null;
+        var idlePart = current is null && options.ShowLastPartImageWhenIdle && machine.LastWorked is { } last
+            ? IdlePart(last)
+            : null;
         return new TvMachine(
             machine.MachineId,
             machine.Number,
             machine.Name,
             machine.ProcessType,
             Connection(machine.ConnectionStatus),
-            NormalizeMachineStatus(machine.MachineStatus),
+            machineStatus,
             status,
-            Job(currentSource, now, urgentDueByBatch, projectedFinishByOperation),
+            current,
             Job(nextSource, now, urgentDueByBatch, projectedFinishByOperation),
             Job(thirdSource, now, urgentDueByBatch, projectedFinishByOperation),
             downtime,
-            []);
+            [],
+            DisplayStatus(alarm, current),
+            warning,
+            idlePart);
     }
 
-    private static TvJob? Job(
+    /// <summary>The status word of the row: ERROR on a CNC alarm, IDLE without a current Operation, else from its progress.</summary>
+    internal static string DisplayStatus(bool alarm, TvJob? current)
+    {
+        if (alarm) return "ERROR";
+        if (current is null) return "IDLE";
+        return current.Progress.StatusCode switch
+        {
+            "paused" => "PAUSED",
+            "completed" => "COMPLETED",
+            "waiting" => "WAITING",
+            _ => current.Progress.Phase == "setup" ? "SETUP" : "RUNNING"
+        };
+    }
+
+    private TvIdlePart IdlePart(TvSourceOperation operation)
+    {
+        var picture = Thumbnail(operation.Thumbnails);
+        return new TvIdlePart(
+            operation.PartNumber,
+            operation.PartName,
+            operation.OperationNumber,
+            operation.OperationName,
+            picture.Url,
+            picture.Version,
+            ThumbnailAlt(operation),
+            picture.Source);
+    }
+
+    /// <summary>
+    /// The picture a TV row shows for an Operation (owner request 2026-10-12): the Case picture stored on the Server, else
+    /// the Operation's package thumbnail, else its snapshot, else the placeholder. A file missing on disk is skipped.
+    /// The version is the render revision and the content hash, so the URL never changes meaning.
+    /// </summary>
+    private (string? Url, string? Version, string Source) Thumbnail(TvSourceThumbnails? thumbnails)
+    {
+        if (thumbnails is not null)
+        {
+            foreach (var (source, hash, path) in new[]
+            {
+                ("case_picture", thumbnails.CasePictureHash, thumbnails.CasePicturePath),
+                (OperationThumbnailSources.Package, thumbnails.PackageHash, thumbnails.PackagePath),
+                (OperationThumbnailSources.Snapshot, thumbnails.SnapshotHash, thumbnails.SnapshotPath)
+            })
+            {
+                if (hash is null || path is null || thumbnailStore.PathOf(path) is null) continue;
+                var version = ThumbnailVersion(hash);
+                return (ThumbnailRoute + version, version, source);
+            }
+        }
+
+        return (null, null, "placeholder");
+    }
+
+    internal static string ThumbnailVersion(string sha256) => TvThumbnailRenderer.RenderRevision + "-" + sha256;
+
+    /// <summary>The content hash in a thumbnail version, or null when the value is not one.</summary>
+    internal static string? HashOfThumbnailVersion(string? version)
+    {
+        var prefix = TvThumbnailRenderer.RenderRevision + "-";
+        if (version is null || !version.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        var hash = version[prefix.Length..];
+        return hash.Length == 64 && hash.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f') ? hash : null;
+    }
+
+    private static string ThumbnailAlt(TvSourceOperation operation) =>
+        string.IsNullOrWhiteSpace(operation.PartName)
+            ? operation.PartNumber
+            : $"{operation.PartNumber} - {operation.PartName}";
+
+    private TvJob? Job(
         TvSourceOperation? operation,
         DateTimeOffset now,
         IReadOnlyDictionary<string, TvSourceBatchDueDate> urgentDueByBatch,
@@ -149,6 +250,7 @@ internal sealed class TvDashboardService
         }
 
         var urgent = urgentDueByBatch.GetValueOrDefault(operation.BatchId);
+        var picture = Thumbnail(operation.Thumbnails);
         return new TvJob(
             operation.OperationId,
             operation.BatchId,
@@ -160,8 +262,12 @@ internal sealed class TvDashboardService
             projectedFinishByOperation.GetValueOrDefault(operation.OperationId),
             urgent is not null,
             urgent?.WorkFinishDate.ToString("yyyy-MM-dd"),
-            PreviewUrl(operation),
-            Progress(operation, now));
+            Progress(operation, now),
+            operation.PartName,
+            picture.Url,
+            picture.Version,
+            ThumbnailAlt(operation),
+            picture.Source);
     }
 
     private static TvConnectionStatus Connection(string sourceCode)
@@ -178,21 +284,6 @@ internal sealed class TvDashboardService
     {
         var value = sourceCode?.Trim();
         return string.IsNullOrWhiteSpace(value) ? null : value.ToUpperInvariant();
-    }
-
-    private static string? PreviewUrl(TvSourceOperation operation)
-    {
-        if (string.IsNullOrWhiteSpace(operation.PreviewPath))
-        {
-            return null;
-        }
-
-        if (Path.GetExtension(operation.PreviewPath).ToLowerInvariant() is not (".png" or ".jpg" or ".jpeg" or ".bmp" or ".gif"))
-        {
-            return null;
-        }
-
-        return $"/api/v1/cases/{Uri.EscapeDataString(operation.CaseId)}/preview?v=2";
     }
 
     private static TvOperationProgress Progress(

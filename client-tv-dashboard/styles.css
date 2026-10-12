@@ -288,6 +288,75 @@ html[dir="rtl"] .connection-dot { margin-right: 0; margin-left: 0.3rem; }
   direction: ltr;
   unicode-bidi: isolate;
 }
+/* The Part Number is the largest text of the row; the part name sits under it in small type. */
+.part-number-text { font-size: 1.2rem; line-height: 1.1; overflow: hidden; text-overflow: ellipsis; }
+.part-name {
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 0.6rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #9fb0bd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html[dir="rtl"] .part-name { direction: rtl; text-align: right; }
+
+/* Part picture: a fixed 96 px column (owner request 2026-10-12) that never takes width from the Part Number.
+   The picture keeps its aspect ratio inside the row height; without one, a part icon and the Part Number show. */
+.thumb {
+  flex: 0 0 96px;
+  width: 96px;
+  min-width: 96px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0.15rem 0.6rem 0.15rem 0;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #d9e1e7;
+}
+html[dir="rtl"] .thumb { margin-right: 0; margin-left: 0.6rem; }
+.thumb img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 96px;
+  max-height: 2.1rem;
+}
+.thumb-empty,
+.thumb-header { background: transparent; }
+.thumb-header { align-self: center; justify-content: flex-start; }
+.thumb-placeholder {
+  flex-direction: column;
+  background: #1a2733;
+  color: #7f91a0;
+}
+.thumb-icon { display: block; width: 1.1rem; height: 1.1rem; min-width: 14px; min-height: 14px; }
+.thumb-part {
+  display: block;
+  max-width: 92px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.5rem;
+  font-weight: 700;
+  font-style: normal;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: ltr;
+}
+
+/* A warning is a sign and a word next to the status (never colour alone). */
+.warning-sign {
+  margin-left: 0.4rem;
+  color: #ffb020;
+  font-size: 0.72rem;
+  font-style: normal;
+  white-space: nowrap;
+}
+html[dir="rtl"] .warning-sign { margin-left: 0; margin-right: 0.4rem; }
+.warning-error { color: #ff8a8a; }
 .work-order { flex: 0 0 4.5rem; color: #9fb0bd; font-weight: 600; }
 .job-op { flex: 0 0 3.6rem; color: #8dccff; font-weight: 700; direction: ltr; unicode-bidi: isolate; }
 .operation-name { flex: 1 1 0; color: #c3d0da; }
@@ -305,6 +374,7 @@ html[dir="rtl"] .connection-dot { margin-right: 0; margin-left: 0.3rem; }
 .status-waiting .status-label { color: #c3d0da; }
 .machine-row.setup .status-label { color: #FBC02D; }
 .machine-row.idle .status-label { color: #9fb0bd; }
+.machine-row.status-error .status-label { color: #ff8a8a; }
 .part-count { flex: 0 0 5.6rem; text-align: right; font-family: Consolas, "Courier New", monospace; font-weight: 700; direction: ltr; }
 .cycle-average { flex: 0 0 5.8rem; text-align: right; font-family: Consolas, "Courier New", monospace; color: #9fb0bd; direction: ltr; }
 html[dir="rtl"] .part-count, html[dir="rtl"] .cycle-average { text-align: left; }

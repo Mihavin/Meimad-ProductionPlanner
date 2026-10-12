@@ -4,7 +4,14 @@
 // No optional chaining, nullish coalescing, async/await, replaceAll, padStart, destructuring,
 // default parameters, URL search-parameter objects or promise finalizers; the layout is sized here instead
 // of with CSS custom properties, clamp() or grid.
-const DASHBOARD_BUILD = "0.1.38";
+const DASHBOARD_BUILD = "0.1.39";
+// The projection schema this page needs (3: part pictures, owner request 2026-10-12).
+const REQUIRED_SCHEMA = 3;
+// The part picture column is a fixed 96 px wide; it never takes width from the Part Number.
+const THUMBNAIL_COLUMN_PX = 96;
+// A new picture that has not loaded after this long is given up for the placeholder (it still shows once it loads).
+const THUMBNAIL_LOAD_TIMEOUT_MS = 10000;
+const THUMBNAIL_RETRY_MS = 60000;
 const translations = {
   en: {
     machineStatus: "Machine status", language: "Language", waitingForStatus: "Waiting for machine status",
@@ -22,7 +29,9 @@ const translations = {
     groupAttention: "Attention", groupSetup: "Setup", groupProduction: "In production", groupIdle: "Done / waiting / idle",
     machinesCount: "machine(s)", colMachine: "Mach", colCnc: "CNC", colPart: "Part", colWorkOrder: "WO", colOperation: "Op",
     colOperationName: "Operation", colStatus: "Status", colParts: "Parts", colAverageCycle: "Avg cycle", colProgress: "Progress",
-    sumProduction: "running", sumSetup: "setup", sumAttention: "attention", sumIdle: "idle"
+    sumProduction: "running", sumSetup: "setup", sumAttention: "attention", sumIdle: "idle",
+    idle: "Idle", error: "Error", warnAlarm: "CNC alarm", warnPlanning: "Plan blocked", colPicture: "Picture",
+    offlineSnapshot: "Offline · data from {time}", noPicture: "No picture", lastPart: "Last part"
   },
   he: {
     machineStatus: "מצב מכונות", language: "שפה", waitingForStatus: "ממתין לנתוני המכונות",
@@ -40,7 +49,9 @@ const translations = {
     groupAttention: "דורש תשומת לב", groupSetup: "כיוון", groupProduction: "בייצור", groupIdle: "הושלם / ממתין / פנוי",
     machinesCount: "מכונות", colMachine: "מכונה", colCnc: "CNC", colPart: "חלק", colWorkOrder: 'פק"ע', colOperation: "פעולה",
     colOperationName: "תיאור הפעולה", colStatus: "מצב", colParts: "חלקים", colAverageCycle: "מחזור ממוצע", colProgress: "התקדמות",
-    sumProduction: "בייצור", sumSetup: "בכיוון", sumAttention: "דורשות תשומת לב", sumIdle: "פנויות"
+    sumProduction: "בייצור", sumSetup: "בכיוון", sumAttention: "דורשות תשומת לב", sumIdle: "פנויות",
+    idle: "פנויה", error: "תקלה", warnAlarm: "התראת CNC", warnPlanning: "התכנון חסום", colPicture: "תמונה",
+    offlineSnapshot: "לא מחובר · נתונים מ-{time}", noPicture: "אין תמונה", lastPart: "חלק אחרון"
   },
   ru: {
     machineStatus: "Состояние станков", language: "Язык", waitingForStatus: "Ожидание данных о станках",
@@ -58,7 +69,9 @@ const translations = {
     groupAttention: "Требуют внимания", groupSetup: "Наладка", groupProduction: "В производстве", groupIdle: "Завершено / ожидает / свободен",
     machinesCount: "станков", colMachine: "Станок", colCnc: "ЧПУ", colPart: "Деталь", colWorkOrder: "З-Н", colOperation: "Оп.",
     colOperationName: "Операция", colStatus: "Состояние", colParts: "Детали", colAverageCycle: "Ср. цикл", colProgress: "Ход",
-    sumProduction: "в работе", sumSetup: "наладка", sumAttention: "внимание", sumIdle: "свободны"
+    sumProduction: "в работе", sumSetup: "наладка", sumAttention: "внимание", sumIdle: "свободны",
+    idle: "Простой", error: "Ошибка", warnAlarm: "Авария ЧПУ", warnPlanning: "План заблокирован", colPicture: "Фото",
+    offlineSnapshot: "Нет связи · данные от {time}", noPicture: "Нет фото", lastPart: "Последняя деталь"
   }
 };
 
@@ -91,7 +104,17 @@ const state = {
   machineCount: 0,
   groupCount: 0,
   machineIds: [],
-  clockTimer: null
+  clockTimer: null,
+  // The TV's time of the last projection the Server confirmed (200 or 304), shown while offline.
+  snapshotAt: null,
+  lastData: null,
+  rerenderTimer: null,
+  // Picture load state by thumbnailVersion: "loading", "loaded" or "failed". A version is an opaque content hash,
+  // so a loaded picture is never fetched again for a status refresh.
+  images: {},
+  // The part each row shows (picture, Part Number, Work order, Operation) by machineId. It changes only when the new
+  // picture has loaded (or has none), so picture and Part Number always change together.
+  shownParts: {}
 };
 const byId = (id) => document.getElementById(id);
 
@@ -113,9 +136,15 @@ function setServerStatus(status, description) {
   indicator.title = description;
   const text = byId("server-status-text");
   if (text) {
-    text.textContent = status === "connected" ? t.connected : status === "connecting" ? t.connecting : t.disconnectedShort;
+    // Offline with a snapshot on the board: say so and when the board was last current.
+    text.textContent = status === "connected" ? t.connected : status === "connecting" ? t.connecting
+      : state.snapshotAt ? t.offlineSnapshot.replace("{time}", clockText(state.snapshotAt)) : t.disconnectedShort;
     text.title = description;
   }
+}
+
+function clockText(date) {
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
 
 function applyLanguage() {
@@ -141,7 +170,7 @@ function updateClock() {
   const clock = byId("clock");
   if (!clock) return;
   const now = new Date();
-  clock.textContent = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+  clock.textContent = clockText(now);
   clearTimeout(state.clockTimer);
   state.clockTimer = setTimeout(updateClock, 60000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 50);
 }
@@ -194,6 +223,7 @@ function completionLabel(progress) {
 // Machine whose CNC connection is down (its status may be stale). Then setup, production, and the
 // rest (completed, waiting, idle).
 function groupOf(machine) {
+  if (machine.displayStatus === "ERROR") return "attention";
   if (!machine.current) return "idle";
   const progress = machine.current.progress || {};
   const online = !!(machine.connection && machine.connection.online === true);
@@ -221,6 +251,112 @@ function cycleAverageLabel(progress) {
     : `${minutes}:${pad2(seconds)}`;
 }
 
+// ----- Part pictures --------------------------------------------------------------------------------
+// The part a row shows: its picture (opaque URL + version), Part Number, part name, Work order and Operation, taken
+// from the current Operation, or from the last part of an idle Machine when the Server sends one.
+function partOf(machine) {
+  const source = machine.current || machine.idlePart;
+  if (!source) return null;
+  return {
+    idle: !machine.current,
+    version: source.thumbnailVersion || null,
+    url: source.thumbnailUrl || null,
+    alt: source.thumbnailAlt || source.partNumber || "",
+    partNumber: source.partNumber,
+    partName: source.partName || "",
+    batchNumber: source.batchNumber || "",
+    operationNumber: source.operationNumber,
+    operationName: source.operationName
+  };
+}
+
+function samePart(a, b) {
+  return !!a && !!b && a.version === b.version && a.partNumber === b.partNumber && a.partName === b.partName
+    && a.batchNumber === b.batchNumber && a.operationNumber === b.operationNumber && a.operationName === b.operationName
+    && a.idle === b.idle;
+}
+
+// Loads a picture once per version; when it settles, the board is drawn again from the last snapshot (no request).
+// A picture that failed (Server briefly away) is tried again after a minute, not on every refresh.
+function loadPicture(part) {
+  const version = part.version;
+  if (state.images[version]) return;
+  state.images[version] = "loading";
+  const failed = () => {
+    if (state.images[version] !== "loading") return;
+    state.images[version] = "failed";
+    scheduleRerender();
+    setTimeout(() => { if (state.images[version] === "failed") delete state.images[version]; }, THUMBNAIL_RETRY_MS);
+  };
+  const image = new Image();
+  image.onload = () => { state.images[version] = "loaded"; scheduleRerender(); };
+  image.onerror = failed;
+  setTimeout(failed, THUMBNAIL_LOAD_TIMEOUT_MS);
+  image.src = part.url;
+}
+
+function scheduleRerender() {
+  clearTimeout(state.rerenderTimer);
+  state.rerenderTimer = setTimeout(() => { if (state.lastData) render(state.lastData); }, 0);
+}
+
+// The part to show now: a new part replaces the shown one only together with its loaded picture (or at once when it
+// has none or the picture failed), so the Part Number never changes before the picture does.
+function shownPart(machine) {
+  const next = partOf(machine);
+  const key = machine.machineId;
+  const shown = state.shownParts[key] || null;
+  if (!next) { delete state.shownParts[key]; return null; }
+  if (samePart(shown, next)) {
+    state.shownParts[key] = next;
+    // The same part whose picture failed earlier: try it again once the retry delay has passed.
+    if (next.version && next.url && !state.images[next.version]) loadPicture(next);
+    return next;
+  }
+  const status = next.version ? state.images[next.version] : "none";
+  if (next.version && next.url && status !== "loaded" && status !== "failed") {
+    loadPicture(next);
+    if (shown) return shown;
+  }
+  state.shownParts[key] = next;
+  return next;
+}
+
+// Forget load states of pictures no row shows, so a long-running TV keeps a bounded list.
+function pruneImages() {
+  const keep = {};
+  Object.keys(state.shownParts).forEach((key) => {
+    const part = state.shownParts[key];
+    if (part && part.version) keep[part.version] = true;
+  });
+  const versions = Object.keys(state.images);
+  if (versions.length <= 64) return;
+  versions.forEach((version) => {
+    if (!keep[version] && state.images[version] !== "loading") delete state.images[version];
+  });
+}
+
+// A neutral part icon (a box in outline) for rows without a picture.
+const PART_ICON = '<svg class="thumb-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2 3 7v10l9 5 9-5V7z M3 7l9 5 9-5 M12 12v10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+
+function renderThumbnail(part) {
+  if (!part) return '<div class="thumb thumb-empty" aria-hidden="true"></div>';
+  if (part.version && part.url && state.images[part.version] === "loaded") {
+    return `<div class="thumb"><img src="${escapeHtml(part.url)}" alt="${escapeHtml(part.alt)}" width="${THUMBNAIL_COLUMN_PX}" height="${THUMBNAIL_COLUMN_PX}"></div>`;
+  }
+  // The placeholder: the part icon and the Part Number, never an empty frame.
+  return `<div class="thumb thumb-placeholder" title="${escapeHtml(t.noPicture)}">${PART_ICON}<span class="thumb-part">${escapeHtml(part.partNumber)}</span></div>`;
+}
+
+// The status word, with a small warning sign and word next to it (never colour alone).
+function statusCell(machine, label) {
+  const word = machine.displayStatus === "ERROR" ? t.error : label;
+  const warning = machine.warning;
+  const warningWord = !warning ? "" : warning.code === "cnc_alarm" ? t.warnAlarm : t.warnPlanning;
+  const sign = warning ? `<span class="warning-sign warning-${escapeHtml(warning.severity || "warning")}" title="${escapeHtml(warningWord)}"><span aria-hidden="true">\u26a0</span> ${escapeHtml(warningWord)}</span>` : "";
+  return `<div class="cell status-label">${escapeHtml(word)}${sign}</div>`;
+}
+
 function renderMachine(machine, group) {
   const number = escapeHtml(machine.number);
   const name = escapeHtml(machine.name);
@@ -229,26 +365,34 @@ function renderMachine(machine, group) {
   // The CNC connection: a coloured dot plus the state written next to it.
   const connection = `<div class="cell machine-connection connection-${online ? "online" : "offline"}" title="${escapeHtml(connectionState)}"><span class="connection-dot" aria-hidden="true"></span><span class="connection-text">${escapeHtml(connectionState)}</span></div>`;
   const identity = `<div class="cell machine-identity" title="${name}"><div class="machine-number">${number}</div></div>`;
+  const part = shownPart(machine);
+  const partNumber = (value) => `<div class="cell part-number" title="${escapeHtml(value.partNumber)}"><div class="part-number-text">${escapeHtml(value.partNumber)}</div>${value.partName ? `<div class="part-name">${escapeHtml(value.partName)}</div>` : ""}</div>`;
   if (!machine.current) {
-    return `<article class="machine-row idle" aria-label="${number} ${name}">
-      ${identity}${connection}
-      <div class="cell operation-name">${escapeHtml(t.noCurrentOperation)} \u00b7 ${name}</div>
-      <div class="cell status-label">${escapeHtml(t.waiting)}</div>
+    const errorClass = machine.displayStatus === "ERROR" ? ` ${group} status-error` : "";
+    // An idle Machine shows the last part only when the Server sends it (TvDashboard:ShowLastPartImageWhenIdle).
+    const last = part && part.idle
+      ? `${partNumber(part)}<div class="cell operation-name">${escapeHtml(t.lastPart)}: OP${escapeHtml(part.operationNumber)} ${escapeHtml(part.operationName)} \u00b7 ${escapeHtml(t.noCurrentOperation)}</div>`
+      : `<div class="cell operation-name">${escapeHtml(t.noCurrentOperation)} \u00b7 ${name}</div>`;
+    return `<article class="machine-row idle${errorClass}" aria-label="${number} ${name}">
+      ${renderThumbnail(part && part.idle ? part : null)}${identity}${connection}
+      ${last}
+      ${statusCell(machine, t.idle)}
       <div class="cell part-count">\u2014</div><div class="cell cycle-average">\u2014</div>
       <div class="progress"><span class="completion-label">\u2014</span></div></article>`;
   }
 
   const operation = machine.current;
+  const shown = part || partOf(machine);
   const progress = operation.progress || {};
   const percent = barPercent(progress);
-  const classes = `machine-row ${group} status-${escapeHtml(progress.statusCode || "waiting")}${progress.phase === "setup" ? " setup" : ""}`;
+  const classes = `machine-row ${group} status-${escapeHtml(progress.statusCode || "waiting")}${progress.phase === "setup" ? " setup" : ""}${machine.displayStatus === "ERROR" ? " status-error" : ""}`;
   return `<article class="${classes}" aria-label="${number} ${name}">
-    ${identity}${connection}
-    <div class="cell part-number" title="${escapeHtml(operation.partNumber)}">${escapeHtml(operation.partNumber)}</div>
-    <div class="cell work-order" title="${escapeHtml(t.workOrder)}">${escapeHtml(operation.batchNumber)}</div>
-    <div class="cell job-op">OP${escapeHtml(operation.operationNumber)}</div>
-    <div class="cell operation-name" title="${escapeHtml(operation.operationName)}">${escapeHtml(operation.operationName)}</div>
-    <div class="cell status-label">${escapeHtml(progressLabel(progress))}</div>
+    ${renderThumbnail(shown)}${identity}${connection}
+    ${partNumber(shown)}
+    <div class="cell work-order" title="${escapeHtml(t.workOrder)}">${escapeHtml(shown.batchNumber)}</div>
+    <div class="cell job-op">OP${escapeHtml(shown.operationNumber)}</div>
+    <div class="cell operation-name" title="${escapeHtml(shown.operationName)}">${escapeHtml(shown.operationName)}</div>
+    ${statusCell(machine, progressLabel(progress))}
     <div class="cell part-count">${escapeHtml(partsLabel(progress))}</div>
     <div class="cell cycle-average" title="${escapeHtml(t.averageCycle)}">${escapeHtml(cycleAverageLabel(progress))}</div>
     <div class="progress"><span class="progress-track"><span style="width:${percent === null ? 0 : percent}%"></span></span><span class="completion-label">${escapeHtml(completionLabel(progress))}</span></div>
@@ -257,7 +401,7 @@ function renderMachine(machine, group) {
 
 function renderColumnHeader() {
   const cell = (cls, key) => `<div class="cell ${cls}">${escapeHtml(t[key])}</div>`;
-  return `<div class="column-header" aria-hidden="true">${cell("machine-identity", "colMachine")}${cell("machine-connection", "colCnc")}${cell("part-number", "colPart")}${cell("work-order", "colWorkOrder")}${cell("job-op", "colOperation")}${cell("operation-name", "colOperationName")}${cell("status-label", "colStatus")}${cell("part-count", "colParts")}${cell("cycle-average", "colAverageCycle")}<div class="progress">${escapeHtml(t.colProgress)}</div></div>`;
+  return `<div class="column-header" aria-hidden="true"><div class="thumb thumb-header">${escapeHtml(t.colPicture)}</div>${cell("machine-identity", "colMachine")}${cell("machine-connection", "colCnc")}${cell("part-number", "colPart")}${cell("work-order", "colWorkOrder")}${cell("job-op", "colOperation")}${cell("operation-name", "colOperationName")}${cell("status-label", "colStatus")}${cell("part-count", "colParts")}${cell("cycle-average", "colAverageCycle")}<div class="progress">${escapeHtml(t.colProgress)}</div></div>`;
 }
 
 function renderGroups(machines) {
@@ -298,7 +442,7 @@ function fitGrid(machineCount, groupCount) {
   const available = window.innerHeight - headerHeight - 12;
   // rootSize * (rows / 0.42 + fixedRems) = available  =>  solve for the root size.
   const rootByHeight = available / (rows / 0.42 + fixedRems);
-  const rootSize = Math.max(7, Math.min(26, rootByHeight, window.innerWidth / 78));
+  const rootSize = Math.max(7, Math.min(26, rootByHeight, (window.innerWidth - THUMBNAIL_COLUMN_PX - 16) / 78));
   document.documentElement.style.fontSize = `${rootSize.toFixed(2)}px`;
   state.machineCount = machineCount;
   state.groupCount = groups;
@@ -319,7 +463,7 @@ function render(data) {
     byId("machine-grid").setAttribute("aria-busy", "false");
     return;
   }
-  if (Number(data.schemaVersion) < 2) {
+  if (Number(data.schemaVersion) < REQUIRED_SCHEMA) {
     state.hasSnapshot = true;
     byId("machine-grid").innerHTML = `<div class="empty-state">${escapeHtml(t.updateRequired)}</div>`;
     byId("machine-grid").setAttribute("aria-busy", "false");
@@ -327,6 +471,7 @@ function render(data) {
   }
   const machines = Array.isArray(data.machines) ? data.machines : [];
   state.hasSnapshot = true;
+  state.lastData = data;
   state.machineIds = machines.map((machine) => machine.machineId).filter(Boolean);
   // The Server decides the polling interval (TvDashboard:RefreshAfterSeconds, 5-300 s).
   state.refreshSeconds = Math.max(5, Number(data.refreshAfterSeconds) || 60);
@@ -334,6 +479,7 @@ function render(data) {
   fitGrid(machines.length, groups.groupCount);
   byId("machine-grid").innerHTML = groups.html;
   byId("machine-grid").setAttribute("aria-busy", "false");
+  pruneImages();
   subscribeToVisibleMachines();
 }
 
@@ -390,6 +536,7 @@ function refresh() {
   return fetch("/api/v1/tv-dashboard", { headers: headers, cache: "no-cache" })
     .then((response) => {
       if (response.status === 304) {
+        state.snapshotAt = new Date();
         setServerStatus("connected", t.connected);
         return null;
       }
@@ -397,6 +544,7 @@ function refresh() {
       state.etag = response.headers.get("ETag");
       return response.json().then((data) => {
         render(data);
+        state.snapshotAt = new Date();
         setServerStatus("connected", t.connected);
       });
     })

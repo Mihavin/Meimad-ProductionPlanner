@@ -215,6 +215,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     /// <summary>The Cimatron setup (Work CS, fixtures, rest material) of the selected Operation.</summary>
     public OperationCamSetupViewModel CamSetup { get; } = new();
 
+    /// <summary>The TV Dashboard picture of the selected Operation (Server schema v118).</summary>
+    public OperationThumbnailViewModel TvPicture { get; } = new();
+
     public ObservableCollection<CaseOperation> OperationReferenceOptions { get; } = [];
 
     public ObservableCollection<string> OperationMachineTypeOptions { get; } = [string.Empty, ProductionNoteMachineType];
@@ -494,6 +497,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 ReleaseGCodeCommand.RaiseCanExecuteChanged();
                 _ = Requirements.LoadAsync(value?.CaseOperationId);
                 _ = CamSetup.LoadAsync(value is null ? null : SelectedCase?.CaseId, value?.CaseOperationId);
+                _ = TvPicture.LoadAsync(value is null ? null : SelectedCase?.CaseId, value?.CaseOperationId);
                 if (value is not null && apiClient is not null && !IsBusy)
                 {
                     RefreshGCodeCommand.Execute(null);
@@ -1097,6 +1101,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         var nextGeneration = editStatus?.Generation ?? 0;
         Requirements.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         CamSetup.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
+        TvPicture.AttachSession(newApiClient, newClientId, nextIsEditor);
         CamSetup.FilesChanged ??= () => SelectedCase is { } current ? RefreshModelFilesAsync(current.CaseId) : Task.CompletedTask;
         CamSetup.ToolTableChosen ??= path => ToolTableFilePath = path;
         CamSetup.PackageImported ??= UseImportedPackageForRelease;
