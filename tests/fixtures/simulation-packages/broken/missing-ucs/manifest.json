@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "packageId": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "exporter": {
+    "name": "Meimad.CimatronExporter",
+    "version": "0.1.0",
+    "cimatronVersion": "2026.0",
+    "adapterVersion": "cimatron-com-1",
+    "meshToleranceMm": 0.01,
+    "usedDefaultMeshTolerance": false
+  },
+  "source": {
+    "application": "Cimatron",
+    "project": "GOLDEN-PART",
+    "ncFileName": "O1001.nc",
+    "exportedAtUtc": "2026-10-12T06:00:00Z"
+  },
+  "part": {
+    "number": "GOLDEN-PART",
+    "name": "Golden test part"
+  },
+  "operation": {
+    "number": "010",
+    "name": "Pocket",
+    "procedureId": 17,
+    "procedureName": "OP010"
+  },
+  "machine": {
+    "externalId": "VF3_01",
+    "name": "Haas VF-3",
+    "postprocessor": "HAAS_NGC_VF3",
+    "axisConfiguration": "XYZ"
+  },
+  "units": "mm",
+  "files": {
+    "nc": {
+      "path": "nc/O1001.nc",
+      "sha256": "45f6d178709bc75b4ee0b1088ba92ff51e7d50806dee2fe290bd188ea35dc9cb",
+      "sizeBytes": 354
+    },
+    "toolTable": {
+      "path": "tools/tool-table.json",
+      "sha256": "c2134626d4910fe187d5f204553f1c3c3250e98812b1453f02ba6f424c6b7a32",
+      "sizeBytes": 773
+    },
+    "stock": [
+      {
+        "kind": "initial",
+        "name": "Blank 100x60x30",
+        "foundBy": "stock-procedure",
+        "path": "geometry/stock.stl",
+        "sha256": "d5956f24932b7fb0b8912eec0e30625fd87eb298ae24636721c2ac12a7f50175",
+        "sizeBytes": 684
+      }
+    ],
+    "fixtures": [
+      {
+        "name": "Base plate",
+        "collision": true,
+        "path": "geometry/fixture-001.stl",
+        "sha256": "8feb473364b1bf86b995379f4612c580e73698a9ab9424c20f22601f5d63abc6",
+        "sizeBytes": 684
+      },
+      {
+        "name": "Vise jaw",
+        "collision": true,
+        "path": "geometry/fixture-002.stl",
+        "sha256": "bffd6ca8ab61d2088bc87ede8d2deda53a584b7aaccd4dc67dcd35ce73738a57",
+        "sizeBytes": 684
+      }
+    ],
+    "part": {
+      "role": "finished-part",
+      "name": "Finished part",
+      "path": "geometry/part.stl",
+      "sha256": "41b172608795634469500645ef015592f187e7cc929216aac6bc445d2bb26703",
+      "sizeBytes": 684
+    }
+  }
+}

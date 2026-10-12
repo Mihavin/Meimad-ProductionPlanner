@@ -29,6 +29,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Golden Cimatron simulation packages (Stage 0): copied byte-exact beside the tests. -->
+    <None Include="..\fixtures\simulation-packages\**\*" LinkBase="simulation-packages" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 

@@ -1,0 +1,2 @@
+# Golden simulation packages carry SHA-256 hashes of their exact bytes: never convert line endings.
+* -text

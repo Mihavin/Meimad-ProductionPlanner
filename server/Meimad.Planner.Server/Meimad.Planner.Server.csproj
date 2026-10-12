@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\shared\Meimad.Planner.NcEngine\Meimad.Planner.NcEngine.csproj" />
+    <ProjectReference Include="..\..\shared\Meimad.Planner.SimulationPackage\Meimad.Planner.SimulationPackage.csproj" />
   </ItemGroup>
 
   <ItemGroup>

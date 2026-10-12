@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "coordinate-systems.schema.json",
+  "title": "Meimad simulation package coordinate systems, schemaVersion 1",
+  "description": "Coordinate-system definitions of a Meimad simulation package. Mode A (nc-procedure-ucs): the package geometry is already in the NC work coordinates of the Cimatron procedure UCS, so the transform is identity. Mode B (part-model-coordinates): the geometry is in Cimatron part-model coordinates and the UCS frame is given in those coordinates by originMm + rotationDeg + rotationOrder and/or a row-major 4x4 matrix that maps UCS coordinates into model coordinates (p_model = R * p_ucs + origin). A model point p maps into UCS/NC work coordinates as R^T (p - origin). Lengths are millimetres, angles degrees. Measured machine offsets (G54 from DPRNT) never belong here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "coordinateSystems"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "coordinateSystems": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/coordinateSystem" }
+    }
+  },
+  "$defs": {
+    "vector3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" }
+      }
+    },
+    "matrix4": {
+      "description": "Row-major 4x4 homogeneous matrix mapping UCS coordinates into part-model coordinates; the last row is 0 0 0 1.",
+      "type": "array",
+      "minItems": 16,
+      "maxItems": 16,
+      "items": { "type": "number" }
+    },
+    "rotationOrder": {
+      "description": "Matrix product of the elementary rotations read left to right: RzRyRx means R = Rz * Ry * Rx (rotate about X first, then Y, then Z, about fixed axes).",
+      "enum": ["RzRyRx", "RzRxRy", "RyRxRz", "RyRzRx", "RxRyRz", "RxRzRy"]
+    },
+    "workOffset": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "procedures": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": { "type": "integer", "minimum": 0 }
+    },
+    "coordinateSystem": {
+      "oneOf": [
+        { "$ref": "#/$defs/ncProcedureUcs" },
+        { "$ref": "#/$defs/partModelCoordinates" }
+      ]
+    },
+    "ncProcedureUcs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "name", "filesAreIn"],
+      "properties": {
+        "type": { "const": "nc-procedure-ucs" },
+        "name": { "$ref": "#/$defs/name" },
+        "workOffset": { "$ref": "#/$defs/workOffset" },
+        "filesAreIn": { "const": "nc-work-coordinates" },
+        "transform": { "const": "identity" },
+        "procedures": { "$ref": "#/$defs/procedures" }
+      }
+    },
+    "partModelCoordinates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "name", "filesAreIn"],
+      "anyOf": [
+        { "required": ["originMm", "rotationDeg", "rotationOrder"] },
+        { "required": ["matrix"] }
+      ],
+      "properties": {
+        "type": { "const": "part-model-coordinates" },
+        "name": { "$ref": "#/$defs/name" },
+        "workOffset": { "$ref": "#/$defs/workOffset" },
+        "filesAreIn": { "const": "part-model-coordinates" },
+        "originMm": { "$ref": "#/$defs/vector3" },
+        "rotationDeg": { "$ref": "#/$defs/vector3" },
+        "rotationOrder": { "$ref": "#/$defs/rotationOrder" },
+        "matrix": { "$ref": "#/$defs/matrix4" },
+        "procedures": { "$ref": "#/$defs/procedures" }
+      }
+    }
+  }
+}

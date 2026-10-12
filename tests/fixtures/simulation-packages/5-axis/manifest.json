@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "packageId": "2f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "exporter": {
+    "name": "Meimad.CimatronExporter",
+    "version": "0.1.0",
+    "cimatronVersion": "2026.0",
+    "adapterVersion": "cimatron-com-1",
+    "meshToleranceMm": 0.01,
+    "usedDefaultMeshTolerance": false
+  },
+  "source": {
+    "application": "Cimatron",
+    "project": "GOLDEN-PART",
+    "ncFileName": "O1003.nc",
+    "exportedAtUtc": "2026-10-12T06:00:00Z"
+  },
+  "part": {
+    "number": "GOLDEN-PART",
+    "name": "Golden test part"
+  },
+  "operation": {
+    "number": "030",
+    "name": "Swarf",
+    "procedureId": 31,
+    "procedureName": "OP030"
+  },
+  "machine": {
+    "externalId": "UMC500_01",
+    "name": "Haas UMC-500",
+    "postprocessor": "HAAS_NGC_UMC500",
+    "axisConfiguration": "A_C"
+  },
+  "units": "mm",
+  "coordinateSystem": {
+    "type": "nc-procedure-ucs",
+    "name": "UCS_OP030",
+    "workOffset": "G54",
+    "filesAreIn": "nc-work-coordinates",
+    "transform": "identity"
+  },
+  "files": {
+    "nc": {
+      "path": "nc/O1003.nc",
+      "sha256": "62f8970d2baeeeffde1ed13ad08cf8249ff5eb12c682a650dac1c17fadb4aa6e",
+      "sizeBytes": 362
+    },
+    "toolTable": {
+      "path": "tools/tool-table.json",
+      "sha256": "1bec33a6889f42be0eee9f2d8165aa07536b9bb2a981744a7ec5d0d3b890ffdc",
+      "sizeBytes": 464
+    },
+    "stock": [
+      {
+        "kind": "initial",
+        "path": "geometry/stock.stl",
+        "sha256": "6180a03d35752ce1b9687a49b5bd87de00d0aa3b9f674bb217f66565835bbf70",
+        "sizeBytes": 684
+      }
+    ],
+    "fixtures": [
+      {
+        "name": "Trunnion plate",
+        "path": "geometry/fixture-001.stl",
+        "sha256": "dcc28a9d69df453577ea52efb804dbb456a0949604a3b2bbe6ae95c70fe64f8d",
+        "sizeBytes": 684
+      }
+    ],
+    "part": {
+      "role": "finished-part",
+      "path": "geometry/part.stl",
+      "sha256": "d5196cbd9514b77ce82d0e52f3eb34039a15853a30b4a227587f25aaa65316f0",
+      "sizeBytes": 684
+    }
+  }
+}

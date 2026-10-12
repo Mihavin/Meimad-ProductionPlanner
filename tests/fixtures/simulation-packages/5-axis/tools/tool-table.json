@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "units": "mm",
+  "source": {
+    "application": "Cimatron",
+    "exportedAtUtc": "2026-10-12T06:00:00Z"
+  },
+  "tools": [
+    {
+      "number": 4,
+      "name": "D8 BALL",
+      "type": "ball",
+      "diameterMm": 8,
+      "cornerRadiusMm": 4,
+      "fluteLengthMm": 30,
+      "gaugeLengthMm": 90,
+      "holder": {
+        "name": "BT40 ER32",
+        "diameterMm": 50,
+        "lengthMm": 60
+      }
+    }
+  ]
+}
