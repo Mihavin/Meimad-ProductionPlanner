@@ -32,7 +32,7 @@ public sealed class SimulationPackageApiTests : IDisposable
     {
         await RunAsync(async (application, _) =>
         {
-            Assert.Equal(117, DatabaseMigrator.LatestVersion);
+            Assert.True(DatabaseMigrator.LatestVersion >= 117);
             foreach (var table in new[] { "simulation_package_imports", "simulation_package_import_files", "simulation_package_machine_mappings" })
                 Assert.Equal(1L, await ScalarAsync(application.Services, $"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '{table}';"));
         });

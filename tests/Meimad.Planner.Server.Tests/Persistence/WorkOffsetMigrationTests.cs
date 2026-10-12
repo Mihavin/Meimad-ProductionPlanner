@@ -19,7 +19,7 @@ public sealed class WorkOffsetMigrationTests
         await migrator.MigrateAsync();
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
-        Assert.Equal(116L, await ScalarAsync(connection, "SELECT MAX(version) FROM schema_migrations;"));
+        Assert.Equal(1L, await ScalarAsync(connection, "SELECT COUNT(*) FROM schema_migrations WHERE version = 116;"));
         Assert.Equal(3L, await ScalarAsync(connection,
             "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'trigger' AND name LIKE 'projection_revision_machine_work_offsets_%';"));
 
