@@ -87,6 +87,21 @@ report until a planner imports them from the Case.
 Case → Operations → *Cimatron setup* → **Import Cimatron package...** (see the user help). The Server contract is in
 `docs/api-contract.md` ("Cimatron simulation packages").
 
+## Connecting to Cimatron without a COM registration
+
+At Meimad (Cimatron 2026.0 SP3P1, probe of 2026-10-12) the API files are in
+`C:\Program Files\Cimatron\Cimatron6.0\Program` (`CimAppAccess.dll`, `CimAppAccess.tlb`, `CimatronE.tlb`,
+`CimNcAPI.tlb`, `interop.*.dll`) but `CimAppAccess.AppAccess` is not registered for COM. The exporter then makes the
+AppAccess object directly from `CimAppAccess.dll` (class id from `CimAppAccess.tlb`, the DLL's class factory; nothing is
+written to the registry) in the newest installed Cimatron, or the folder given with `--cimatron-folder`. The export runs
+on a single-threaded apartment, as Cimatron's objects expect. A registered ProgID is still used first (`--progid` or
+`MEIMAD_CIMATRON_PROGID` names another one).
+
+`--probe` writes everything to standard output (redirect it to a file) and also writes `cimatron-api.txt` beside the
+exe: the classes, interfaces, methods and properties of `CimAppAccess.tlb`, `CimatronE.tlb`, `CimNcAPI.tlb`,
+`CimBaseAPI.tlb`, `CimServicesAPI.tlb` and `CimMdlrAPI.tlb`, read from the files (Cimatron need not run for this part).
+`CimatronComApi.Members` is matched to that listing.
+
 ## Before production use
 
 1. Run `--probe` with an NC document open; record which members exist on the application and the document.

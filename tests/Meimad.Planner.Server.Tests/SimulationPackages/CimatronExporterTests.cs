@@ -19,6 +19,23 @@ public sealed class CimatronExporterTests : IDisposable
 
     public CimatronExporterTests() => Directory.CreateDirectory(root);
 
+    [Fact]
+    public void A_COM_class_is_created_from_its_dll_without_the_registry_and_answers_late_bound_calls()
+    {
+        // The registration-free path the exporter takes when CimAppAccess.AppAccess is not registered (Cimatron 2026.0
+        // at Meimad): class id from the type library, class factory from the DLL. Checked with the Scripting runtime
+        // every Windows has (its type library sits inside the DLL).
+        if (!OperatingSystem.IsWindows()) return;
+        var dll = Path.Combine(Environment.SystemDirectory, "scrrun.dll");
+        if (!File.Exists(dll)) return;
+        Assert.NotNull(CimatronTypeLibrary.ClassId(dll, "FileSystemObject"));
+        var fileSystem = CimatronTypeLibrary.CreateFromDll(dll, dll, "FileSystemObject");
+        var name = fileSystem.GetType().InvokeMember("GetTempName", System.Reflection.BindingFlags.InvokeMethod, null, fileSystem, []);
+        Assert.EndsWith(".tmp", Assert.IsType<string>(name));
+        Assert.Contains(CimatronTypeLibrary.Describe(dll), line => line.Contains("GetTempName", StringComparison.Ordinal));
+        Assert.Null(CimatronTypeLibrary.FindProgramFolder(root)); // a folder without CimAppAccess.dll is not a Cimatron Program folder
+    }
+
     public void Dispose()
     {
         try

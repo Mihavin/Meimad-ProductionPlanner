@@ -20,6 +20,9 @@ internal sealed class CimatronComApi : ICimatronApi
     internal const string Version = "cimatron-com-1";
     internal const string AppAccessProgId = "CimAppAccess.AppAccess";
 
+    /// <summary>How the last <see cref="Connect"/> reached Cimatron (null: the registered ProgID).</summary>
+    internal static string? ConnectedThrough { get; private set; }
+
     /// <summary>The late-bound member names, in one place so a field test can adjust them.</summary>
     internal static class Members
     {
@@ -72,19 +75,29 @@ internal sealed class CimatronComApi : ICimatronApi
     public CimatronCapabilities Capabilities { get; }
 
     /// <summary>Connects to the running Cimatron; throws <see cref="CimatronApiException"/> when it cannot.</summary>
-    internal static CimatronComApi Connect(string? progId = null)
+    internal static CimatronComApi Connect(string? progId = null, string? cimatronFolder = null)
     {
         var name = string.IsNullOrWhiteSpace(progId) ? AppAccessProgId : progId.Trim();
         if (!OperatingSystem.IsWindows())
             throw new CimatronApiException("cimatron_not_available", "Cimatron automation needs Windows.");
-        var type = Type.GetTypeFromProgID(name, throwOnError: false)
-            ?? throw new CimatronApiException("cimatron_not_installed",
-                $"The Cimatron automation server '{name}' is not registered on this PC.");
+        var type = Type.GetTypeFromProgID(name, throwOnError: false);
         object access;
         try
         {
-            access = Activator.CreateInstance(type)
-                ?? throw new CimatronApiException("cimatron_not_available", "Cimatron did not create the AppAccess object.");
+            if (type is not null)
+            {
+                access = Activator.CreateInstance(type)
+                    ?? throw new CimatronApiException("cimatron_not_available", "Cimatron did not create the AppAccess object.");
+            }
+            else
+            {
+                // Not registered: AppAccess straight from the Cimatron Program folder (CimatronTypeLibrary).
+                var folder = CimatronTypeLibrary.FindProgramFolder(cimatronFolder)
+                    ?? throw new CimatronApiException("cimatron_not_installed",
+                        $"The Cimatron automation server '{name}' is not registered and no Cimatron Program folder with {CimatronTypeLibrary.AppAccessDll} was found (use --cimatron-folder).");
+                access = CimatronTypeLibrary.CreateAppAccess(folder);
+                ConnectedThrough = $"{System.IO.Path.Combine(folder, CimatronTypeLibrary.AppAccessDll)} (not registered; loaded directly)";
+            }
         }
         catch (COMException exception)
         {
