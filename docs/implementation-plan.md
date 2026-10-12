@@ -70,6 +70,12 @@ keeps it as append-only evidence and the NC viewer shows it next to the Cimatron
 - **OD-043 (Proposed) - Review thresholds.** 1.0 mm and 0.5° (`WorkOffsets:ReviewLinearThresholdMm`,
   `ReviewRotaryThresholdDeg`) are placeholders; the definition gives no values.
 
+**Verified locally (2026-10-12):** the full Server test project (1546 passed, 5 skipped, 0 failed), including
+`MachineEvidence` (parser state machine, §20.15 acceptance tests 1-8 and 10, report programs printed and re-parsed per
+control, API authorization and conflicts), `WorkOffsetMigrationTests`, `CncSerialDprntSourceTests`; the Windows client
+tests without the live-Server startup test (520 passed), including `WorkOffsetsViewModelTests` and
+`NcViewerWorkOffsetsCoreTests` (acceptance test 9 in V8).
+
 **Not verified (needs the real controls):** no report program has run on a Haas, FANUC, Mazak or Okuma control; the
 variable numbers (`#5221`, `#14001`, `#7001`, Okuma `VZOF*[n]`), the printability of `/`, `-`, `.` in DPRNT/PUT text,
 number formats and line lengths, the Mazak `print.txt` with these lines, a real COM port, and the NC viewer card in the
