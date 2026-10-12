@@ -29,7 +29,7 @@ internal static partial class NcProgramSet
                 number = Normalize(header.Groups[1].Success ? header.Groups[1].Value : header.Groups[2].Value);
             foreach (Match call in Call().Matches(line)) calls.Add(Normalize(call.Groups[1].Success ? call.Groups[1].Value : call.Groups[2].Value));
             foreach (Match tool in Tool().Matches(line))
-                if (int.TryParse(tool.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var t)) tools.Add(t);
+                if (int.TryParse(tool.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var t) && t > 0) tools.Add(t); // T0 is "no tool"
         }
 
         return new NcProgramFile(path, number, calls, tools.ToArray(), new FileInfo(path).Length);
@@ -50,6 +50,14 @@ internal static partial class NcProgramSet
                 queue.Enqueue(next);
         return reached.Count == files.Count ? roots[0] : null;
     }
+
+    /// <summary>Programs the files call that none of them is (2026-10-12: 6000.EIA calls 9013, a program kept on the machine).</summary>
+    public static IReadOnlyList<string> CallsOutside(IReadOnlyList<NcProgramFile> files) =>
+        files.SelectMany(file => file.Calls)
+            .Where(call => !files.Any(file => Names(file).Contains(call, StringComparer.OrdinalIgnoreCase)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
     public static string Describe(NcProgramFile file, string root) =>
         $"{System.IO.Path.GetRelativePath(root, file.Path).Replace('\\', '/')} ({file.Bytes} bytes, program {file.Number ?? "?"}, "

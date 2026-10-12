@@ -24,14 +24,16 @@ public sealed class CimatronAccessorTests
             }
 
             // Mazak EIA: 6000 calls 5999 by number; 5999 calls a named subprogram.
-            var main = NcProgramSet.Read(Write("6000.EIA", "%\nO6000(MAIN)\nT1M6\nM98 P5999\nM30\n%\n"));
+            var main = NcProgramSet.Read(Write("6000.EIA", "%\nO6000(MAIN)\nT1M6\nM98 P5999\nM98 P9013\nT0\nM30\n%\n"));
             var sub = NcProgramSet.Read(Write("5999.EIA", "%\nO5999\nT2M6\nG65 P<CORNER>\nM99\n%\n"));
             var named = NcProgramSet.Read(Write("CORNER.EIA", "%\nO<CORNER>\nG1X0\nM99\n%\n"));
             Assert.Equal("6000", main.Number);
-            Assert.Equal(["5999"], main.Calls);
+            Assert.Equal(["5999", "9013"], main.Calls.Order());
             Assert.Equal([1], main.Tools);
             Assert.Same(main, NcProgramSet.MainProgram([sub, named, main]));
-            Assert.Contains("calls 5999", NcProgramSet.Describe(main, folder));
+            Assert.Contains("calls 5999, 9013", NcProgramSet.Describe(main, folder));
+            // 9013 is a machine-resident program (the Meimad Mazak post of 2026-10-12).
+            Assert.Equal(["9013"], NcProgramSet.CallsOutside([main, sub, named]));
 
             // Two programs that do not call each other, and a file the main program does not reach: the user chooses.
             var other = NcProgramSet.Read(Write("6001.EIA", "%\nO6001\nT3M6\nM30\n%\n"));

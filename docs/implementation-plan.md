@@ -269,8 +269,11 @@ tool report becomes the package `toolReport`. Exporter 0.1.1 then posted `TP_MOD
 its real path below `nc/`, searches subfolders for new files, and reports `post_output_missing` with the folder contents.
 Exporter 0.1.2 then got `5999.EIA` and `6000.EIA` from one toolpath post (`nc_ambiguous`). Exporter 0.1.3 takes the
 program that calls the others as the main program and describes each program when they are unrelated.
-Still to confirm on the CAM PC: where Cimatron writes the NC, whether `6000.EIA` calls `5999.EIA`, and the layout check
-on a tilted active UCS.
+Exporter 0.1.3 published the first package (2026-10-12): Cimatron writes the posted NC into
+`<document>.DIR\<post>\` below the output folder, `6000.EIA` calls `5999.EIA` and the machine program `9013`, and the stock
+came from the setup's stock procedure; the package passed the validation. Exporter 0.1.4 names called programs the post
+did not write (`nc_calls_unposted_programs`) and leaves `T0` out of the tool lists. Still to confirm: the import and NC
+viewer check, tool sizes from Cimatron's cutters/holders CSV (layout unseen), and the layout check on a tilted active UCS.
 
 **Open decision (Proposed, 2026-10-12): subprograms in a simulation package.** The package manifest has one `files.nc`
 and no subprogram role, while a Mazak post can write a main program plus subprogram files. Until decided, the exporter

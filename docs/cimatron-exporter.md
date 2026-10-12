@@ -1,20 +1,16 @@
 # Meimad Cimatron exporter
 
-> **Status: connected to the user's NC document, no package published yet.** The exporter workflow, the package format and
-> the Server import are implemented and tested with a fake Cimatron API. On the Meimad CAM PC (Cimatron 2026.0 SP3P1,
-> probes of 2026-10-12) the adapter created AppAccess without a COM registration and, run from a normal window, reached
-> the user's instance and NC document through `GetActiveApplication`. The seventh probe (`cimatron-com-4`) read 54
-> procedures with their UCS and toolpath, all 68 named UCS with their matrices, and exported the remaining stock of the
-> stock-defining procedure as a 12-triangle box. Adapter `cimatron-com-5` uses that as the initial stock (part-model
-> coordinates), leaves the target-part and stock procedures out of the export, and checks the UCS matrix layout against
-> `Active2ModelTranslate`. The eighth probe and the first real export (2026-10-12) showed a document with several
-> setups, each with its own stock procedure and toolpath, so the export stopped at `stock_unavailable`. Adapter
-> `cimatron-com-6` exports one toolpath per package (`--toolpath`), posts only that toolpath (`PostByUcsByIdVec`), takes
-> the stock procedure of its setup as the initial stock, and reads Cimatron's 9-value matrix as UCS axes in rows (the
-> face UCS origins of the eighth probe lie on the stock faces with their Z axis pointing outward only in that reading).
-> Not yet seen: the layout check on a tilted active UCS, what `PostByUcsByIdVec` accepts as nodes, the Job Manager
-> output, and a published package. The second export (2026-10-12) posted the chosen toolpath node directly and stopped
-> only because the post's `Tools.html` report counted as a second NC file; the exporter now keeps it as the tool report.
+> **Status: first package published from Cimatron (2026-10-12), not yet imported.** The exporter workflow, the package
+> format and the Server import are implemented and tested with a fake Cimatron API. On the Meimad CAM PC (Cimatron
+> 2026.0 SP3P1) the adapter reaches the user's instance without a COM registration through `GetActiveApplication`, run
+> from a normal window. Exporter 0.1.3 (adapter `cimatron-com-6`) published the first package from the 5-axis document
+> `30P450172200-002SOFI_NC1 - Copy`, toolpath `TP_MODEL` (84 procedures), posted relative to `MODEL` with the Mazak
+> Variaxis post: main program `6000.EIA` (2.5 MB, 18 tools) calling subprogram `5999.EIA` and machine program `9013`,
+> Cimatron's `TP_MODEL.TOOLS.mht` as tool report, cutters/holders/materials CSV, Job Manager XML, and the initial stock
+> from stock procedure 3 of setup `NC_Setup` in part-model coordinates; the package passed the Meimad validation.
+> Not yet seen: the import and NC viewer check (exporter definition §19), the layout check on a tilted active UCS,
+> tool sizes in `tool-table.json` (Cimatron's CSV layout is unseen), and part/fixture geometry (no Cimatron API; a Multi
+> STL export with `--geometry-folder`).
 > Requirement source: the Cimatron → Meimad exporter definition §1–§19 (owner, 2026-10-12).
 
 ## What it writes
@@ -69,7 +65,7 @@ member on the NC model (`document.Model`, `INcModel`), then the document, then t
 | Procedures | `INcModel.GetProcessManagerAsXML(withParameters, file)`; fallback `ModelProcedures` entity list (`ICimEntity.ID`, `INCProcedure.Name`) | `ProcessManagerXml.Parse`: Cimatron 2026.0 writes `NCFullReport` → `Setup` → `SetupFolder` → `ToolPath Name` (`ToolPath_UCS`) → `ToolpathFolder` → `Procedure Name ID`, the procedure UCS in `UCS_Name Value` (else the toolpath UCS), the status in `Procedure_Status`; procedures outside a toolpath (target part, stock) are not machining and are left out of the export, a `Stock_Type` one is stock-defining; the toolpath name is the operation. Confirmed by the probe of 2026-10-12 (54 procedures) |
 | UCS names | entity query on the model (`CreateFilter(cmFilterEntityType = 3)`, `IFilterType.Add(cmUcs = 9)`, `SetFilter`, `Select`; `cimatron-com-3` passed 9 to `CreateFilter`, which is `cmFilterWireBody`, and got about 100 unnamed bodies), `ActivateUcs` (the active UCS), the XML | union of the three; the fixed query returned all 68 named UCS (`IUcs` on each entity) |
 | UCS matrix | `IUcs.Transformation` → `IModelTransformation.Matrix` / `Vector` | `UcsMatrix.Compose`: 16, 12, or 9 + 3 values; a 16-value matrix with the translation in the last row is transposed. Cimatron 2026.0 returns 9 + 3 values: the Vector is the UCS origin and the 9 values hold the UCS axes as rows, which `Compose` transposes into columns (deduced from the eighth probe: the face UCS such as `---90` have their origin on a stock face, and only the row reading points their Z axis out of the stock). The probe still compares the active UCS with `IModel.Active2ModelTranslate` of its origin and axes (`UcsLayoutCheck`) to confirm it on a tilted active UCS |
-| Post | `PostByUcsByIdVec(post, folder, nodeIds, ucs, outputName, out result)` (selected toolpath or procedure nodes), `PostByUcsToAllNcProcedures(post, folder, startHome, ucs, out file)`, `ExecutePostToAllNcProcedures(post, folder, startHome, out file)` | the named file and every new file in the folder; `--toolpath` posts the toolpath node, then its procedure ids when no file appeared. Reports the post writes beside the NC (HTML, MHT, PDF, XML, CSV, logs, images) are never NC candidates: Cimatron's `*.Tools.html` / `*.TOOLS.mht` becomes the package's `toolReport` under `tools/`, any other report goes to `metadata/post-reports/`. Confirmed on 2026-10-12: posting the toolpath node of `TP_MODEL_0` wrote `6000.EIA` and a `Tools.html`. New files are looked for in subfolders too, and the package keeps the folder the NC was written into (`nc/<subfolder>/<file>`); a reported file that is gone stops the export at `post_output_missing`, listing what the post folder holds. When the post writes several programs (2026-10-12: `5999.EIA` and `6000.EIA` for `TP_MODEL`), the one that no other calls and that reaches all others through `M98 P…`, `M98 <…>`, `G65 P…` or `M198 P…` is the main program; the subprograms stay beside it with the warning `nc_subprograms_unlisted`. Programs that do not form one call tree stop at `nc_ambiguous`, which describes each (path, size, program number, tools, calls); `--nc-file` takes a file name or a path below `nc/` |
+| Post | `PostByUcsByIdVec(post, folder, nodeIds, ucs, outputName, out result)` (selected toolpath or procedure nodes), `PostByUcsToAllNcProcedures(post, folder, startHome, ucs, out file)`, `ExecutePostToAllNcProcedures(post, folder, startHome, out file)` | the named file and every new file in the folder; `--toolpath` posts the toolpath node, then its procedure ids when no file appeared. Reports the post writes beside the NC (HTML, MHT, PDF, XML, CSV, logs, images) are never NC candidates: Cimatron's `*.Tools.html` / `*.TOOLS.mht` becomes the package's `toolReport` under `tools/`, any other report goes to `metadata/post-reports/`. Confirmed on 2026-10-12: posting the toolpath node of `TP_MODEL_0` wrote `6000.EIA` and a `Tools.html`. New files are looked for in subfolders too, and the package keeps the folder the NC was written into (`nc/<subfolder>/<file>`); a reported file that is gone stops the export at `post_output_missing`, listing what the post folder holds. When the post writes several programs (2026-10-12: `5999.EIA` and `6000.EIA` for `TP_MODEL`), the one that no other calls and that reaches all others through `M98 P…`, `M98 <…>`, `G65 P…` or `M198 P…` is the main program; the subprograms stay beside it with the warning `nc_subprograms_unlisted`. Programs called but not posted (Meimad: `9013`, kept on the Mazak) give `nc_calls_unposted_programs`. Programs that do not form one call tree stop at `nc_ambiguous`, which describes each (path, size, program number, tools, calls); `--nc-file` takes a file name or a path below `nc/` |
 | Remaining stock | `ExportProceduresRemainingStock(procId, NcUcsType, file, out created)` with `cmNcProcUcs = 1` (mode A) or `cmNcModelUcs = 3` (mode B) | the frame of the fixtures and part; earlier versions wrongly passed the UCS name here |
 | Initial stock | none | `--stock-file`, else one `STOCK*.stl` in the document folder, its `NC` subfolder or the `NC` folder it sits in (`stock_ambiguous` when several); otherwise the stock procedure of the chosen toolpath's setup (or the only stock-defining procedure of the document): its remaining stock (`ExportProceduresRemainingStock`, `cmNcModelUcs`), in part-model coordinates only (mode B; mode A stops at `stock_frame_unavailable` and needs `--stock-file`). With several stock procedures and no `--toolpath`, `stock_unavailable` suggests `--toolpath`. The probe prints that STL's box |
 | Cutters | `ExportCuttersAndHoldersToCSV(elements, cutters, holders, materials)` with no elements | CSV files; no tool-list API, so `tool-table.json` lists the NC's T numbers |
@@ -186,7 +182,15 @@ matrices of the UCS the procedures use, and `process-manager.xml` (Cimatron's
 the Program folder, read from the files (Cimatron need not run for this part). `CimatronComApi.Members` is matched to
 that listing.
 
-### Next run on the CAM PC (state of 2026-10-12, after the eighth probe and the first export)
+### Next run on the CAM PC (state of 2026-10-12, after the first published package)
+
+1. Copy `C:\cimatron-exporter\test-export\cimatron-export` into the Case's Working Folder on the share, import it
+   (Case → Operations → *Cimatron setup* → **Import Cimatron package...**), and open the program in the NC viewer:
+   toolpath and stock box must coincide.
+2. Send `cimatron-export\tools\cutters.csv` and `holders.csv`, so `tool-table.json` can take the tool sizes from them.
+3. With a tilted UCS active (for example `UCS11_3`), run `--probe` and send `probe-result.txt` (UCS layout line).
+
+### Earlier run on the CAM PC (after the eighth probe and the first export attempt)
 
 1. Unzip the current `installer\artifacts\cimatron-exporter.zip` over `C:\cimatron-exporter\`.
 2. In Cimatron, make a tilted UCS active (for example `UCS11_3`), then click the NC document's window.

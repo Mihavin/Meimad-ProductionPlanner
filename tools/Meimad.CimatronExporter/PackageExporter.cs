@@ -417,6 +417,13 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
             return null;
         }
 
+        // Programs called but not posted live on the machine (or are missing there): the simulation cannot follow them.
+        var posted = inside.Select(NcProgramSet.Read).ToArray();
+        if (NcProgramSet.CallsOutside(posted) is { Count: > 0 } outside)
+            log.Warning("nc", "nc_calls_unposted_programs",
+                $"The NC calls program(s) {string.Join(", ", outside)}, which the post did not write; they must exist on the machine, "
+                + "and the simulation does not follow them.");
+
         log.Ok("nc", $"Posted {relative} with '{options.Post}' by UCS '{options.Ucs}' ({state.Procedures.Count} procedure(s)); "
             + $"the post wrote {string.Join(", ", written.Select(path => Path.GetRelativePath(staging, path).Replace('\\', '/')))}.");
         return new PackageFileReference { Path = relative };
