@@ -1,5 +1,73 @@
 # Implementation Plan
 
+## TV Dashboard part picture in every Machine row (2026-10-12, schema v118; implemented locally on branch ws/tv)
+
+**Owner request (2026-10-12, `nc-viewer-visualization-spec.md` "TV Dashboard: картинка детали в строке станка",
+execution plan stage 8 / first-sprint item 7):** each TV row shows a picture of the current part next to the Part
+Number. This reverses the earlier rule that the TV hides part previews (functional spec §10 updated).
+
+**Implemented:**
+- Schema v118 `case_operation_thumbnails` (`package` and `snapshot` slot per Case Operation, content-checked image ≤ 10 MB
+  below the release root, recovery set, non-planning revision triggers) with `OperationThumbnailStore` and
+  `SqliteOperationThumbnailRepository`.
+- `GET/PUT/DELETE /api/v1/cases/{case}/operations/{op}/thumbnails[/{source}]` (`cases.edit`, `If-None-Match: *` /
+  `If-Match`, 412 with who/when) and `GET …/{source}/image`.
+- TV projection schema 3 / `dashboardBuild` `0.1.39`: `partName`, `thumbnailUrl`, `thumbnailVersion`, `thumbnailAlt`,
+  `thumbnailSource` per job; `displayStatus`, `warning`, `idlePart` per Machine; `previewUrl` removed.
+- `GET /api/v1/tv-dashboard/thumbnails/{version}`: a 192 px PNG re-encoded with the Windows imaging codecs
+  (`TvThumbnailRenderer`, in-memory cache by version), ETag/304, `max-age=3600`, GET only, served only for parts assigned
+  to or last worked on a display-enabled Machine.
+- TV page: fixed 96 px picture column (the width fit subtracts it, so the Part Number keeps its rem size), pictures
+  loaded once per version, old picture and Part Number kept until the new picture loads (10 s timeout → placeholder),
+  part-icon placeholder with the Part Number, Idle/Error words, ⚠ sign + word for warnings, `Offline · data from HH:MM`,
+  ERROR rows in the attention band. Still ES2015/flexbox only.
+- Windows client: `PlannerApiClient` thumbnail methods and the importer helper `SetOperationThumbnailAsync`; a **TV
+  picture of the selected Operation** card on the Case Workspace Operations tab (choose image, use Case picture, use the
+  3D view snapshot, remove), Hebrew/Russian texts.
+- `TvDashboard:ShowLastPartImageWhenIdle` (appsettings, default false).
+
+**Decisions taken (reversible; owner to confirm):**
+- *Priority keeps the specification's order*: the Case picture comes before the Operation's package thumbnail and
+  snapshot. A Case with a picture therefore shows the same picture for all its Operations; the Operation pictures
+  show only when the Case has none. The spec's acceptance line "the image matches the current Operation, not just the
+  last Case" is met in the sense that the picture is resolved from the current Operation's Case and Operation, never
+  from another Case. If the owner wants an Operation-specific picture to win, swap the order in
+  `TvDashboardService.Thumbnail` (one list) and the client card text. **TBD.**
+- *Thumbnail URL shape*: `/api/v1/tv-dashboard/thumbnails/{version}` with an opaque content-hash version instead of the
+  spec example `/parts/{partNumber}/thumbnail`, so the URL names no part or internal id, is per Operation and is
+  cacheable by version.
+- *Stale changes return 412* `resource_version_stale` with the conflict explanation (the repository's rule for
+  version mismatches, as for CAM setups and Case pictures); 409 stays for edit-authority conflicts.
+- *Warning sign*: `cnc_alarm` (CNC `ALARM`/`EMERGENCY_STOP`, also status ERROR) and `planning_blocked` (a blocking
+  Timeline conflict naming the current Operation, e.g. no qualified setup worker or missing timing). The TV previously
+  hid conflicts (Phase 10 note below); `planning_blocked` may be noisy on live data — check on the hall TV.
+  `collision` is reserved: the material-removal simulation runs in the Windows NC viewer and reports nothing to the
+  Server yet.
+- *"Last assigned part" for idle rows* is the part last worked on the Machine (`batch_operations.actual_machine_id`,
+  latest actual end/start), because finished or unassigned assignments are deleted unless a package was built. The
+  setting is configuration only; no Windows UI.
+- *Status words*: the owner's localized words stay (In production / בייצור / В производстве …); `displayStatus` adds
+  `IDLE` and `ERROR` words (Idle / פנויה / Простой, Error / תקלה / Ошибка).
+
+**Merge note:** this branch registers empty stand-in migrations v116/v117 (`SchemaV116V117ParallelWorkstreamPlaceholders.cs`,
+names `ws_tv_placeholder_v116/117`) only so v118 is contiguous; drop that commit when ws/dprnt (v116) and ws/pkg (v117)
+are merged. The Cimatron package import (ws/pkg) stores its finished-part PNG with
+`IPlannerApiClient.SetOperationThumbnailAsync(caseId, caseOperationId, OperationThumbnailSources.Package, fileName, png,
+clientId, packagePath)` (or `PUT …/thumbnails/package` from the Server side).
+
+**Verified locally:** `TvDashboardThumbnailTests` (priority, current Operation, placeholder, missing file skipped,
+192 px PNG, ETag/304, size limit, GET-only TV routes, 401/403 on changes, stale 412, recovery set, idle setting off/on,
+CNC alarm, v118 migration) and the updated `TvDashboardApiTests` (ES2015/flexbox guards); client
+`OperationThumbnailApiClientTests`, `OperationThumbnailViewModelTests`, `TvDashboardPageTests` (app.js in V8: load once
+per version, swap with the Part Number after loading, failure → placeholder, Idle/Error/warning words, offline time) and
+the localization catalog tests.
+
+**Not verified:** a physical Samsung Tizen TV (Chromium 47–94) — picture column layout, read distance, 51 px rows with
+16 Machines, image memory over a long run; the Windows imaging codecs inside the installed Windows Service account
+(verified only in the test host); the Case Workspace card on the factory PCs.
+
+## NC viewer background, Path selector and stock shading (2026-10-11; implemented locally)
+
 ## NC viewer background, Path selector and stock shading (2026-10-11; implemented locally)
 
 **Found:** three.js r185 assigns `WebGLRenderer.render` as an instance property in its constructor, so the wrapper's
@@ -1159,7 +1227,7 @@ Implemented deterministic tests use fixed UTC timestamps and cover same- and dif
 
 ## 13. Phase 10 - TV Dashboard
 
-**Implementation status:** Core LAN-served dashboard implemented. The dependency-free fullscreen UI uses one compact dark band per display-enabled Machine and shows Machine identity/connection, current Part, Batch/Operation, Operation name, large Started/Paused/Waiting/Completed text, calculated completion, and a thin progress bar. Idle bands explicitly report no current Operation. Part pictures, conflicts, and queued Operations are intentionally hidden. It conditionally auto-refreshes, visibly retains the last snapshot while offline, and has no edit controls. The GET-only projection supports ETags. Authentication, display groups, offline-device telemetry, target-TV visual acceptance, and managed kiosk deployment remain pending.
+**Implementation status:** Core LAN-served dashboard implemented. The dependency-free fullscreen UI uses one compact dark band per display-enabled Machine and shows Machine identity/connection, current Part, Batch/Operation, Operation name, large Started/Paused/Waiting/Completed text, calculated completion, and a thin progress bar. Idle bands explicitly report no current Operation. Conflicts and queued Operations are intentionally hidden (part pictures were hidden too until the owner's 2026-10-12 request; a small warning sign now marks a blocked current Operation). It conditionally auto-refreshes, visibly retains the last snapshot while offline, and has no edit controls. The GET-only projection supports ETags. Authentication, display groups, offline-device telemetry, target-TV visual acceptance, and managed kiosk deployment remain pending.
 
 ### Scope
 

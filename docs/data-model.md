@@ -1,5 +1,29 @@
 # Data Model
 
+## Case Operation thumbnails for the TV Dashboard (schema v118, 2026-10-12)
+
+`case_operation_thumbnails` holds at most one picture per Case Operation and source (primary key
+`(case_operation_id, source)`, cascade with the Case Operation):
+- `source`: `package` (the finished-part thumbnail of the Cimatron simulation package) or `snapshot` (a screenshot or
+  preview stored at import or uploaded from the Case Workspace / NC viewer);
+- `file_name`, `media_type` (`image/png`, `image/jpeg`, `image/bmp` or `image/gif`, checked by content), `file_size`
+  (at most 10 MB) and `file_hash` (SHA-256 hex, indexed; v118 also indexes `case_pictures.file_hash`);
+- `stored_relative_path`: below the G-code release root, `operation-thumbnails/<operation>/<sha256>.<ext>`, so the
+  recovery set backs it up with the releases;
+- `source_reference`: free text naming where the picture came from (a file, `Case picture`, `3D view snapshot`, a
+  package path), or null;
+- `version` (optimistic concurrency per slot), `updated_at`, `updated_by`.
+
+The TV Dashboard picture of a row is chosen at read time, in this order: the Case picture (`case_pictures`), the
+Operation's `package` thumbnail, its `snapshot`, otherwise a placeholder. The Operation is the Batch Operation's
+`source_case_operation_id`. Nothing about the picture is stored per Machine or per TV; the small TV image is rendered
+on demand and kept only in the Server's memory. Saving or removing a thumbnail appends a structured event
+(`case_operation_thumbnail_saved` / `_removed`). The triggers advance the all-input and non-planning revisions only:
+thumbnails are not planning inputs.
+
+`TvDashboard:ShowLastPartImageWhenIdle` (configuration, default false) lets an idle row show the part last worked on
+the Machine: the Batch Operation with that `actual_machine_id` and the latest actual end (else start).
+
 ## Case pictures on the Server (schema v115, 2026-10-11)
 
 `case_pictures` holds at most one picture per Case (`case_id` primary key, cascade with the Case):
@@ -659,7 +683,7 @@ The implemented Machine Board operation projection also includes the Production 
 
 ### 9.2 Implemented TV Dashboard projection
 
-The TV projection is transient and not persisted. It contains only active, display-enabled Machine identity, process type, first and second unfinished backlog Operations, current/upcoming downtime, calculated conflict summaries, and active-Order due-date urgency. It omits Working Folder paths, previews/packages, customer details, credentials, edit authority, and mutation links. “Current” provisionally means the first unfinished stored backlog item; urgency provisionally means Work Finish Date within the configured UTC cutoff (48 hours by default). Both definitions remain server-owned pending shop-floor execution and local-date decisions.
+The TV projection is transient and not persisted. It contains only active, display-enabled Machine identity, process type, first and second unfinished backlog Operations, current/upcoming downtime, calculated conflict summaries, and active-Order due-date urgency. Since schema 3 of the projection (2026-10-12) each job also carries the Case name and an opaque, content-hashed part-picture URL/version chosen as described under *Case Operation thumbnails for the TV Dashboard*, and each Machine a display status, an optional warning and the optional idle part. It omits Working Folder paths, file paths, packages, customer details, credentials, edit authority, and mutation links. “Current” provisionally means the first unfinished stored backlog item; urgency provisionally means Work Finish Date within the configured UTC cutoff (48 hours by default). Both definitions remain server-owned pending shop-floor execution and local-date decisions.
 
 ### 9.1 Implemented pure timeline model
 
