@@ -79,6 +79,8 @@
       top,
       base,
       extras: new Map(),
+      // Columns this program has cut (the mesh colors their faces by depth; the rest stays stock grey).
+      touched: new Uint8Array(nx * ny),
       undercut: false,
       masked: false,
       throughCut: 0,
@@ -169,6 +171,7 @@
       stock.top[index] = top;
       stock.base[index] = base;
       if (base > stock.bottom + EPSILON || stock.extras.has(index)) stock.undercut = true;
+      stock.touched[index] = 1;
       markDirty(stock, ix);
     }
     return changed;
@@ -252,6 +255,7 @@
     if (limited >= current - EPSILON) return false;
     if (limited > stock.base[index] + EPSILON) {
       stock.top[index] = limited;
+      stock.touched[index] = 1;
       markDirty(stock, ix);
       return true;
     }
@@ -706,9 +710,12 @@
   // Mill: the top surface grid, the underside of the topmost slab (the flat bottom, or the
   // ceiling of an undercut), walls where material meets air, and the undercut slabs as boxes.
   // Flat triangle positions that grow without copying every push.
-  function positionBuffer() {
+  // With `withFlags`, every triangle also records the buffer's current `flag` (0 or 1).
+  function positionBuffer(withFlags) {
     let data = new Float32Array(1 << 16);
     let length = 0;
+    let flags = withFlags ? new Uint8Array(1 << 13) : null;
+    let count = 0;
     const reserve = (count) => {
       if (length + count <= data.length) return;
       let size = data.length * 2;
@@ -718,7 +725,17 @@
       data = next;
     };
     return {
+      flag: 0,
       triangle(a, b, c) {
+        if (flags) {
+          if (count >= flags.length) {
+            const next = new Uint8Array(flags.length * 2);
+            next.set(flags);
+            flags = next;
+          }
+          flags[count] = this.flag;
+        }
+        count += 1;
         reserve(9);
         data[length] = a[0]; data[length + 1] = a[1]; data[length + 2] = a[2];
         data[length + 3] = b[0]; data[length + 4] = b[1]; data[length + 5] = b[2];
@@ -730,7 +747,8 @@
         this.triangle(a, b, c);
         this.triangle(a, c, d);
       },
-      result: () => data.slice(0, length)
+      result: () => data.slice(0, length),
+      flags: () => (flags ? flags.slice(0, count) : null)
     };
   }
 
@@ -790,8 +808,16 @@
   // walls wherever a column has material its neighbour lacks below their tops, and the stock's
   // bottom. A slot cut from the side shows as a slot, under an untouched top.
   function millTriangles(stock) {
+    return millSurface(stock, false).positions;
+  }
+
+  // The mill surface and, with `withCut`, one flag per triangle: 1 where it belongs to a column this
+  // program has cut (or borders one), 0 on the stock's own faces.
+  function millSurface(stock, withCut) {
     const { nx, ny, cell, originX, originY, top } = stock;
-    const out = positionBuffer();
+    const out = positionBuffer(withCut);
+    const touched = stock.touched;
+    const cutAt = (index) => (touched && touched[index] ? 1 : 0);
     const half = cell / 2;
     const maxX = originX + (nx - 1) * cell;
     const maxY = originY + (ny - 1) * cell;
@@ -801,6 +827,8 @@
     for (let iy = 0; iy < ny - 1; iy += 1) {
       for (let ix = 0; ix < nx - 1; ix += 1) {
         if (!solid(ix, iy) || !solid(ix + 1, iy) || !solid(ix + 1, iy + 1) || !solid(ix, iy + 1)) continue;
+        const i0 = iy * nx + ix;
+        out.flag = cutAt(i0) | cutAt(i0 + 1) | cutAt(i0 + nx) | cutAt(i0 + nx + 1);
         out.quad(at(ix, iy), at(ix + 1, iy), at(ix + 1, iy + 1), at(ix, iy + 1));
       }
     }
@@ -814,6 +842,7 @@
       const y1 = Math.min(maxY, y + half);
       let run = null;
       const flush = () => {
+        if (run) out.flag = run.cut;
         if (run) out.quad([run.x0, y0, run.lo], [run.x0, y1, run.lo], [run.x1, y1, run.lo], [run.x1, y0, run.lo]);
         run = null;
       };
@@ -827,6 +856,8 @@
         const x = originX + ix * cell;
         const x0 = Math.max(originX, x - half);
         const x1 = Math.min(maxX, x + half);
+        const cut = cutAt(index);
+        out.flag = cut;
         // A corner of the cell outside every full quad (the rim of a round blank or a shaped stock)
         // is closed flat at this point's height.
         for (const [sx, sy] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) {
@@ -841,11 +872,12 @@
         const count = columnSlabs(stock, index, slabs);
         // Undersides of every slab (the lowest one merged along the row) and tops of every slab under
         // the topmost one.
-        if (count && run && Math.abs(run.lo - slabs[0]) < EPSILON) run.x1 = x1;
+        if (count && run && run.cut === cut && Math.abs(run.lo - slabs[0]) < EPSILON) run.x1 = x1;
         else {
           flush();
-          if (count) run = { x0, x1, lo: slabs[0] };
+          if (count) run = { x0, x1, lo: slabs[0], cut };
         }
+        out.flag = cut;
         for (let k = 0; k < count; k += 2) {
           const lo = slabs[k];
           if (k > 0) out.quad([x0, y0, lo], [x0, y1, lo], [x1, y1, lo], [x1, y0, lo]);
@@ -863,6 +895,7 @@
           const neighbourSolid = !outside && !isEmpty(top[jy * nx + jx]);
           const limit = neighbourSolid ? Math.min(height, top[jy * nx + jx]) : height;
           const covered = neighbourSolid ? columnSlabs(stock, jy * nx + jx, cover) : 0;
+          out.flag = cut | (outside ? 0 : cutAt(jy * nx + jx));
           // Along the stock's outer edge the top surface runs straight between grid points, so the
           // wall's upper edge follows it: halfway to each neighbour along the edge.
           const along = (ax, ay) => (outside && solid(ix + ax, iy + ay) ? (height + top[(iy + ay) * nx + ix + ax]) / 2 : height);
@@ -904,7 +937,7 @@
       }
       flush();
     }
-    return out.result();
+    return { positions: out.result(), cut: out.flags() };
   }
 
   // Lathe: the outer and inner profiles revolved about Z (scene X/Y = radius plane).
@@ -1159,6 +1192,7 @@
     latheProfiles,
     triangles,
     millTriangles,
+    millSurface,
     latheTriangles,
     writeStl,
     readStl,

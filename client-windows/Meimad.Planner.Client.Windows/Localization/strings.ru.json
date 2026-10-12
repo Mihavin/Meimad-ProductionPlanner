@@ -5266,5 +5266,13 @@
   "Linked model files load automatically when the Case is selected (primary part model first; stock and fixtures are drawn translucent). Left-drag rotates, right-drag pans, the wheel zooms, and Fit resets the framing. Snapshot saves the current view as a PNG in the Working Folder's _MeimadPlanner folder and stores it on the Server as the Case picture.": "Связанные файлы моделей загружаются автоматически при выборе Case (сначала основная модель детали; заготовка и приспособления полупрозрачны). Левая кнопка вращает, правая сдвигает, колесо масштабирует, Fit сбрасывает вид. Snapshot сохраняет текущий вид как PNG в папке _MeimadPlanner рабочей папки и сохраняет его на сервере как изображение Case.",
   "3D view background": "Фон 3D-вида",
   "Default background": "Фон по умолчанию",
-  "Changes show at once; Save settings keeps them on this PC.": "Изменения видны сразу; Save settings сохраняет их на этом ПК."
+  "Changes show at once; Save settings keeps them on this PC.": "Изменения видны сразу; Save settings сохраняет их на этом ПК.",
+  "Run so far": "Пройденная часть",
+  "Whole path": "Вся траектория",
+  "Not yet run": "Ещё не пройденная часть",
+  "Run so far, rest faint": "Пройденная часть, остальное бледно",
+  "Hidden": "Скрыта",
+  "Which part of the toolpath is drawn during a run. Without a run in progress the whole toolpath shows (except Hidden).": "Какая часть траектории показывается во время прогона. Без активного прогона показывается вся траектория (кроме Hidden).",
+  "Rest material see-through": "Остаточный материал прозрачный",
+  "Draw the rest material transparent, so the toolpath inside it shows": "Показывать остаточный материал прозрачным, чтобы была видна траектория внутри него"
 }

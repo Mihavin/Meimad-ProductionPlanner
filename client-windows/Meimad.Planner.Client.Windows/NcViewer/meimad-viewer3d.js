@@ -23,14 +23,35 @@ export { SEGMENT_STYLES };
 export function createToolpathViewer(options) {
   const THREE = options.THREE;
   const captured = { scenes: [], groups: [], cameras: [], renderers: [] };
+  // The Path selector (meimad-path-visibility-core.js): the upstream line materials get a pick-id
+  // range test whose inputs every line material shares, so a mode or playback change is a uniform
+  // update, not a geometry rebuild.
+  const Path = typeof window !== "undefined" ? window.MeimadPathVisibility : undefined;
+  const pathUniforms = {
+    meimadPathMode: { value: 0 },
+    meimadBaseCount: { value: 0 },
+    meimadBaseThreshold: { value: 1 },
+    meimadCompensatedThreshold: { value: 1 },
+    meimadDim: { value: 1 }
+  };
+  let pathPatched = 0;
   // The module namespace is not writable, and an object derived from it cannot shadow its
-  // exports either (assignment delegates to the namespace), so the four constructors are
+  // exports either (assignment delegates to the namespace), so the constructors are
   // overridden on a plain copy of the namespace. If that ever fails the upstream viewer runs
   // unwrapped and the simulation stays off.
   let capturing = THREE;
   try {
     capturing = {
       ...THREE,
+      ...(Path && THREE.ShaderMaterial ? {
+        ShaderMaterial: class extends THREE.ShaderMaterial {
+          constructor(parameters, ...rest) {
+            const patched = parameters ? Path.patchLineShader(parameters.vertexShader) : null;
+            super(patched ? { ...parameters, vertexShader: patched, uniforms: { ...parameters.uniforms, ...pathUniforms } } : parameters, ...rest);
+            if (patched) pathPatched += 1;
+          }
+        }
+      } : {}),
       Scene: class extends THREE.Scene {
         constructor(...args) { super(...args); captured.scenes.push(this); }
       },
@@ -47,22 +68,23 @@ export function createToolpathViewer(options) {
           super({ powerPreference: "high-performance", ...parameters, alpha: true }, ...rest);
           captured.renderers.push(this);
           this.meimadTransparentBackground = false;
-        }
-
-        // Meimad scripts adjust the scene just before it is drawn, after the upstream viewer has set
-        // its own frames (meimad-machine-frame.js moves the part with a table that travels in X/Y).
-        // With a Meimad background the on-screen draw clears transparent; the picking pass (a render
-        // target) keeps the viewer's own clear color.
-        render(scene, camera) {
-          emit("beforeRender", scene);
-          const transparent = this.meimadTransparentBackground && this.getRenderTarget() === null;
-          const alpha = transparent ? this.getClearAlpha() : 1;
-          if (transparent) this.setClearAlpha(0);
-          try {
-            super.render(scene, camera);
-          } finally {
-            if (transparent) this.setClearAlpha(alpha);
-          }
+          // Meimad scripts adjust the scene just before it is drawn, after the upstream viewer has set
+          // its own frames (meimad-machine-frame.js moves the part with a table that travels in X/Y).
+          // With a Meimad background the on-screen draw clears transparent; the picking pass (a render
+          // target) keeps the viewer's own clear color. three.js assigns render as an instance
+          // property in its constructor, which would shadow a class method, so it is wrapped here.
+          const baseRender = this.render;
+          this.render = (scene, camera) => {
+            emit("beforeRender", scene);
+            const transparent = this.meimadTransparentBackground && this.getRenderTarget() === null;
+            const alpha = transparent ? this.getClearAlpha() : 1;
+            if (transparent) this.setClearAlpha(0);
+            try {
+              baseRender.call(this, scene, camera);
+            } finally {
+              if (transparent) this.setClearAlpha(alpha);
+            }
+          };
         }
       }
     };
@@ -104,9 +126,43 @@ export function createToolpathViewer(options) {
       if (!listeners.has(name)) listeners.set(name, new Set());
       listeners.get(name).add(listener);
       return () => listeners.get(name)?.delete(listener);
-    }
+    },
+    /** Path selector: "played", "all", "remaining", "dim" or "hidden". */
+    setPathMode(mode) {
+      if (!Path) return;
+      pathMode = Path.normalizeMode(mode);
+      storePathMode(pathMode);
+      applyPath();
+      // Marks the pick buffer dirty (hidden moves cannot be picked) and redraws.
+      upstream.setPlayback(upstreamPlayback(pathPlayback));
+    },
+    get pathMode() { return pathMode; },
+    get pathControl() { return pathActive(); }
   };
   window.meimadViewer3d = hooks;
+
+  let pathMode = Path ? Path.normalizeMode(readPathMode()) : "played";
+  let pathModel;
+  let pathFilters = {};
+  let pathPlayback;
+  let pathLayout = null;
+  // Without a patched shader (an upstream change) the vendored playback range stays in charge.
+  const pathActive = () => Boolean(Path && pathPatched);
+  function refreshPathLayout() {
+    pathLayout = pathActive() ? Path.index(pathModel, pathFilters) : null;
+  }
+  function applyPath() {
+    if (!pathActive()) return;
+    const values = Path.uniforms(pathMode, pathLayout, pathPlayback);
+    pathUniforms.meimadPathMode.value = values.mode;
+    pathUniforms.meimadBaseCount.value = values.baseCount;
+    pathUniforms.meimadBaseThreshold.value = values.baseThreshold;
+    pathUniforms.meimadCompensatedThreshold.value = values.compensatedThreshold;
+    pathUniforms.meimadDim.value = values.dim;
+  }
+  // The shader decides what is drawn, so the upstream viewer always keeps every instance.
+  const upstreamPlayback = (playback) => (pathActive() && playback && !playback.complete ? { ...playback, complete: true } : playback);
+  bindPathControl(pathActive(), pathMode);
   const wrapper = {
     dispose: () => upstream.dispose(),
     fit: () => upstream.fit(),
@@ -118,6 +174,9 @@ export function createToolpathViewer(options) {
     resize: () => upstream.resize(),
     setFilters(filters) {
       upstream.setFilters(filters);
+      pathFilters = filters || {};
+      refreshPathLayout();
+      applyPath();
       emit("filters", filters);
     },
     setFrame(frame) {
@@ -126,12 +185,17 @@ export function createToolpathViewer(options) {
     },
     setModel(model, modelOptions) {
       emit("model", model, modelOptions);
+      pathModel = model;
+      refreshPathLayout();
+      applyPath();
       upstream.setModel(model, modelOptions);
       emit("modelApplied", model);
     },
     setOptions: (viewOptions) => upstream.setOptions(viewOptions),
     setPlayback(playback) {
-      upstream.setPlayback(playback);
+      pathPlayback = playback;
+      applyPath();
+      upstream.setPlayback(upstreamPlayback(playback));
       emit("playback", playback);
     },
     setSelection(line, executionIndex) {
@@ -150,4 +214,34 @@ export function createToolpathViewer(options) {
   };
   window.dispatchEvent(new CustomEvent("meimad:viewer3d", { detail: hooks }));
   return wrapper;
+}
+
+const PATH_MODE_KEY = "meimad.ncViewer.pathMode";
+
+// This PC's last Path choice (a per-viewer convenience; storage may be unavailable).
+function readPathMode() {
+  try {
+    return window.localStorage?.getItem(PATH_MODE_KEY) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function storePathMode(mode) {
+  try {
+    window.localStorage?.setItem(PATH_MODE_KEY, mode);
+  } catch {
+    // Not remembered; the choice still applies.
+  }
+}
+
+// The Path selector next to Tool. It follows the current viewer (the page may create a new one).
+function bindPathControl(active, mode) {
+  const select = typeof document !== "undefined" ? document.getElementById("meimadPathMode") : null;
+  if (!select) return;
+  select.disabled = !active;
+  select.value = mode;
+  if (select.dataset.meimadBound) return;
+  select.dataset.meimadBound = "1";
+  select.addEventListener("change", () => window.meimadViewer3d?.setPathMode?.(select.value));
 }

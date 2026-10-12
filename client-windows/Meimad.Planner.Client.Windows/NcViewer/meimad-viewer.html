@@ -132,6 +132,15 @@
           <label>Tool
             <select id="toolFilter"><option value="all">All cutting tools</option></select>
           </label>
+          <label title="Which part of the toolpath is drawn during a run. Without a run in progress the whole toolpath shows (except Hidden).">Path
+            <select id="meimadPathMode">
+              <option value="played">Run so far</option>
+              <option value="all">Whole path</option>
+              <option value="remaining">Not yet run</option>
+              <option value="dim">Run so far, rest faint</option>
+              <option value="hidden">Hidden</option>
+            </select>
+          </label>
           <label id="g30XLabel">G30 X dia<input id="g30X" type="number" step="1"></label>
           <label id="g30ZLabel">G30 Z<input id="g30Z" type="number" step="1"></label>
           <label>Initial # vars<input id="initialMacros" type="text" spellcheck="false" placeholder="#500=0,#505=0"></label>
@@ -254,6 +263,7 @@
             <label class="check"><input id="meimadSceneMachine" type="checkbox" checked> Machine 3D models (Machine view)</label>
             <label class="check"><input id="meimadSceneFixtures" type="checkbox" checked> Fixtures</label>
             <label class="check"><input id="meimadSceneRest" type="checkbox" checked> Rest material</label>
+            <label class="check" title="Draw the rest material transparent, so the toolpath inside it shows"><input id="meimadSceneRestSeeThrough" type="checkbox"> Rest material see-through</label>
             <p id="meimadLatheNote" class="meimad-note"></p>
             <ul id="meimadSceneItems" class="meimad-scene-items"></ul>
             <div class="meimad-stock-actions">
@@ -631,9 +641,11 @@
   <script src="./meimad-axes-core.js"></script>
   <script src="./meimad-scene-core.js"></script>
   <script src="./meimad-lathe-axes-core.js"></script>
+  <script src="./meimad-path-visibility-core.js"></script>
   <script src="../media/preview.js"></script>
   <script src="./meimad-viewer.js"></script>
   <script src="./meimad-material.js"></script>
+  <script src="./meimad-lighting.js"></script>
   <script src="./meimad-simulation.js"></script>
   <script src="./meimad-tool-assembly.js"></script>
   <script src="./meimad-playback-core.js"></script>

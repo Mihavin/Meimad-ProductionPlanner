@@ -325,6 +325,49 @@ public sealed class MaterialRemovalCoreTests : IDisposable
     }
 
     [Fact]
+    public void Surface_flags_only_the_faces_this_program_cut_so_rest_material_stays_stock_colored()
+    {
+        // A rest material (an STL with a step from the previous Operation) cut by a pocket from above
+        // and a slot from the side: the step's faces are the stock's own, the pocket's and slot's are cut.
+        var result = Run("""
+            const blank = M.createMillStock({ minX: 0, maxX: 30, minY: 0, maxY: 30, minZ: -20, maxZ: 0 }, 0.5);
+            M.cutMillSegment(blank, [{ x: -5, y: 25, z: -5 }, { x: 35, y: 25, z: -5 }], { radius: 6, type: "end-mill" });
+            const rest = M.millStockFromStl(M.readStl(M.writeStl(M.millTriangles(blank), "rest")), 0.5);
+            const untouched = M.millSurface(rest, true);
+            M.cutMillSegment(rest, [{ x: 8, y: 8, z: -6 }, { x: 14, y: 8, z: -6 }], { radius: 3, type: "end-mill" });
+            M.cutMillSegment(rest, [{ x: 34, y: 10, z: -14 }, { x: 24, y: 10, z: -14 }], { radius: 2, type: "end-mill", length: 40 }, { x: 1, y: 0, z: 0 });
+            const surface = M.millSurface(rest, true);
+            const plain = M.millTriangles(rest);
+            const cutAt = (test) => {
+              let cut = 0, stock = 0;
+              for (let t = 0; t < surface.cut.length; t++) {
+                const p = surface.positions;
+                const x = (p[t * 9] + p[t * 9 + 3] + p[t * 9 + 6]) / 3, y = (p[t * 9 + 1] + p[t * 9 + 4] + p[t * 9 + 7]) / 3, z = (p[t * 9 + 2] + p[t * 9 + 5] + p[t * 9 + 8]) / 3;
+                if (!test(x, y, z)) continue;
+                if (surface.cut[t]) cut++; else stock++;
+              }
+              return { cut, stock };
+            };
+            return {
+              before: Array.from(untouched.cut).some((flag) => flag === 1),
+              sameMesh: plain.length === surface.positions.length && surface.cut.length * 9 === surface.positions.length,
+              pocketFloor: cutAt((x, y, z) => x > 8 && x < 14 && y > 7 && y < 9 && Math.abs(z + 6) < 0.01),
+              stepFloor: cutAt((x, y, z) => x > 2 && x < 28 && y > 22 && y < 28 && Math.abs(z + 5) < 0.01),
+              slotCeiling: cutAt((x, y, z) => x > 26 && x < 29.5 && y > 9.5 && y < 10.5 && Math.abs(z + 12) < 0.01),
+              bottom: cutAt((x, y, z) => x > 2 && x < 6 && y > 2 && y < 6 && Math.abs(z + 20) < 0.01)
+            };
+            """);
+        Assert.False(result.GetProperty("before").GetBoolean());
+        Assert.True(result.GetProperty("sameMesh").GetBoolean());
+        Assert.True(result.GetProperty("pocketFloor").GetProperty("cut").GetInt32() > 0);
+        Assert.Equal(0, result.GetProperty("pocketFloor").GetProperty("stock").GetInt32());
+        Assert.Equal(0, result.GetProperty("stepFloor").GetProperty("cut").GetInt32());
+        Assert.True(result.GetProperty("stepFloor").GetProperty("stock").GetInt32() > 0);
+        Assert.True(result.GetProperty("slotCeiling").GetProperty("cut").GetInt32() > 0);
+        Assert.Equal(0, result.GetProperty("bottom").GetProperty("cut").GetInt32());
+    }
+
+    [Fact]
     public void Round_blanks_have_no_material_outside_the_cylinder()
     {
         var result = Run("""

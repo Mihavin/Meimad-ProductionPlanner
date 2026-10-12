@@ -19,6 +19,8 @@
     machine: document.getElementById("meimadSceneMachine"),
     fixtures: document.getElementById("meimadSceneFixtures"),
     rest: document.getElementById("meimadSceneRest"),
+    restSeeThrough: document.getElementById("meimadSceneRestSeeThrough"),
+    materialRemoval: document.getElementById("meimadMaterialToggle"),
     items: document.getElementById("meimadSceneItems"),
     importButton: document.getElementById("meimadSceneImport"),
     status: document.getElementById("meimadSceneStatus")
@@ -73,21 +75,9 @@
     return meshes.get(url);
   }
 
+  // The shared camera-following rig (meimad-lighting.js).
   function ensureLights() {
-    if (!hooks || lights) return;
-    const existing = hooks.scene.getObjectByName("meimad-lights");
-    if (existing) {
-      lights = existing;
-      return;
-    }
-    const THREE = hooks.THREE;
-    lights = new THREE.Group();
-    lights.name = "meimad-lights";
-    const hemisphere = new THREE.HemisphereLight(0xffffff, 0x2a3038, 0.9);
-    const key = new THREE.DirectionalLight(0xffffff, 0.75);
-    key.position.set(1, -0.6, 1.4);
-    lights.add(hemisphere, key);
-    hooks.scene.add(lights);
+    if (hooks && window.MeimadLighting) lights = window.MeimadLighting.ensure(hooks);
   }
 
   function meshObject(positions, color, opacity, wireframe) {
@@ -216,8 +206,11 @@
       hooks.upstream.render();
       return;
     }
+    // While material removal runs, the cut stock is drawn by meimad-simulation.js; a rest material drawn
+    // over it would fight it for the same faces.
+    const cutting = Boolean(elements.materialRemoval && elements.materialRemoval.checked);
     const wanted = scene.items.filter((item) =>
-      (item.kind === "fixture" && elements.fixtures.checked) || (item.kind === "stock" && elements.rest.checked));
+      (item.kind === "fixture" && elements.fixtures.checked) || (item.kind === "stock" && elements.rest.checked && !cutting));
     if (!wanted.length) {
       hooks.upstream.render();
       return;
@@ -237,7 +230,7 @@
         if (model !== requested || fixtureGroup !== group) return;
         const placed = core.modelToDrawing(positions, workCs, { scale: scaleOf(), shift });
         group.add(item.kind === "stock"
-          ? meshObject(placed, REST_COLOR, 0.35)
+          ? meshObject(placed, REST_COLOR, elements.restSeeThrough && elements.restSeeThrough.checked ? 0.4 : 1)
           : meshObject(placed, FIXTURE_COLOR, 0.9));
       } catch (error) {
         status(`${item.name} could not be loaded: ${message(error)}`, "error");
@@ -394,6 +387,8 @@
   window.addEventListener("meimad:lathe-machine", () => drawMachineModels());
   elements.fixtures.addEventListener("change", drawFixtures);
   elements.rest.addEventListener("change", drawFixtures);
+  elements.restSeeThrough?.addEventListener("change", drawFixtures);
+  elements.materialRemoval?.addEventListener("change", drawFixtures);
   elements.importButton.addEventListener("click", importCimatron);
   if (window.meimadViewer3d) attach(window.meimadViewer3d);
   window.addEventListener("meimad:viewer3d", (event) => attach(event.detail));

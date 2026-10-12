@@ -1,5 +1,36 @@
 # Implementation Plan
 
+## NC viewer background, Path selector and stock shading (2026-10-11; implemented locally)
+
+**Found:** three.js r185 assigns `WebGLRenderer.render` as an instance property in its constructor, so the wrapper's
+`render` class method in `meimad-viewer3d.js` never ran: the 3D view background (transparent clear) and the
+`beforeRender` hook (`meimad-machine-frame.js`, travelling-table part frame) were dead. The cut stock colored every face
+below the stock's bounding box, so a rest-material STL came out almost entirely cyan/violet, and the shared light rig was
+mostly ambient (whichever of `meimad-scene.js` / `meimad-simulation.js` created it first). The rest material was drawn at
+35% opacity without depth writes. Tilted-axis removal was re-checked end to end (engine parse with the built-in and the
+published Machine Designer Doosan DVF 5000, `toolAxisInWorkpiece`, the material core and a headless render of 3000.nc):
+side pockets and bores cut by the B90 moves show. O2000 calls `G65 P9013` (a tilted work-offset macro) that is not in the
+file or the program memory, so its 3+2 sections are interpreted without it.
+
+**Implemented:**
+- `meimad-viewer3d.js` wraps the renderer's instance `render`; the background and the machine-frame hook now run.
+- Path selector next to *Tool* (`meimad-path-visibility-core.js`): run so far (default), whole path, not yet run, run so far
+  with the rest faint, hidden. The vendored line shader gets a pick-id range test with shared uniforms, and the upstream
+  viewer keeps every instance; without a run every mode but hidden draws the whole toolpath. Remembered in local storage.
+- `meimad-lighting.js`: one camera-following rig (key light over the viewer's left shoulder, weak fill and ambient).
+- `MeimadMaterial.millSurface` flags the triangles of columns this program cut (`stock.touched`); the page colors only those
+  by depth (sRGB palette converted to linear, high lightness so the shading reads) and keeps the stock's own faces grey.
+- Rest material is drawn solid by default, with a *Rest material see-through* option, and not over the cut stock while
+  material removal is on.
+
+**Verified locally:** `PathVisibilityCoreTests` (pick-id layout, every mode, the patch of the vendored shader text),
+`MaterialRemovalCoreTests.Surface_flags_only_the_faces_this_program_cut_so_rest_material_stays_stock_colored`,
+`NcViewerWrapperModuleTests` (instance `render` hook, transparent clear, shader patch, full upstream instance range), and
+the shading of 3000.nc rendered in headless Chrome. Not verified in the NC viewer window on the factory PCs.
+
+**Open:** the reported "removal only as projected in XY" on an inclined position was not reproduced on 3000.nc or O2000;
+it needs the program, the Machine and the view where it shows.
+
 ## Material removal grid and stock shading (2026-10-11; implemented locally)
 
 **Found:** with the cone-tool fix (0.1.205), a diagnostic of every cutting point of the largest Server releases

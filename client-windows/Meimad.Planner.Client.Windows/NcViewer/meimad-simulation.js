@@ -492,7 +492,7 @@
       return;
     }
     if (data.type === "surface") {
-      updateMesh(data.positions, data.kind);
+      updateMesh(data.positions, data.kind, data.cut);
       return;
     }
     if (data.type === "exported") {
@@ -523,28 +523,12 @@
 
   // ----- mesh ------------------------------------------------------------------------------------
 
+  // The shared camera-following rig (meimad-lighting.js), so cut floors and walls read by their shading.
   function ensureLights() {
-    if (lights || !hooks) return;
-    const THREE = hooks.THREE;
-    // One light rig for every Meimad mesh (meimad-scene.js reuses it by name).
-    const existing = hooks.scene.getObjectByName("meimad-lights");
-    if (existing) {
-      lights = existing;
-      return;
-    }
-    lights = new THREE.Group();
-    lights.name = "meimad-lights";
-    const hemisphere = new THREE.HemisphereLight(0xffffff, 0x2a3038, 0.55);
-    const key = new THREE.DirectionalLight(0xffffff, 1.05);
-    key.position.set(1, -0.6, 1.4);
-    // A weaker light from the other side so walls facing away from the key light still read.
-    const fill = new THREE.DirectionalLight(0xffffff, 0.4);
-    fill.position.set(-1, 0.8, 0.6);
-    lights.add(hemisphere, key, fill);
-    hooks.scene.add(lights);
+    if (hooks && window.MeimadLighting) lights = window.MeimadLighting.ensure(hooks);
   }
 
-  function updateMesh(positions, kind) {
+  function updateMesh(positions, kind, cut) {
     if (!hooks) return;
     const THREE = hooks.THREE;
     ensureLights();
@@ -552,7 +536,7 @@
       const geometry = new THREE.BufferGeometry();
       // Faceted, with a color per vertex (depthColors) so cut floors and walls stand apart from the top.
       const material = new THREE.MeshStandardMaterial({
-        color: 0xffffff, vertexColors: true, flatShading: true, roughness: 0.7, metalness: 0.1, side: THREE.DoubleSide
+        color: 0xffffff, vertexColors: true, flatShading: true, roughness: 0.82, metalness: 0.05, side: THREE.DoubleSide
       });
       mesh = new THREE.Mesh(geometry, material);
       mesh.renderOrder = 1;
@@ -560,7 +544,7 @@
       hooks.contentRoot.add(mesh);
     }
     mesh.geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    mesh.geometry.setAttribute("color", new THREE.BufferAttribute(depthColors(positions, kind), 3));
+    mesh.geometry.setAttribute("color", new THREE.BufferAttribute(depthColors(positions, kind, cut), 3));
     mesh.geometry.computeVertexNormals();
     mesh.geometry.computeBoundingSphere();
     mesh.visible = true;
@@ -569,11 +553,16 @@
     hooks.upstream.render();
   }
 
-  // Mill: the stock's own faces grey, cuts from light cyan (shallow) to violet (deep) by their depth
-  // below the nearest face of the stock's box (the top, a side or the bottom), so a pocket cut from
-  // the side by a tilted tool reads like one cut from above. Lathe: one light steel color (the shape
-  // reads from the faceted shading).
-  function depthColors(positions, kind) {
+  // Vertex colors are linear in three.js; the palette below is written as on-screen (sRGB) values.
+  const toLinear = (value) => (value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4));
+
+  // Mill: the stock's own faces (the blank, or the previous Operation's rest material) grey; faces this
+  // program cut from light cyan (shallow) to violet (deep) by their depth below the nearest face of
+  // the stock's box (the top, a side or the bottom), so a pocket cut from the side by a tilted tool
+  // reads like one cut from above. `cut` (one flag per triangle) marks the cut faces; without it a face
+  // counts as cut once it lies below the box. Lathe: one light steel color (the shape reads from the
+  // faceted shading).
+  function depthColors(positions, kind, cut) {
     const colors = new Float32Array(positions.length);
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let index = 0; index + 2 < positions.length; index += 3) {
@@ -591,16 +580,20 @@
     // The deepest a cut can reach: the middle of the box's thinnest direction.
     const range = Math.max(1e-6, Math.min(maxX - minX, maxY - minY, maxZ - minZ) / 2);
     const untouched = Math.max(0.02, Math.max(maxX - minX, maxY - minY, maxZ - minZ) * 0.002);
+    const stockR = toLinear(0.70), stockG = toLinear(0.72), stockB = toLinear(0.75);
+    const flags = cut && cut.length * 9 === positions.length ? cut : null;
     for (let index = 0; index + 2 < positions.length; index += 3) {
-      let r = 0.73, g = 0.76, b = 0.80;
-      if (kind !== "lathe") {
+      let r = stockR, g = stockG, b = stockB;
+      const isCut = flags ? flags[Math.floor(index / 9)] === 1 : true;
+      if (kind !== "lathe" && isCut) {
         const depth = depthOf(positions[index], positions[index + 1], positions[index + 2]);
-        if (depth > untouched) {
-          const t = Math.min(1, depth / range);
-          // HSL hue 190 deg (cyan) to 275 deg (violet), lighter when shallow.
+        if (flags || depth > untouched) {
+          const t = Math.min(1, Math.max(0, depth) / range);
+          // HSL hue 190 deg (cyan) to 275 deg (violet), slightly lighter when shallow. The lightness
+          // stays high so the lighting, not the color, shows floors, walls and fillets apart.
           const hue = (190 + 85 * t) / 360;
-          const lightness = 0.66 - 0.24 * t;
-          const saturation = 0.55;
+          const lightness = 0.74 - 0.1 * t;
+          const saturation = 0.42;
           const q = lightness < 0.5 ? lightness * (1 + saturation) : lightness + saturation - lightness * saturation;
           const p = 2 * lightness - q;
           const channel = (h) => {
@@ -610,9 +603,9 @@
             if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
             return p;
           };
-          r = channel(hue + 1 / 3);
-          g = channel(hue);
-          b = channel(hue - 1 / 3);
+          r = toLinear(channel(hue + 1 / 3));
+          g = toLinear(channel(hue));
+          b = toLinear(channel(hue - 1 / 3));
         }
       }
       colors[index] = r;

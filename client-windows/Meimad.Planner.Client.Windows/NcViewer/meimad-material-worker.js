@@ -11,7 +11,8 @@
 //                   { type: "export" }
 //   worker -> page  { type: "ready", cells, resolution }
 //                   { type: "progress", done, total, busy }
-//                   { type: "surface", positions (transferred), kind }
+//                   { type: "surface", positions (transferred), cut? (transferred, mill: 1 per triangle
+//                     on faces this program has cut), kind }
 //                   { type: "exported", stl (transferred) }
 //                   { type: "error", message }
 importScripts("./meimad-material.js");
@@ -113,8 +114,14 @@ function postSurface(force) {
   const now = Date.now();
   if (!force && now - lastSurfaceAt < 90) return;
   lastSurfaceAt = now;
-  const positions = Material.triangles(state.stock, 64);
-  self.postMessage({ type: "surface", positions, kind: state.kind, throughCut: state.stock.throughCut || 0 }, [positions.buffer]);
+  if (state.kind === "lathe") {
+    const positions = Material.triangles(state.stock, 64);
+    self.postMessage({ type: "surface", positions, kind: state.kind, throughCut: state.stock.throughCut || 0 }, [positions.buffer]);
+    return;
+  }
+  // A mill surface carries one flag per triangle: 1 on faces this program has cut.
+  const { positions, cut } = Material.millSurface(state.stock, true);
+  self.postMessage({ type: "surface", positions, cut, kind: state.kind, throughCut: state.stock.throughCut || 0 }, [positions.buffer, cut.buffer]);
 }
 
 function postProgress(busy) {

@@ -5266,5 +5266,13 @@
   "Linked model files load automatically when the Case is selected (primary part model first; stock and fixtures are drawn translucent). Left-drag rotates, right-drag pans, the wheel zooms, and Fit resets the framing. Snapshot saves the current view as a PNG in the Working Folder's _MeimadPlanner folder and stores it on the Server as the Case picture.": "קובצי המודל המקושרים נטענים אוטומטית כשנבחר Case (קודם מודל החלק הראשי; חומר הגלם וההתקנים מוצגים שקופים למחצה). גרירה שמאלית מסובבת, גרירה ימנית מזיזה, הגלגלת מגדילה, ו-Fit מאפס את המסגור. Snapshot שומר את התצוגה הנוכחית כ-PNG בתיקייה _MeimadPlanner שבתיקיית העבודה ושומר אותה בשרת כתמונת ה-Case.",
   "3D view background": "רקע תצוגת התלת-ממד",
   "Default background": "רקע ברירת מחדל",
-  "Changes show at once; Save settings keeps them on this PC.": "השינויים מוצגים מיד; Save settings שומר אותם במחשב זה."
+  "Changes show at once; Save settings keeps them on this PC.": "השינויים מוצגים מיד; Save settings שומר אותם במחשב זה.",
+  "Run so far": "מה שבוצע עד כה",
+  "Whole path": "כל המסלול",
+  "Not yet run": "מה שטרם בוצע",
+  "Run so far, rest faint": "מה שבוצע, השאר חלש",
+  "Hidden": "מוסתר",
+  "Which part of the toolpath is drawn during a run. Without a run in progress the whole toolpath shows (except Hidden).": "איזה חלק של מסלול הכלי מוצג בזמן הרצה. כשאין הרצה פעילה מוצג כל מסלול הכלי (חוץ מ-Hidden).",
+  "Rest material see-through": "חומר שארית שקוף",
+  "Draw the rest material transparent, so the toolpath inside it shows": "הצג את חומר השארית שקוף, כדי שמסלול הכלי שבתוכו ייראה"
 }
