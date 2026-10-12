@@ -1,5 +1,39 @@
 # Data Model
 
+## Measured work offsets (schema v116, 2026-10-12)
+
+`machine_work_offsets` keeps every measured work offset a Machine reported (DPRNT report program or the ingest
+endpoint) as append-only evidence:
+
+- references: `machine_id` (the Machine; for DPRNT the Machine whose channel delivered it), `case_operation_id`,
+  `program_release_id` (the `gcode_releases` row) - all restrictive and nullable, because unmatched evidence has
+  none of the Operation and release and may have no Machine;
+- the measurement: `work_offset` (stored spelling `G54`, `G54.1 P1`, `G154 P1`, `G15 H1`), `x_mm`, `y_mm`, `z_mm`,
+  `a_deg`, `b_deg`, `c_deg` (REAL, millimetres and degrees; inch reports are converted), `units` as reported
+  (`MM`, `INCH`);
+- evidence: `source` (`DPRNT_TCP`, `DPRNT_FILE`, `DPRNT_FTP`, `DPRNT_SERIAL`, `DPRNT`, or the API caller's token),
+  `source_session`, `session_key` (receiving Machine or named Machine + session, for the reuse check),
+  `source_sequence` (evidence only), `claimed_machine`, `claimed_program`, `claimed_operation`, `claimed_release`
+  (the identity text as sent), `raw_message` (the received lines), `raw_message_hash` (unique; SHA-256 of the
+  normalized message), `measured_at`, `received_at`, `received_by` (`DPRNT:<connection>` or the user);
+- decision: `initial_status` (`VALID`, `REVIEW_REQUIRED`, `REJECTED`, `UNMATCHED`), `status` (also `SUPERSEDED`),
+  `status_reason` (code), `supersedes_id` (the previous current record), `reviewed_by`, `reviewed_at`,
+  `review_comment`, `version`.
+
+Invariants (triggers and checks): rows are never deleted; the measurement, evidence and references never change;
+`status` moves only `VALID → SUPERSEDED` and `REVIEW_REQUIRED → VALID | REJECTED`, each with `version + 1`;
+`supersedes_id` may only be set once; `VALID`, `SUPERSEDED` and `REVIEW_REQUIRED` rows have the Machine, Operation,
+release, units and at least one linear value; a partial unique index allows one `VALID` row per Machine + Case
+Operation + NC release + work offset (the current measurement). A Machine with measurements cannot be deleted
+(deactivate it). The table is excluded from the Kitaron import staleness hash; its triggers advance the all-input
+and non-planning revisions only (measurements are not planning inputs).
+
+`WorkOffsets` configuration: `ReviewLinearThresholdMm` (1.0), `ReviewRotaryThresholdDeg` (0.5), `MaximumLinearMm`
+(10000), `MaximumRotaryDeg` (720).
+
+The shared DPRNT configuration (`CncDprntConfiguration`, connection JSON, no schema change) gains the `SERIAL` source
+with `serialPort`, `baudRate`, `parity`, `dataBits`, `stopBits` for FANUC FOCAS connections.
+
 ## Case pictures on the Server (schema v115, 2026-10-11)
 
 `case_pictures` holds at most one picture per Case (`case_id` primary key, cascade with the Case):

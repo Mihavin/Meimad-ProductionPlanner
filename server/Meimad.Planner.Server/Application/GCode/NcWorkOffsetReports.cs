@@ -40,7 +40,7 @@ internal sealed record NcWorkOffsetReport(string Dialect, string FileName, IRead
 /// No motion and no write: the program only reads the control's work offset variables.
 /// <list type="bullet">
 /// <item>Haas NGC: <c>DPRNT</c> between <c>G103 P1</c>/<c>G103 P0</c>; G54-G59 at #5221 + 20 per offset,
-/// G154 P1-P99 at #14001 + 20 per offset; axis n at +n-1 (X Y Z A B C); units from #4006.</item>
+/// G154 P1-P99 at #14001 + 20 per offset (P99 = #15961); axis n at +n-1 (X Y Z A B C); units from #4006.</item>
 /// <item>FANUC custom macro B: <c>POPEN</c>/<c>DPRNT</c>/<c>PCLOS</c>; G54-G59 at #5221 + 20 per offset,
 /// G54.1 P1-P48 at #7001 + 20 per offset, P49-P300 at #14001 + 20 per offset; axis n at +n-1.</item>
 /// <item>Mazak Matrix EIA: the FANUC form (same variables, POPEN/PCLOS tolerated by the DPR14 file device).</item>
@@ -88,8 +88,7 @@ internal static class NcWorkOffsetReports
     internal static NcWorkOffsetReport Okuma(NcWorkOffsetReportRequest request, string dialect)
     {
         // A .MIN main program: no O line (it would turn the file into a subprogram), M02 at the end.
-        var lines = new List<string> { "(MEIMAD WORK OFFSET REPORT)" };
-        lines.AddRange(Comments(request));
+        var lines = new List<string>(Comments(request));
         var sequence = "VC" + Invariant(request.SequenceVariable);
         lines.Add($"{sequence}=ROUND[{sequence}]");
         lines.Add($"IF [{sequence} LT 0] NMWO1");
@@ -135,7 +134,7 @@ internal static class NcWorkOffsetReports
 
     /// <summary>
     /// The custom-macro-B variable of one axis of one work offset. Haas NGC: G54-G59 #5221-#5326,
-    /// G154 P1-P99 #14001-#15986. FANUC/Mazak: G54-G59 #5221-#5340, G54.1 P1-P48 #7001-#7960,
+    /// G154 P1-P99 #14001-#15966. FANUC/Mazak: G54-G59 #5221-#5340, G54.1 P1-P48 #7001-#7960,
     /// G54.1 P49-P300 #14961-#19980.
     /// </summary>
     internal static int MacroBVariable(WorkOffsetName offset, int axisNumber, bool haas)
