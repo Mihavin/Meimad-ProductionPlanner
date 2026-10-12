@@ -262,8 +262,9 @@ three setups, each with its own stock procedure and toolpath; the export stopped
 lists them) posts only that toolpath with `PostByUcsByIdVec` (its procedure ids when the toolpath node writes nothing)
 and takes its setup's stock procedure as the initial stock. It also reads Cimatron's 9-value matrix as UCS axes in rows
 and transposes it: the face UCS origins of the eighth probe lie on stock faces with their Z axis pointing outward only
-in that reading. Still to confirm on the CAM PC: the layout check on a tilted active UCS and the nodes
-`PostByUcsByIdVec` accepts.
+in that reading. The second export posted the toolpath node of `TP_MODEL_0` (`6000.EIA`) and stopped at `nc_ambiguous` because the
+post also wrote `<document>.<toolpath>.<post>.Tools.html`; post reports are no longer NC candidates, and Cimatron's
+tool report becomes the package `toolReport`. Still to confirm on the CAM PC: the layout check on a tilted active UCS.
 
 **Open decision (Proposed, 2026-10-12): procedures with their own UCS.** The exporter definition (§6, §18) says the NC
 and the geometry share one "procedure UCS", the frame the post writes the NC in. In the Meimad 5-axis document probed on
@@ -273,7 +274,7 @@ post UCS (`--ucs`): procedures in other UCS give the warning `ucs_procedures_dif
 package stays blocked (`ucs_mismatch`) only with `ExecutePostToAllNcProcedures`, whose output frame is unknown. Reversible
 in `PackageExporter.ValidateState`; awaiting the owner's confirmation. Tests: `CimatronAccessorTests`,
 `CimatronBinderTests`, `CimatronExporterTests` (frame of the stock export, stock discovery); `SimulationPackages` suite
-85 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
+86 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
 ## TV Dashboard part picture in every Machine row (2026-10-12, schema v118; implemented locally on branch ws/tv)
 
 **Owner request (2026-10-12, `nc-viewer-visualization-spec.md` "TV Dashboard: картинка детали в строке станка",

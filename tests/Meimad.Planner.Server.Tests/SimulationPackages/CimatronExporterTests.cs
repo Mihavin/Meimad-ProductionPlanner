@@ -249,6 +249,22 @@ public sealed class CimatronExporterTests : IDisposable
     }
 
     [Fact]
+    public void Post_reports_are_not_nc_and_the_tool_report_is_kept()
+    {
+        using var api = new FakeCimatronApi { WritesPostReports = true };
+        var result = Run(api, Options());
+        Assert.True(result.Complete, result.Log.ToReport());
+        Assert.DoesNotContain(result.Log.Entries, entry => entry.Code == "nc_ambiguous");
+        var manifest = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(result.PackagePath!, "manifest.json")));
+        var files = manifest.GetProperty("files");
+        Assert.Equal("nc/O1001.nc", files.GetProperty("nc").GetProperty("path").GetString());
+        Assert.Equal("tools/PART_NC1.TP_MODEL_0.Mazak_5x.Tools.html", files.GetProperty("toolReport").GetProperty("path").GetString());
+        Assert.True(File.Exists(Path.Combine(result.PackagePath!, "tools", "PART_NC1.TP_MODEL_0.Mazak_5x.Tools.html")));
+        Assert.True(File.Exists(Path.Combine(result.PackagePath!, "metadata", "post-reports", "PART_NC1.TP_MODEL_0.Setup.pdf")));
+        Assert.False(File.Exists(Path.Combine(result.PackagePath!, "nc", "PART_NC1.TP_MODEL_0.Mazak_5x.Tools.html")));
+    }
+
+    [Fact]
     public void Procedures_in_another_ucs_warn_when_posted_by_ucs_and_block_otherwise()
     {
         // 5-axis work: each procedure has its own orientation UCS; PostByUcs still writes the NC relative to --ucs.
@@ -404,6 +420,7 @@ internal sealed class FakeCimatronApi : ICimatronApi
     public bool FailPost { get; init; }
     public bool FailRemainingStock { get; init; }
     public bool ExtraNcFile { get; init; }
+    public bool WritesPostReports { get; init; }
     public IReadOnlyList<string> UcsNames { get; init; } = ["UCS_OP010", "UCS_OP020"];
     public IReadOnlyList<double>? UcsMatrix { get; init; }
     public int FixtureCount { get; set; } = 2;
@@ -455,6 +472,15 @@ internal sealed class FakeCimatronApi : ICimatronApi
         if (FailPost) throw new CimatronApiException("cimatron_call_failed", "The post-processor stopped with an error.");
         var path = Path.Combine(folder, "O1001.nc");
         File.WriteAllBytes(path, NcBytes);
+        if (WritesPostReports)
+        {
+            // What Cimatron 2026.0's Mazak post wrote at Meimad on 2026-10-12, beside 6000.EIA.
+            var tools = Path.Combine(folder, "PART_NC1.TP_MODEL_0.Mazak_5x.Tools.html");
+            File.WriteAllText(tools, "<html><body><table><tr><td>T1</td><td>D10 FLAT</td></tr></table></body></html>");
+            var setup = Path.Combine(folder, "PART_NC1.TP_MODEL_0.Setup.pdf");
+            File.WriteAllText(setup, "%PDF-1.4");
+            return [path, tools, setup];
+        }
         if (!ExtraNcFile) return [path];
         var extra = Path.Combine(folder, "O1001_SUB.nc");
         File.WriteAllText(extra, "%\r\nO9001\r\nM99\r\n%\r\n");

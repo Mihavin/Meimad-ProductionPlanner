@@ -47,7 +47,7 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
                 Directory.CreateDirectory(Path.Combine(staging, folder));
             log.Ok("staging", $"Writing to {staging}.");
 
-            var nc = ExportNc(options, state, staging, log);
+            var nc = ExportNc(options, state, staging, log, out var toolReport);
             if (nc is null) return Finish(log, output, staging, options, null);
             var ncFacts = NcProgramScanner.ScanFile(Path.Combine(staging, nc.Path.Replace('/', Path.DirectorySeparatorChar)));
             var tools = ExportTools(options, staging, ncFacts, log);
@@ -114,6 +114,7 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
                     Holders = tools.Holders,
                     Materials = tools.Materials,
                     JobsXml = tools.JobsXml,
+                    ToolReport = toolReport,
                     CoordinateSystems = new PackageFileReference { Path = "metadata/coordinate-systems.json" },
                     Stock = [stock],
                     Fixtures = fixtures.Count == 0 ? null : fixtures,
@@ -305,8 +306,10 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
     }
 
     /// <summary>Step 3: post by UCS (fallback: post all, the UCS is still recorded). The NC text is never changed.</summary>
-    private PackageFileReference? ExportNc(ExportOptions options, ExportState state, string staging, ExportLog log)
+    private PackageFileReference? ExportNc(ExportOptions options, ExportState state, string staging, ExportLog log,
+        out PackageFileReference? toolReport)
     {
+        toolReport = null;
         var folder = Path.Combine(staging, "nc");
         IReadOnlyList<string> files;
         try
@@ -340,7 +343,29 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
             return null;
         }
 
-        var inside = files.Where(path => PackagePaths.IsUnder(path, folder) && File.Exists(path)).ToArray();
+        var written = files.Where(path => PackagePaths.IsUnder(path, folder) && File.Exists(path)).ToArray();
+        // Cimatron posts also write reports beside the NC (2026-10-12: "<document>.<toolpath>.<post>.Tools.html"). They are
+        // never NC candidates: the tool report goes to tools/ as the package's toolReport, any other report to
+        // metadata/post-reports/ (not listed in the manifest).
+        var inside = written.Where(path => !PostReport.IsReport(path)).ToArray();
+        foreach (var report in written.Where(PostReport.IsReport))
+        {
+            var name = Path.GetFileName(report);
+            if (toolReport is null && PostReport.IsToolReport(report))
+            {
+                File.Move(report, Path.Combine(staging, "tools", name));
+                toolReport = new PackageFileReference { Path = "tools/" + name };
+                log.Ok("nc", $"The post's tool report {name} is kept as the package tool report.");
+            }
+            else
+            {
+                var reports = Path.Combine(staging, "metadata", "post-reports");
+                Directory.CreateDirectory(reports);
+                File.Move(report, Path.Combine(reports, name));
+                log.Ok("nc", $"The post's report {name} is kept under metadata/post-reports.");
+            }
+        }
+
         if (inside.Length == 0)
         {
             log.Error("nc", "post_no_output", "The post-processor did not write an NC file into the package.");
@@ -748,4 +773,20 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         var rounded = Math.Round(value, 6);
         return rounded == 0 ? 0 : rounded;
     }
+}
+
+/// <summary>Files a Cimatron post writes beside the NC program that are reports, not NC.</summary>
+internal static class PostReport
+{
+    private static readonly HashSet<string> ReportExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".html", ".htm", ".mht", ".mhtml", ".pdf", ".xml", ".csv", ".log", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".bmp"
+    };
+
+    public static bool IsReport(string path) => ReportExtensions.Contains(Path.GetExtension(path));
+
+    /// <summary>Cimatron's tool report: "*.Tools.html" from the post, "*.TOOLS.mht" from the report templates.</summary>
+    public static bool IsToolReport(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() is ".html" or ".htm" or ".mht" or ".mhtml"
+        && Path.GetFileNameWithoutExtension(path).EndsWith(".tools", StringComparison.OrdinalIgnoreCase);
 }
