@@ -256,6 +256,9 @@ public sealed class CimatronExporterTests : IDisposable
         var result = Run(api, Options());
         Assert.True(result.Complete, result.Log.ToReport());
         Assert.DoesNotContain(result.Log.Entries, entry => entry.Code == "tool_data_from_nc");
+        // Meimad 2026-10-12: the validator read Cimatron's holders.csv as a comma CSV and called all 16 lines incomplete.
+        var log = File.ReadAllText(Path.Combine(result.PackagePath!, "metadata", "export-log.json"));
+        Assert.DoesNotContain("holder_dimensions_incomplete", log);
         Assert.Contains(result.Log.Entries, entry => entry.Message.Contains("from cutters.csv for T1, T2"));
         var table = ToolTableDocument.Parse(File.ReadAllText(Path.Combine(result.PackagePath!, "tools", "tool-table.json")));
         var t1 = table.Tools.Single(tool => tool.Number == 1);

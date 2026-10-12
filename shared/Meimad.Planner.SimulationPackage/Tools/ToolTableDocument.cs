@@ -123,10 +123,15 @@ public static partial class ToolTableReaders
             : null;
     }
 
-    /// <summary>Counts holder rows with a blank or zero dimension in a Cimatron holders CSV export.</summary>
+    /// <summary>
+    /// Counts holder rows with a blank or zero dimension in a holders CSV export: Cimatron's own layout
+    /// (<see cref="CimatronCsvTable"/>, holders whose stages lack a diameter or height), else a plain CSV with a header row.
+    /// </summary>
     public static async Task<int> CountIncompleteHolderRowsAsync(string path, CancellationToken cancellationToken)
     {
         var lines = await File.ReadAllLinesAsync(path, cancellationToken);
+        if (CimatronCsvTable.Read(lines, "7001") is var (rows, scale))
+            return rows.Count(row => CimatronCsvTable.Value(row, "7001") is not null && !CimatronCsvTable.Holder(row, scale).Complete);
         if (lines.Length < 2) return 0;
         var header = SplitCsv(lines[0]);
         var dimensionColumns = header

@@ -274,8 +274,11 @@ Exporter 0.1.3 published the first package (2026-10-12): Cimatron writes the pos
 came from the setup's stock procedure; the package passed the validation. Exporter 0.1.4 names called programs the post
 did not write (`nc_calls_unposted_programs`) and leaves `T0` out of the tool lists. The cutters/holders CSV of that export (UTF-16, `|`, column-ID rows) give every NC tool by
 magazine number; exporter 0.1.5 fills `tool-table.json` from them (diameter, corner radius, cut length, clear length as
-gauge length, tip type, taper angle, holder diameter and length from the holder stages). Still to confirm: the import
-and NC viewer check, and the layout check on a tilted active UCS.
+gauge length, tip type, taper angle, holder diameter and length from the holder stages). Confirmed by the 0.1.5
+export; its validator still read Cimatron's holders file as a comma CSV (`holder_dimensions_incomplete`, 16 rows).
+`CimatronCsvTable` (shared package library) now reads that layout for both the exporter and the validator, so the Server
+import loses the false warning once upgraded. Still to confirm: the import and NC viewer check, and the layout check on a
+tilted active UCS.
 
 **Open decision (Proposed, 2026-10-12): subprograms in a simulation package.** The package manifest has one `files.nc`
 and no subprogram role, while a Mazak post can write a main program plus subprogram files. Until decided, the exporter

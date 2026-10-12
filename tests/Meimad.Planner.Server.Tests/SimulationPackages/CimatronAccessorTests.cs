@@ -1,4 +1,5 @@
 using Meimad.CimatronExporter;
+using Meimad.Planner.SimulationPackage.Tools;
 
 namespace Meimad.Planner.Server.Tests.SimulationPackages;
 
@@ -11,7 +12,7 @@ namespace Meimad.Planner.Server.Tests.SimulationPackages;
 public sealed class CimatronAccessorTests
 {
     [Fact]
-    public void Cimatron_cutters_and_holders_csv_give_sizes_by_magazine_number()
+    public async Task Cimatron_cutters_and_holders_csv_give_sizes_by_magazine_number()
     {
         var folder = Directory.CreateTempSubdirectory("meimad-tool-csv-").FullName;
         try
@@ -31,6 +32,13 @@ public sealed class CimatronAccessorTests
             var taper = tools[40];
             Assert.Equal(("taper", 45.0), (taper.Type, taper.TaperAngleDeg!.Value));
             Assert.Equal((63.0, 99.5), (taper.HolderDiameterMm!.Value, taper.HolderLengthMm!.Value));
+
+            // The package validator reads the same holders file: both holders are complete.
+            Assert.Equal(0, await ToolTableReaders.CountIncompleteHolderRowsAsync(holders, CancellationToken.None));
+            File.WriteAllText(holders, CimatronToolCsvSamples.Holders().Replace("HOLDER-50_NEW||1|0|0|0||0|||0|0|50|50|0|65", "HOLDER-50_NEW||1|0|0|0||0|||0|0|50|50|0|0"),
+                System.Text.Encoding.Unicode);
+            Assert.Equal(1, await ToolTableReaders.CountIncompleteHolderRowsAsync(holders, CancellationToken.None));
+            CimatronToolCsvSamples.Write(cutters, holders);
 
             var ball = tools[3];
             Assert.Equal(("ball", 3.0), (ball.Type, ball.CornerRadiusMm!.Value));
