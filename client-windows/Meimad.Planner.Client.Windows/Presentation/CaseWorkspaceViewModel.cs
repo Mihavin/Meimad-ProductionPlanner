@@ -1047,11 +1047,22 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public string NewBatchStockQuantity { get => newBatchStockQuantity; set => SetField(ref newBatchStockQuantity, value); }
     public string NewBatchScrapAllowance { get => newBatchScrapAllowance; set => SetField(ref newBatchScrapAllowance, value); }
 
+    private IOperationThumbnailSink? thumbnailSink;
+
     /// <summary>
-    /// Receives the finished-part thumbnails of imported Cimatron packages (TV dashboard). Until the Server
-    /// has a thumbnail endpoint this is the pending sink; see <see cref="PendingOperationThumbnailSink"/>.
+    /// Receives the finished-part thumbnails of imported Cimatron packages: uploaded as the Operation's TV
+    /// picture (package slot) when the workspace has a Server connection, else kept in memory.
     /// </summary>
-    internal IOperationThumbnailSink ThumbnailSink { get; set; } = PendingOperationThumbnailSink.Instance;
+    internal IOperationThumbnailSink ThumbnailSink
+    {
+        get => thumbnailSink ?? (apiClient is { } api
+            ? new ServerOperationThumbnailSink(api, () => clientId, message => StatusMessage = message,
+                operationId => SelectedOperation?.CaseOperationId == operationId
+                    ? TvPicture.LoadAsync(SelectedCase?.CaseId, operationId)
+                    : Task.CompletedTask)
+            : PendingOperationThumbnailSink.Instance);
+        set => thumbnailSink = value;
+    }
 
     internal void ReportThumbnailProblem(string message) => StatusMessage = message;
 

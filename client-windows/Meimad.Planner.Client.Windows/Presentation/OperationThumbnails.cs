@@ -29,11 +29,8 @@ internal interface IOperationThumbnailSink
 }
 
 /// <summary>
-/// The sink in use until the Server has a thumbnail endpoint: it keeps the last thumbnail per Operation
-/// in memory and does nothing else.
-/// TODO(TV dashboard thumbnails, schema v118 workstream): replace with a sink that uploads
-/// <see cref="OperationThumbnail.Png"/> to the Server's Operation thumbnail endpoint (versioned by
-/// <see cref="OperationThumbnail.Sha256"/>) once that endpoint exists; do not invent it here.
+/// Keeps the last thumbnail per Operation in memory (the sink without a Server connection, and the local
+/// copy of <see cref="ServerOperationThumbnailSink"/>).
 /// </summary>
 internal sealed class PendingOperationThumbnailSink : IOperationThumbnailSink
 {
@@ -93,5 +90,34 @@ internal static class OperationThumbnailStore
         var invalid = Path.GetInvalidFileNameChars();
         var cleaned = new string(value.Select(c => invalid.Contains(c) ? '_' : c).ToArray()).Trim();
         return cleaned.Length == 0 ? "part" : cleaned;
+    }
+}
+
+/// <summary>
+/// Uploads a package's finished-part thumbnail as the Operation's <c>package</c> TV picture (schema v118,
+/// <c>PUT …/thumbnails/package</c>), replacing the previous one; the file saved in the Working Folder is the
+/// source reference. The picture is also kept in memory. A failed upload is reported through the callback
+/// and never undoes the import.
+/// </summary>
+internal sealed class ServerOperationThumbnailSink(
+    Api.IPlannerApiClient api,
+    Func<string> clientId,
+    Action<string>? reportProblem = null,
+    Func<string, Task>? uploaded = null) : IOperationThumbnailSink
+{
+    public async Task SubmitAsync(OperationThumbnail thumbnail, CancellationToken cancellationToken = default)
+    {
+        await PendingOperationThumbnailSink.Instance.SubmitAsync(thumbnail, cancellationToken);
+        try
+        {
+            await api.SetOperationThumbnailAsync(
+                thumbnail.CaseId, thumbnail.CaseOperationId, Api.OperationThumbnailSources.Package, "finished-part.png",
+                thumbnail.Png, clientId(), thumbnail.SavedPath, cancellationToken);
+            if (uploaded is not null) await uploaded(thumbnail.CaseOperationId);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            reportProblem?.Invoke($"The finished-part picture was saved but not sent to the Server for the TV: {exception.Message}");
+        }
     }
 }
