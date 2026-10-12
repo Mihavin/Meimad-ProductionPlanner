@@ -277,7 +277,13 @@ magazine number; exporter 0.1.5 fills `tool-table.json` from them (diameter, cor
 gauge length, tip type, taper angle, holder diameter and length from the holder stages). Confirmed by the 0.1.5
 export; its validator still read Cimatron's holders file as a comma CSV (`holder_dimensions_incomplete`, 16 rows).
 `CimatronCsvTable` (shared package library) now reads that layout for both the exporter and the validator, so the Server
-import loses the false warning once upgraded. Still to confirm: the import and NC viewer check, and the layout check on a
+import loses the false warning once upgraded. Two later runs failed in Cimatron's post (`GPP Runtime Error … Cannot move
+simultaneously in 3 axes during a 2.5X procedure`, procedure 5 of `TP_MODEL`); exporter 0.1.7 quotes such post-log errors
+(`post_stopped`). The published package was checked against its own data: the tilted sections are 3+2 work in frames
+rebuilt by the Mazak's orbit-home macro O9013 (`G65 P9013 I57 A… C…`), and turned back by Rz(C)·Rx(A) 99.9% of the tilted
+cutting points fall within 20 mm of the stock. **Open item:** the NC engine has no Mazak Variaxis i-500 profile (only
+Haas UMC-500 with its O09013 rule, Doosan DVF-5000, Chevalier), so the viewer cannot place these tilted sections until one
+is added with the machine's A/C senses. Still to confirm: the import and NC viewer check, and the layout check on a
 tilted active UCS.
 
 **Open decision (Proposed, 2026-10-12): subprograms in a simulation package.** The package manifest has one `files.nc`
@@ -295,7 +301,7 @@ post UCS (`--ucs`): procedures in other UCS give the warning `ucs_procedures_dif
 package stays blocked (`ucs_mismatch`) only with `ExecutePostToAllNcProcedures`, whose output frame is unknown. Reversible
 in `PackageExporter.ValidateState`; awaiting the owner's confirmation. Tests: `CimatronAccessorTests`,
 `CimatronBinderTests`, `CimatronExporterTests` (frame of the stock export, stock discovery); `SimulationPackages` suite
-91 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
+92 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
 ## TV Dashboard part picture in every Machine row (2026-10-12, schema v118; implemented locally on branch ws/tv)
 
 **Owner request (2026-10-12, `nc-viewer-visualization-spec.md` "TV Dashboard: картинка детали в строке станка",

@@ -368,7 +368,13 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
 
         if (inside.Length == 0)
         {
-            log.Error("nc", "post_no_output", "The post-processor did not write an NC file into the package.");
+            // Cimatron's GPP post explains a stop only in its log (2026-10-12: "Cannot move simultaneously in 3 axes during a
+            // 2.5X procedure"): quote its error lines.
+            var errors = PostReport.Errors(Path.Combine(staging, "metadata", "post-reports"));
+            log.Error("nc", errors.Count > 0 ? "post_stopped" : "post_no_output", errors.Count > 0
+                ? "The post-processor stopped without writing an NC file: " + string.Join(" ", errors)
+                  + " Correct the procedure in Cimatron (or post it there to see the same message) and export again."
+                : "The post-processor did not write an NC file into the package.");
             return null;
         }
 
@@ -852,6 +858,20 @@ internal static class PostReport
     };
 
     public static bool IsReport(string path) => ReportExtensions.Contains(Path.GetExtension(path));
+
+    /// <summary>The error lines of the post logs in a folder ("*** GPP Runtime Error …", "Execution Stopped!"), at most ten.</summary>
+    public static IReadOnlyList<string> Errors(string folder)
+    {
+        if (!Directory.Exists(folder)) return [];
+        return Directory.EnumerateFiles(folder, "*.log")
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .SelectMany(path => File.ReadLines(path))
+            .Select(line => line.Trim())
+            .Where(line => line.Contains("error", StringComparison.OrdinalIgnoreCase) || line.Contains("stopped", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.Ordinal)
+            .Take(10)
+            .ToArray();
+    }
 
     /// <summary>Cimatron's tool report: "*.Tools.html" from the post, "*.TOOLS.mht" from the report templates.</summary>
     public static bool IsToolReport(string path) =>

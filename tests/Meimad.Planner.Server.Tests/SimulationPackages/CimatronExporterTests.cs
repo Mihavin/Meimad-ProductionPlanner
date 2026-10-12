@@ -267,6 +267,18 @@ public sealed class CimatronExporterTests : IDisposable
     }
 
     [Fact]
+    public void A_stopped_post_is_reported_with_the_post_log_error()
+    {
+        using var api = new FakeCimatronApi { PostStops = true };
+        var result = Run(api, Options());
+        Assert.False(result.Complete);
+        var error = Assert.Single(result.Log.Entries, entry => entry.Code == "post_stopped");
+        Assert.Contains("Cannot move simultaneously in 3 axes during a 2.5X procedure", error.Message);
+        Assert.Contains("Execution Stopped!", error.Message);
+        Assert.DoesNotContain("Invalid XML file", error.Message);
+    }
+
+    [Fact]
     public void A_main_program_with_its_subprogram_is_exported_without_a_choice()
     {
         using var api = new FakeCimatronApi { WritesSubprogram = true };
@@ -465,6 +477,7 @@ internal sealed class FakeCimatronApi : ICimatronApi
     public string? NcSubfolder { get; init; }
     public bool WritesSubprogram { get; init; }
     public bool CimatronToolCsv { get; init; }
+    public bool PostStops { get; init; }
     public bool NoApiTools { get; init; }
     public IReadOnlyList<string> UcsNames { get; init; } = ["UCS_OP010", "UCS_OP020"];
     public IReadOnlyList<double>? UcsMatrix { get; init; }
@@ -515,6 +528,18 @@ internal sealed class FakeCimatronApi : ICimatronApi
     {
         PostCalls++;
         if (FailPost) throw new CimatronApiException("cimatron_call_failed", "The post-processor stopped with an error.");
+        if (PostStops)
+        {
+            // What Cimatron's GPP wrote at Meimad on 2026-10-12 when a 2.5-axis procedure had a 3-axis move: a log, the post XML, no NC.
+            var gppLog = Path.Combine(folder, "PART_NC1.TP_MODEL.GPP2.log");
+            File.WriteAllText(gppLog, "*** GPP Runtime Warning (TP , PROC  (0), UCS , BLOCK 84): Invalid XML file.!\r\n"
+                + "*** GPP Runtime Error (TP TP_MODEL, PROC 2.5 AXES-PROFILE OPEN CONTOUR (5), UCS MODEL, BLOCK 18): Cannot move simultaneously in 3 axes during a 2.5X procedure.!\r\n"
+                + "Execution Stopped!\r\n");
+            var xml = Path.Combine(folder, "PART_NC1.TP_MODEL.Mazak_5x.xml");
+            File.WriteAllText(xml, "<Data/>");
+            return [gppLog, xml];
+        }
+
         var ncFolder = NcSubfolder is null ? folder : Directory.CreateDirectory(Path.Combine(folder, NcSubfolder)).FullName;
         var path = Path.Combine(ncFolder, "O1001.nc");
         File.WriteAllBytes(path, NcBytes);
