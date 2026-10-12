@@ -247,7 +247,13 @@ file from the out parameter, `NcExportJobsData` given a folder. Cimatron 2026.0 
 or the part/fixture STL; the exporter takes `--stock-file`, else the single `STOCK*.stl` beside the document
 (`stock_ambiguous` when several), and `--geometry-folder`. Open until the next probe from a normal window: whether
 `GetActiveApplication` reaches the user's instance (else Cimatron's setup Repair), the process-manager XML layout, the
-UCS matrix layout (translation column or row), and what `NcExportJobsData` writes. Tests: `CimatronAccessorTests`,
+UCS matrix layout (translation column or row), and what `NcExportJobsData` writes. The sixth probe (normal window)
+reached the user's instance and NC document through `GetActiveApplication` and saved the process-manager XML. Adapter
+`cimatron-com-4` reads its `NCFullReport` layout (procedure UCS in `UCS_Name`, toolpath name as operation, target-part
+and stock procedures outside the toolpaths not machining), fixes the UCS entity query (`CreateFilter(cmFilterEntityType)`
+then `IFilterType.Add(cmUcs)`), looks for `STOCK*.stl` in the `NC` folder holding the document folder, writes the probe to
+`probe-result.txt` in UTF-8, and tries the remaining stock of the stock-defining procedure as a candidate initial stock
+(probe only). Tests: `CimatronAccessorTests`,
 `CimatronBinderTests`, `CimatronExporterTests` (frame of the stock export, stock discovery); `SimulationPackages` suite
 80 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
 ## TV Dashboard part picture in every Machine row (2026-10-12, schema v118; implemented locally on branch ws/tv)

@@ -24,7 +24,7 @@ namespace Meimad.CimatronExporter;
 /// </summary>
 internal sealed class CimatronComApi : ICimatronApi
 {
-    internal const string Version = "cimatron-com-3";
+    internal const string Version = "cimatron-com-4";
     internal const string AppAccessProgId = "CimAppAccess.AppAccess";
 
     /// <summary>How the last <see cref="Connect"/> reached Cimatron (null: the registered ProgID).</summary>
@@ -56,6 +56,7 @@ internal sealed class CimatronComApi : ICimatronApi
         internal const string CreateFilter = "CreateFilter";
         internal const string SetFilter = "SetFilter";
         internal const string SelectEntities = "Select";
+        internal const string FilterAdd = "Add";
         internal const string Transformation = "Transformation";
         internal static readonly string[] Matrix = ["Matrix", "Tranformation"];
         internal const string Vector = "Vector";
@@ -69,7 +70,10 @@ internal sealed class CimatronComApi : ICimatronApi
         internal static readonly string[] Path = ["GetPath", "Path", "FullName"];
         internal static readonly string[] EntityId = ["ID", "Id", "GetId"];
 
-        /// <summary><c>EntityEnumType.cmUcs</c>.</summary>
+        /// <summary><c>EFilterEnumType.cmFilterEntityType</c>: the kind of filter <c>CreateFilter</c> makes (an IFilterType).</summary>
+        internal const int EntityTypeFilter = 3;
+
+        /// <summary><c>EntityEnumType.cmUcs</c>, added to the entity-type filter with <c>IFilterType.Add</c>.</summary>
         internal const int UcsEntityType = 9;
 
         /// <summary><c>NcUcsType.cmNcProcUcs</c> and <c>cmNcModelUcs</c>.</summary>
@@ -309,8 +313,11 @@ internal sealed class CimatronComApi : ICimatronApi
         string entityLine;
         try
         {
-            var entityNames = UcsEntities().Select(ucs => TryGetString(ucs, Members.Name) ?? "(no name)").ToArray();
-            entityLine = $"UCS entities (entity query, type {Members.UcsEntityType}): {(entityNames.Length == 0 ? "none" : string.Join(", ", entityNames))}";
+            var entities = UcsEntities().ToArray();
+            var entityNames = entities.Select(ucs => TryGetString(ucs, Members.Name) ?? "(no name)").ToArray();
+            entityLine = $"UCS entities (entity-type filter, cmUcs): {entities.Length}: {(entityNames.Length == 0 ? "none" : string.Join(", ", entityNames))}";
+            if (entities.Length > 0 && Binder is not null)
+                entityLine += Environment.NewLine + "Interfaces of the first UCS entity: " + Join(Binder.Interfaces(entities[0]));
         }
         catch (CimatronApiException exception)
         {
@@ -322,7 +329,45 @@ internal sealed class CimatronComApi : ICimatronApi
         var data = ProcessManager();
         yield return data is null
             ? "Process manager XML: not available"
-            : $"Process manager XML: {data.Procedures.Count} procedure(s) read, UCS names {(data.UcsNames.Count == 0 ? "none" : string.Join(", ", data.UcsNames))}";
+            : $"Process manager XML: {data.Procedures.Count} procedure(s) read, UCS names {(data.UcsNames.Count == 0 ? "none" : string.Join(", ", data.UcsNames))}, "
+                + $"stock-defining procedure(s) {(data.StockProcedures.Count == 0 ? "none" : string.Join(", ", data.StockProcedures))}";
+        if (data is null || Find(Members.RemainingStock) is null) yield break;
+
+        // Experiment: does the remaining stock of the stock-defining procedure give the initial stock? Cimatron 2026.0
+        // has no initial-stock export; this writes only a temporary file.
+        foreach (var id in data.StockProcedures.Take(2))
+            yield return StockExperiment(id, $"stock-defining procedure {id}");
+    }
+
+    // ExportProceduresRemainingStock(id, cmNcModelUcs, temp file): what Cimatron answered, and the STL it wrote.
+    private string StockExperiment(int procedureId, string label)
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"meimad-stock-probe-{Guid.NewGuid():N}.stl");
+        try
+        {
+            var (result, outputs) = Invoke(Require(Members.RemainingStock), Members.RemainingStock, procedureId, Members.ModelUcsType, file);
+            var created = outputs.OfType<bool>().Cast<bool?>().FirstOrDefault() ?? result as bool?;
+            if (!File.Exists(file)) return $"Remaining stock of {label}: answered {created?.ToString() ?? "nothing"}, no file written";
+            var length = new FileInfo(file).Length;
+            var triangles = length >= 84 ? BitConverter.ToUInt32(File.ReadAllBytes(file), 80) : 0;
+            var binary = length == 84 + 50L * triangles;
+            return $"Remaining stock of {label}: answered {created?.ToString() ?? "nothing"}, {length} bytes, "
+                + (binary ? $"binary STL with {triangles} triangles" : "not a binary STL (ASCII or other)");
+        }
+        catch (CimatronApiException exception)
+        {
+            return $"Remaining stock of {label}: {exception.Message}";
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(file)) File.Delete(file);
+            }
+            catch (IOException)
+            {
+            }
+        }
     }
 
     public CimatronDocumentInfo GetActiveNcDocument()
@@ -514,13 +559,16 @@ internal sealed class CimatronComApi : ICimatronApi
         }
     }
 
-    // UCS entities of the NC model through its entity query: CreateFilter(cmUcs) -> SetFilter -> Select.
+    // UCS entities of the NC model through its entity query: CreateFilter(cmFilterEntityType) -> IFilterType.Add(cmUcs)
+    // -> SetFilter -> Select. (cimatron-com-3 passed cmUcs to CreateFilter, which is cmFilterWireBody there: the probe
+    // of 2026-10-12 got about 100 unnamed wire bodies.)
     private IEnumerable<object> UcsEntities()
     {
         if (model is null || !HasMember(model, Members.CreateFilter) || !HasMember(model, Members.SetFilter) || !HasMember(model, Members.SelectEntities))
             return [];
-        var filter = Result(Invoke(model, Members.CreateFilter, Members.UcsEntityType));
-        if (filter is null) return [];
+        var filter = Result(Invoke(model, Members.CreateFilter, Members.EntityTypeFilter));
+        if (filter is null || !HasMember(filter, Members.FilterAdd)) return [];
+        Call(filter, Members.FilterAdd, Members.UcsEntityType);
         Call(model, Members.SetFilter, filter);
         var list = Result(Invoke(model, Members.SelectEntities));
         return Enumerate(list).ToArray();

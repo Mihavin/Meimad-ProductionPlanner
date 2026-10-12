@@ -3,15 +3,23 @@ using System.Xml.Linq;
 
 namespace Meimad.CimatronExporter;
 
-/// <summary>What the process-manager XML of an NC document said: its procedures and the UCS names it mentions.</summary>
-internal sealed record ProcessManagerData(IReadOnlyList<CimatronProcedure> Procedures, IReadOnlyList<string> UcsNames);
+/// <summary>
+/// What the process-manager XML of an NC document said: its procedures, the UCS names it mentions, and the procedures
+/// that define stock (outside any toolpath, e.g. Cimatron's "Stock By Contours").
+/// </summary>
+internal sealed record ProcessManagerData(IReadOnlyList<CimatronProcedure> Procedures, IReadOnlyList<string> UcsNames,
+    IReadOnlyList<int>? StockProcedureIds = null)
+{
+    internal IReadOnlyList<int> StockProcedures => StockProcedureIds ?? [];
+}
 
 /// <summary>
-/// Reads Cimatron's process manager XML (<c>INcModel.GetProcessManagerAsXML</c>, Cimatron 2026.0) without knowing its
-/// exact schema: the element and attribute names are matched by meaning (an element whose name mentions a procedure
-/// with an id-like attribute; a name-like attribute; a UCS mentioned in an attribute, a child element or a parameter
-/// row). The first real export at Meimad will show the actual layout; the probe prints both the file and what was
-/// read from it so the rules can be tightened.
+/// Reads Cimatron's process manager XML (<c>INcModel.GetProcessManagerAsXML</c>). Cimatron 2026.0 at Meimad writes an
+/// <c>NCFullReport</c>: <c>Setup</c> → <c>SetupFolder</c> → <c>ToolPath Name=…</c> (with <c>ToolPath_UCS Value=…</c>) →
+/// <c>ToolpathFolder</c> → <c>Procedure Name=… ID=…</c>, where the procedure UCS is <c>UCS_Name Value=…</c> under its
+/// <c>GridParameters</c> and parameter rows are elements such as <c>Procedure_Status Value=…</c>. Procedures directly in
+/// the setup folder (target part, stock) have no toolpath. Other layouts are still matched by meaning (an element named
+/// like a procedure with an id-like attribute, a UCS in an attribute, a child element or a parameter row).
 /// </summary>
 internal static class ProcessManagerXml
 {
@@ -35,14 +43,16 @@ internal static class ProcessManagerXml
 
         var procedures = new List<CimatronProcedure>();
         var ucsNames = new List<string>();
+        var stock = new List<int>();
         var seen = new HashSet<int>();
+        var hasToolpaths = document.Descendants().Any(IsToolpath);
         foreach (var element in document.Descendants())
         {
             var local = element.Name.LocalName;
             if (local.Contains("ucs", StringComparison.OrdinalIgnoreCase) && !local.Contains("proc", StringComparison.OrdinalIgnoreCase))
             {
-                var ucsName = Attribute(element, NameNames) ?? Text(element);
-                if (!string.IsNullOrWhiteSpace(ucsName)) ucsNames.Add(ucsName.Trim());
+                var ucsName = UcsValue(element);
+                if (ucsName is not null) ucsNames.Add(ucsName);
                 continue;
             }
 
@@ -50,33 +60,66 @@ internal static class ProcessManagerXml
             var id = Int(Attribute(element, IdNames));
             if (id is null || !seen.Add(id.Value)) continue;
             var name = Attribute(element, NameNames) ?? $"Procedure {id}";
-            var ucs = Ucs(element);
+            var toolpath = element.Ancestors().FirstOrDefault(IsToolpath);
+            var ucs = Ucs(element) ?? (toolpath is null ? null : ToolpathUcs(toolpath));
             if (ucs is not null) ucsNames.Add(ucs);
-            procedures.Add(new CimatronProcedure(id.Value, name, ucs, HasToolpath(element), OperationOf(element)));
+            var machining = !hasToolpaths || toolpath is not null;
+            if (!machining && IsStockDefinition(element, name)) stock.Add(id.Value);
+            procedures.Add(new CimatronProcedure(id.Value, name, ucs, machining && HasToolpath(element), OperationOf(element)));
         }
 
-        return new ProcessManagerData(procedures, ucsNames.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+        return new ProcessManagerData(procedures, ucsNames.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), stock);
     }
 
-    // An element that is one procedure: its name says so, or its type attribute does; containers ("Procedures") and
-    // rows without an id are skipped.
+    // An element that is one procedure: its name says so (a single word such as "Procedure"; parameter rows such as
+    // "Procedure_Comment" and containers such as "Procedures" or "ProcedureParameters" are not), or its type attribute does.
     private static bool IsProcedure(XElement element)
     {
         var local = element.Name.LocalName;
-        var named = local.Contains("proc", StringComparison.OrdinalIgnoreCase) && !local.EndsWith("s", StringComparison.OrdinalIgnoreCase)
-            || local.Equals("Item", StringComparison.OrdinalIgnoreCase) || local.Equals("Node", StringComparison.OrdinalIgnoreCase);
-        if (!named)
+        bool named;
+        if (local.Equals("Item", StringComparison.OrdinalIgnoreCase) || local.Equals("Node", StringComparison.OrdinalIgnoreCase))
         {
-            var type = Attribute(element, ["type", "itemtype", "kind", "nctype"]);
-            named = type is not null && type.Contains("proc", StringComparison.OrdinalIgnoreCase);
+            named = TypeSaysProcedure(element);
         }
-        else if (local.Equals("Item", StringComparison.OrdinalIgnoreCase) || local.Equals("Node", StringComparison.OrdinalIgnoreCase))
+        else
         {
-            var type = Attribute(element, ["type", "itemtype", "kind", "nctype"]);
-            named = type is not null && type.Contains("proc", StringComparison.OrdinalIgnoreCase);
+            named = local.Contains("proc", StringComparison.OrdinalIgnoreCase) && !local.Contains('_')
+                && !local.EndsWith("s", StringComparison.OrdinalIgnoreCase);
+            if (!named) named = TypeSaysProcedure(element);
         }
 
         return named && Attribute(element, IdNames) is not null;
+    }
+
+    private static bool TypeSaysProcedure(XElement element)
+    {
+        var type = Attribute(element, ["type", "itemtype", "kind", "nctype"]);
+        return type is not null && type.Contains("proc", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // A toolpath (Cimatron's operation level): "ToolPath Name=…", not its folders or parameter blocks.
+    private static bool IsToolpath(XElement element)
+    {
+        var local = element.Name.LocalName;
+        return local.Contains("toolpath", StringComparison.OrdinalIgnoreCase) && !local.Contains('_')
+            && !local.EndsWith("Folder", StringComparison.OrdinalIgnoreCase) && !local.EndsWith("Parameters", StringComparison.OrdinalIgnoreCase)
+            && Attribute(element, NameNames) is not null;
+    }
+
+    // A stock-defining procedure outside the toolpaths: a Stock_Type parameter, or a name such as "Stock By Contours_3".
+    private static bool IsStockDefinition(XElement element, string name) =>
+        name.StartsWith("Stock", StringComparison.OrdinalIgnoreCase)
+        || element.Descendants().Any(row => row.Name.LocalName.Equals("Stock_Type", StringComparison.OrdinalIgnoreCase));
+
+    // The value an element mentioning a UCS carries: a name attribute, a Value attribute (not the "Access" button of
+    // "Create_UCS", not an empty group row such as "Clearance___UCS"), or its text.
+    private static string? UcsValue(XElement element)
+    {
+        if (element.Name.LocalName.StartsWith("Create", StringComparison.OrdinalIgnoreCase)) return null;
+        var value = Attribute(element, NameNames) ?? Attribute(element, ParameterValueNames) ?? Text(element);
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        value = value.Trim();
+        return value.Equals("Access", StringComparison.OrdinalIgnoreCase) ? null : value;
     }
 
     private static string? Ucs(XElement element)
@@ -87,14 +130,16 @@ internal static class ProcessManagerXml
                 return attribute.Value.Trim();
         }
 
-        foreach (var child in element.Elements())
+        // Cimatron's own rows: <UCS_Name Value="…"/> (preferred) or another UCS-named row below the procedure.
+        var rows = element.Descendants().Where(row => row.Name.LocalName.Contains("ucs", StringComparison.OrdinalIgnoreCase)).ToArray();
+        foreach (var row in rows.Where(row => row.Name.LocalName.Equals("UCS_Name", StringComparison.OrdinalIgnoreCase)))
         {
-            var local = child.Name.LocalName;
-            if (local.Contains("ucs", StringComparison.OrdinalIgnoreCase))
-            {
-                var value = Attribute(child, NameNames) ?? Attribute(child, ParameterValueNames) ?? Text(child);
-                if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
-            }
+            if (UcsValue(row) is { } value) return value;
+        }
+
+        foreach (var row in rows)
+        {
+            if (UcsValue(row) is { } value) return value;
         }
 
         // A parameter row: <Parameter Name="UCS" Value="UCS_OP010"/> anywhere below the procedure.
@@ -109,22 +154,41 @@ internal static class ProcessManagerXml
         return null;
     }
 
+    // The toolpath's own UCS (ToolPath_UCS in its parameter block), used for procedures that name none (e.g. Drill 5x).
+    private static string? ToolpathUcs(XElement toolpath) =>
+        toolpath.Elements()
+            .Where(child => child.Name.LocalName.EndsWith("Parameters", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(child => child.Descendants())
+            .Where(row => row.Name.LocalName.Contains("ucs", StringComparison.OrdinalIgnoreCase))
+            .Select(UcsValue)
+            .FirstOrDefault(value => value is not null);
+
     private static bool HasToolpath(XElement element)
     {
         var value = Attribute(element, ToolpathNames);
+        if (value is null)
+        {
+            var status = element.Descendants()
+                .FirstOrDefault(row => row.Name.LocalName.Equals("Procedure_Status", StringComparison.OrdinalIgnoreCase));
+            value = status is null ? null : Attribute(status, ParameterValueNames);
+        }
+
         if (value is null) return true;
         var text = value.Trim().ToLowerInvariant();
-        return text is not ("false" or "0" or "no" or "notcalculated" or "not calculated" or "dirty" or "uncalculated");
+        if (text.Contains("succeeded")) return true;
+        return text is not ("false" or "0" or "no" or "dirty" or "uncalculated" or "notcalculated")
+            && !text.Contains("not calculated") && !text.Contains("fail");
     }
 
-    // The nearest ancestor that looks like an operation, setup or job gives the operation name.
+    // The nearest ancestor that looks like a toolpath, operation, setup or job gives the operation name.
     private static string? OperationOf(XElement element)
     {
         foreach (var ancestor in element.Ancestors())
         {
             var local = ancestor.Name.LocalName;
-            if (local.Contains("oper", StringComparison.OrdinalIgnoreCase) || local.Contains("setup", StringComparison.OrdinalIgnoreCase)
-                || local.Contains("job", StringComparison.OrdinalIgnoreCase) || local.Contains("program", StringComparison.OrdinalIgnoreCase))
+            if (local.Contains("toolpath", StringComparison.OrdinalIgnoreCase) || local.Contains("oper", StringComparison.OrdinalIgnoreCase)
+                || local.Contains("setup", StringComparison.OrdinalIgnoreCase) || local.Contains("job", StringComparison.OrdinalIgnoreCase)
+                || local.Contains("program", StringComparison.OrdinalIgnoreCase))
             {
                 var name = Attribute(ancestor, NameNames);
                 if (!string.IsNullOrWhiteSpace(name)) return name.Trim();
@@ -249,7 +313,8 @@ internal static class JobsExportFiles
 
 /// <summary>
 /// Finds the stock STL Cimatron's own export left beside the NC document when the API offers no initial-stock export
-/// (Cimatron 2026.0 has none): <c>STOCK*.stl</c> in the document folder or its <c>NC</c> subfolder. Exactly one match
+/// (Cimatron 2026.0 has none): <c>STOCK*.stl</c> in the document folder, its <c>NC</c> subfolder, or the <c>NC</c>
+/// folder the document folder sits in. Exactly one match
 /// is usable (as a fallback, reported as a warning); several need <c>--stock-file</c>.
 /// </summary>
 internal static class StockFileDiscovery
@@ -269,7 +334,11 @@ internal static class StockFileDiscovery
 
         if (folder is null || !Directory.Exists(folder)) return [];
         var candidates = new List<string>();
-        foreach (var search in new[] { folder, Path.Combine(folder, "NC") })
+        var searches = new List<string> { folder, Path.Combine(folder, "NC") };
+        // Meimad keeps the NC document in NC\<part>\ and Cimatron's stock export in NC\ itself.
+        var parent = Directory.GetParent(folder);
+        if (parent is not null && parent.Name.Equals("NC", StringComparison.OrdinalIgnoreCase)) searches.Add(parent.FullName);
+        foreach (var search in searches)
         {
             if (!Directory.Exists(search)) continue;
             candidates.AddRange(Directory.EnumerateFiles(search, "*.stl")

@@ -53,6 +53,24 @@ static int Run(string[] args)
         connectFailure = exception;
     }
 
+    if (options.Probe)
+    {
+        // The probe also writes probe-result.txt beside the exporter in UTF-8: a console redirect loses the Hebrew
+        // letters of Meimad's folder names ("?" in the 2026-10-12 probe).
+        try
+        {
+            var result = new StreamWriter(Path.Combine(AppContext.BaseDirectory, "probe-result.txt"), false, new System.Text.UTF8Encoding(true))
+            {
+                AutoFlush = true
+            };
+            Console.SetOut(new TeeWriter(Console.Out, result));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"probe-result.txt not written: {exception.Message}");
+        }
+    }
+
     if (options.Probe && OperatingSystem.IsWindows())
     {
         // The probe's output goes to the console and a redirected file alike.
@@ -137,7 +155,8 @@ static void WriteRegistrationStatus(ExportOptions options)
     var classes = CimatronTypeLibrary.Classes(folder).ToList();
     var missing = classes.Where(entry => !entry.Registered).ToList();
     Console.WriteLine($"Cimatron COM classes registered: {classes.Count - missing.Count} of {classes.Count}");
-    foreach (var (library, name, id, _) in missing.Take(80)) Console.WriteLine($"  not registered: {library} {name} {id:B}");
+    foreach (var (library, name, id, _) in missing.Take(10)) Console.WriteLine($"  not registered: {library} {name} {id:B}");
+    if (missing.Count > 10) Console.WriteLine($"  … and {missing.Count - 10} more (not needed while Cimatron is reached through CimAppAccess.dll)");
     var binder = CimatronComApi.Binder;
     Console.WriteLine($"Cimatron interop interfaces usable without IDispatch: {binder?.InterfaceCount ?? 0}");
     foreach (var problem in CimatronComApi.BinderProblems) Console.WriteLine("  " + problem);
@@ -167,5 +186,41 @@ static void WriteApiListing(ExportOptions options)
     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
     {
         Console.WriteLine($"Cimatron API listing failed: {exception.Message}");
+    }
+}
+
+/// <summary>Writes the probe to the console and to probe-result.txt at the same time.</summary>
+internal sealed class TeeWriter(TextWriter console, TextWriter file) : TextWriter
+{
+    public override System.Text.Encoding Encoding => file.Encoding;
+
+    public override void Write(char value)
+    {
+        console.Write(value);
+        file.Write(value);
+    }
+
+    public override void Write(string? value)
+    {
+        console.Write(value);
+        file.Write(value);
+    }
+
+    public override void WriteLine(string? value)
+    {
+        console.WriteLine(value);
+        file.WriteLine(value);
+    }
+
+    public override void Flush()
+    {
+        console.Flush();
+        file.Flush();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) file.Dispose();
+        base.Dispose(disposing);
     }
 }

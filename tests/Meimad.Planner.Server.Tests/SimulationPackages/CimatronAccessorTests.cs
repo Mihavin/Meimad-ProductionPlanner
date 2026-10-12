@@ -42,6 +42,52 @@ public sealed class CimatronAccessorTests
     }
 
     [Fact]
+    public void Cimatron_2026_full_report_gives_toolpath_procedures_with_their_ucs_and_the_stock_procedure()
+    {
+        // The layout Cimatron 2026.0 SP3P1 wrote at Meimad on 2026-10-12 (GetProcessManagerAsXML), trimmed.
+        const string xml = """
+            <?xml version="1.0"?>
+            <NCFullReport><File_Units Value="mm" ID="30004"/>
+              <Setup Name="NC_Setup" ID="1"><SetupParameters><UCS Value="MODEL-1"/></SetupParameters>
+                <SetupFolder>
+                  <Procedure Name="Target Part_2" ID="2"><ProcedureParameters>
+                    <Procedure_Comment Value="No Text" ID="30008"/>
+                    <Procedure_Status Value="Calculation succeeded" ID="30009"/></ProcedureParameters></Procedure>
+                  <Procedure Name="Stock By Contours_3" ID="3"><ProcedureParameters>
+                    <Procedure_Status Value="Calculation succeeded" ID="30009"/>
+                    <Stock_Type Value="Contours" ID="381"/></ProcedureParameters></Procedure>
+                  <ToolPath Name="TP_MODEL" ID="4">
+                    <ToolpathParameters><ToolPath_UCS Value="MODEL" ID="30101"/></ToolpathParameters>
+                    <ToolpathFolder>
+                      <Procedure Name="2.5 Axes-Profile Open Contour_6" ID="6">
+                        <ProcedureParameters>
+                          <Procedure_Status Value="Calculation succeeded" ID="30009"/>
+                          <Procedure_Unique_Number Value="6" ID="30069"/></ProcedureParameters>
+                        <GridParameters><Motion_Parameters Value="" ID="-1"><Clearance___UCS Value="" ID="-1">
+                          <UCS_Name Value="FAZA----11111" ID="3217"/><Create_UCS Value="Access" ID="21118"/>
+                        </Clearance___UCS></Motion_Parameters></GridParameters>
+                      </Procedure>
+                      <Procedure Name="Drill 5x_59" ID="59">
+                        <ProcedureParameters><Procedure_Status Value="Not calculated" ID="30009"/></ProcedureParameters>
+                      </Procedure>
+                    </ToolpathFolder>
+                  </ToolPath>
+                </SetupFolder>
+              </Setup>
+            </NCFullReport>
+            """;
+        var data = ProcessManagerXml.Parse(xml);
+        Assert.Equal([2, 3, 6, 59], data.Procedures.Select(item => item.Id));
+        Assert.Equal(new CimatronProcedure(2, "Target Part_2", null, false, "NC_Setup"), data.Procedures[0]);
+        Assert.Equal(new CimatronProcedure(3, "Stock By Contours_3", null, false, "NC_Setup"), data.Procedures[1]);
+        Assert.Equal(new CimatronProcedure(6, "2.5 Axes-Profile Open Contour_6", "FAZA----11111", true, "TP_MODEL"), data.Procedures[2]);
+        // No UCS of its own: the toolpath's UCS; not calculated: no toolpath.
+        Assert.Equal(new CimatronProcedure(59, "Drill 5x_59", "MODEL", false, "TP_MODEL"), data.Procedures[3]);
+        Assert.Equal([3], data.StockProcedures);
+        Assert.Equal(["MODEL-1", "MODEL", "FAZA----11111"], data.UcsNames);
+    }
+
+    [Fact]
     public void Ucs_matrix_is_composed_from_what_cimatron_returns()
     {
         var rowMajor = new double[] { 0, 0, 1, 80, 0, 1, 0, 0, -1, 0, 0, 40, 0, 0, 0, 1 };
@@ -121,6 +167,10 @@ public sealed class CimatronAccessorTests
             Assert.Equal(
                 [Path.Combine(root, "NC", "STOCK_OP1.stl"), Path.Combine(root, "stock_op2.STL")],
                 StockFileDiscovery.Find(Path.Combine(root, "X.elt")));
+
+            // Meimad's layout: the document in NC\<part>\, the stock export in NC\.
+            Directory.CreateDirectory(Path.Combine(root, "NC", "PART-501"));
+            Assert.Equal([Path.Combine(root, "NC", "STOCK_OP1.stl")], StockFileDiscovery.Find(Path.Combine(root, "NC", "PART-501", "PART_NC2.elt")));
         }
         finally
         {

@@ -1,12 +1,13 @@
 # Meimad Cimatron exporter
 
-> **Status: connection reached Cimatron, export not yet run.** The exporter workflow, the package format and the Server
-> import are implemented and tested with a fake Cimatron API. On the Meimad CAM PC (Cimatron 2026.0 SP3P1, probes of
-> 2026-10-12) the adapter (`CimatronComApi`, version `cimatron-com-3`) created AppAccess without a COM registration,
-> registered the type libraries, and read the version of a Cimatron instance; it has not yet reached the instance
-> holding the user's NC document (every probe so far ran as administrator, see "Connecting to Cimatron"). The member
-> names and argument lists now follow the installed type libraries (`cimatron-api.txt`); the process-manager XML
-> layout, the UCS matrix layout and the Job Manager output are read tolerantly until the first real export shows them.
+> **Status: connected to the user's NC document, export not yet run.** The exporter workflow, the package format and
+> the Server import are implemented and tested with a fake Cimatron API. On the Meimad CAM PC (Cimatron 2026.0 SP3P1,
+> probes of 2026-10-12) the adapter created AppAccess without a COM registration and, run from a normal window, reached
+> the user's instance and NC document through `GetActiveApplication`, read the NC model, the active UCS with its matrix,
+> and the process-manager XML (56 procedures). Adapter `cimatron-com-4` reads that XML's real layout (`NCFullReport`,
+> procedure UCS in `UCS_Name`), queries UCS entities with the correct filter, and probes whether the remaining stock of
+> the stock-defining procedure can serve as the initial stock. Not yet seen: the matrices of UCS other than the active
+> one, the Job Manager output, and a first real export.
 > Requirement source: the Cimatron → Meimad exporter definition §1–§19 (owner, 2026-10-12).
 
 ## What it writes
@@ -38,7 +39,7 @@ manifest with SHA-256, exporter, adapter and Cimatron versions → the Server's 
 → atomic move to `<output>\cimatron-export` (an older package there loses its `COMPLETE` and moves to
 `<output>\.superseded\…`, the five newest kept) → `COMPLETE`.
 
-### What the Cimatron 2026.0 API offers (adapter `cimatron-com-3`)
+### What the Cimatron 2026.0 API offers (adapter `cimatron-com-4`)
 
 Read from the installed type libraries (`cimatron-api.txt`, Meimad probe 2026-10-12). The adapter looks for each
 member on the NC model (`document.Model`, `INcModel`), then the document, then the application.
@@ -48,12 +49,12 @@ member on the NC model (`document.Model`, `INcModel`), then the document, then t
 | Application | `IAppAccess.GetActiveApplication()`, `GetApplication()` (skipped while Cimatron runs: it starts a new instance) | first instance whose `GetActiveDoc` has a document |
 | Document | `IApplication.GetActiveDoc`, `ICimDocument.Title`, `GetPath`; `IPdm.GetOpenDocuments` for the probe | `GetActiveNcDocument` |
 | NC model | `IModelContainer.Model` | all NC members live here |
-| Procedures | `INcModel.GetProcessManagerAsXML(withParameters, file)`; fallback `ModelProcedures` entity list (`ICimEntity.ID`, `INCProcedure.Name`) | `ProcessManagerXml.Parse`: element/attribute names matched by meaning; **layout unverified** |
-| UCS names | entity query on the model (`CreateFilter(cmUcs = 9)`, `SetFilter`, `Select`), `ActivateUcs` (the active UCS), the XML | union of the three |
-| UCS matrix | `IUcs.Transformation` → `IModelTransformation.Matrix` / `Vector` | `UcsMatrix.Compose`: 16, 12, or 9 + 3 values; a 16-value matrix with the translation in the last row is transposed; **layout unverified**, the probe prints the raw values |
+| Procedures | `INcModel.GetProcessManagerAsXML(withParameters, file)`; fallback `ModelProcedures` entity list (`ICimEntity.ID`, `INCProcedure.Name`) | `ProcessManagerXml.Parse`: Cimatron 2026.0 writes `NCFullReport` → `Setup` → `SetupFolder` → `ToolPath Name` (`ToolPath_UCS`) → `ToolpathFolder` → `Procedure Name ID`, the procedure UCS in `UCS_Name Value` (else the toolpath UCS), the status in `Procedure_Status`; procedures outside a toolpath (target part, stock) are not machining, a `Stock_Type` one is stock-defining; the toolpath name is the operation |
+| UCS names | entity query on the model (`CreateFilter(cmFilterEntityType = 3)`, `IFilterType.Add(cmUcs = 9)`, `SetFilter`, `Select`; `cimatron-com-3` passed 9 to `CreateFilter`, which is `cmFilterWireBody`, and got about 100 unnamed bodies), `ActivateUcs` (the active UCS), the XML | union of the three |
+| UCS matrix | `IUcs.Transformation` → `IModelTransformation.Matrix` / `Vector` | `UcsMatrix.Compose`: 16, 12, or 9 + 3 values; a 16-value matrix with the translation in the last row is transposed. Cimatron 2026.0 returned 9 + 3 values for the active UCS; that matrix was symmetric, so row versus column order is still to be checked on a rotated UCS |
 | Post | `PostByUcsToAllNcProcedures(post, folder, startHome, ucs, out file)`, `ExecutePostToAllNcProcedures(post, folder, startHome, out file)` | the named file and every new file in the folder |
 | Remaining stock | `ExportProceduresRemainingStock(procId, NcUcsType, file, out created)` with `cmNcProcUcs = 1` (mode A) or `cmNcModelUcs = 3` (mode B) | the frame of the fixtures and part; earlier versions wrongly passed the UCS name here |
-| Initial stock | none | `--stock-file`, else one `STOCK*.stl` beside the document (`stock_ambiguous` when several) |
+| Initial stock | none | `--stock-file`, else one `STOCK*.stl` in the document folder, its `NC` subfolder or the `NC` folder it sits in (`stock_ambiguous` when several); the probe tries `ExportProceduresRemainingStock` on the stock-defining procedure (experiment, not used by the export yet) |
 | Cutters | `ExportCuttersAndHoldersToCSV(elements, cutters, holders, materials)` with no elements | CSV files; no tool-list API, so `tool-table.json` lists the NC's T numbers |
 | Job Manager | `NcExportJobsData(outputPath, out jobs)` | given a folder: one file becomes `metadata/jobs.xml`, several stay under `metadata/jobs/` (`jobs_export_many_files`); a file path is tried when the folder stays empty |
 | Part and fixture STL | none (`IGeom3DSTL` reads triangles of STL entities only) | `--geometry-folder` with Cimatron's Multi STL export; `--geometry-in-ucs` when it was written in the procedure UCS |
@@ -154,36 +155,37 @@ failed with *Interface not registered* because the exporter ran as administrator
 registrations. The exporter therefore skips `GetApplication` while any `CimatronE.exe` runs, and its error names the
 administrator cause. Run it from a normal window; with several Cimatron windows, the active one is used.
 
-`--probe` writes everything to standard output (redirect it to a file): the connection attempts, whether the exporter
+`--probe` writes everything to standard output and to `probe-result.txt` beside the exe (UTF-8, so Hebrew folder
+names stay readable; no redirect is needed): the connection attempts, whether the exporter
 runs as administrator, the Cimatron processes, how many of Cimatron's COM classes are registered, the whole running object
 table, whether each type library is registered, how many interop interfaces were loaded, and, when connected, the
 members found, the interop interfaces the application, document and NC model objects answer to, the active UCS with its
 raw `Matrix`/`Vector` values and the composed 4×4 matrix, the UCS entities, the procedures read from the process-manager
-XML, the stock STL files beside the document, the matrix of every UCS, and `process-manager.xml` (Cimatron's
+XML with the stock-defining procedures, the result of exporting their remaining stock to a temporary file, the stock
+STL files beside the document, the matrix of every UCS, and `process-manager.xml` (Cimatron's
 `GetProcessManagerAsXML` with parameters, for matching the procedure and UCS accessors). It also writes
 `cimatron-api.txt` beside the exe: the classes, interfaces, methods, properties and enum values of every type library in
 the Program folder, read from the files (Cimatron need not run for this part). `CimatronComApi.Members` is matched to
 that listing.
 
-### Next run on the CAM PC (state of 2026-10-12)
+### Next run on the CAM PC (state of 2026-10-12, after the sixth probe)
 
-1. Close the empty Cimatron windows the earlier probes opened (title only "Cimatron 2026.0 SP3P1"). Keep the ones with
-   NC documents.
-2. Unzip the current `installer\artifacts\cimatron-exporter.zip` over `C:\cimatron-exporter\`.
-3. Either run `Meimad.CimatronExporter.exe --register-cimatron` once from an administrator window (registers for every
-   user), or keep the per-user registration and run everything else from a normal window.
-4. Click the Cimatron window with the NC document to export, then from a normal window (Win+R, `cmd`, Enter; the prompt
-   is `C:\Users\<name>>`, not `C:\WINDOWS\system32>`):
-   `C:\cimatron-exporter\Meimad.CimatronExporter.exe --probe > C:\cimatron-exporter\probe.txt`
-5. Send `probe.txt` and `process-manager.xml` (beside the exe). If `GetActiveApplication` still answers *Interface not
-   registered* from a normal window, Cimatron's own registration is incomplete (3 of 384 classes): run Cimatron's setup
-   Repair as an administrator or ask the reseller to register the Cimatron API.
+The sixth probe, from a normal window, reached the user's NC document. For the next one:
+
+1. Unzip the current `installer\artifacts\cimatron-exporter.zip` over `C:\cimatron-exporter\`.
+2. Open the NC document in Cimatron and click its window.
+3. From a normal window (Win+R, `cmd`, Enter): `C:\cimatron-exporter\Meimad.CimatronExporter.exe --probe`
+4. Send `C:\cimatron-exporter\probe-result.txt` only. `process-manager.xml` is no longer needed.
+
+The probe then shows the named UCS entities and their matrices, whether the stock-defining procedure's remaining stock
+is a usable initial stock, and whether a `STOCK*.stl` lies in the document's `NC` folder.
 
 ## Before production use
 
-1. From the probe with an NC document open: confirm the process-manager XML layout (`ProcessManagerXml`), the UCS matrix
-   layout (`UcsMatrix.Compose`, compare the printed matrix with Cimatron's UCS dialog) and what `NcExportJobsData`
-   writes; tighten the readers and bump `CimatronComApi.Version`.
+1. The process-manager XML layout is confirmed (probe of 2026-10-12). Still to confirm: the UCS matrix layout on a
+   rotated UCS (`UcsMatrix.Compose`; compare the printed matrix with Cimatron's UCS dialog), what `NcExportJobsData`
+   writes, and whether the stock-defining procedure's remaining stock is the initial stock (then use it in the export
+   and bump `CimatronComApi.Version`).
 2. Export one real Operation in mode A (`--geometry-folder` from a Multi STL export written in the procedure UCS,
    `--geometry-in-ucs`) and in mode B (the same export in part-model coordinates); import both; check in the NC viewer
    that toolpath, stock, fixtures and part coincide (exporter definition §19 steps 1–8), on a Haas and a Mazak package.
