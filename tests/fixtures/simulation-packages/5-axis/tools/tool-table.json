@@ -8,6 +8,8 @@
   "tools": [
     {
       "number": 4,
+      "toolIdentifier": "T4",
+      "description": "D8 BALL",
       "name": "D8 BALL",
       "type": "ball",
       "diameterMm": 8,

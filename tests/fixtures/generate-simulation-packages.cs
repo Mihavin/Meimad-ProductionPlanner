@@ -37,7 +37,7 @@ static ToolTableDocument Tools(params (int number, string name, string type, dou
     Source = new ToolTableSource { Application = "Cimatron", ExportedAtUtc = "2026-10-12T06:00:00Z" },
     Tools = tools.Select(t => new ToolTableEntry
     {
-        Number = t.number, Name = t.name, Type = t.type, DiameterMm = t.d, CornerRadiusMm = t.r,
+        Number = t.number, ToolIdentifier = $"T{t.number}", Description = t.name, Name = t.name, Type = t.type, DiameterMm = t.d, CornerRadiusMm = t.r,
         FluteLengthMm = 30, GaugeLengthMm = 90,
         Holder = new ToolHolder { Name = "BT40 ER32", DiameterMm = 50, LengthMm = 60 }
     }).ToArray()

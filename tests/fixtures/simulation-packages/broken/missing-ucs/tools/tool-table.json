@@ -8,6 +8,8 @@
   "tools": [
     {
       "number": 1,
+      "toolIdentifier": "T1",
+      "description": "D10 FLAT",
       "name": "D10 FLAT",
       "type": "flat",
       "diameterMm": 10,
@@ -22,6 +24,8 @@
     },
     {
       "number": 2,
+      "toolIdentifier": "T2",
+      "description": "D6.8 DRILL",
       "name": "D6.8 DRILL",
       "type": "drill",
       "diameterMm": 6.8,

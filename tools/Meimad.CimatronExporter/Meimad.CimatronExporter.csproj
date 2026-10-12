@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Cimatron -> Meimad simulation package exporter (console). It talks to a running Cimatron through
+    late-bound COM only (no Cimatron interop assemblies are referenced, so it builds on any PC) and
+    writes a package that the Meimad Server validates and imports. UNVERIFIED against a real Cimatron:
+    see docs/cimatron-exporter.md before using it in production.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>Meimad.CimatronExporter</RootNamespace>
+    <AssemblyName>Meimad.CimatronExporter</AssemblyName>
+    <Version>0.1.0</Version>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\Meimad.Planner.SimulationPackage\Meimad.Planner.SimulationPackage.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Launch\*.bat" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Meimad.Planner.Server.Tests" />
+  </ItemGroup>
+
+</Project>

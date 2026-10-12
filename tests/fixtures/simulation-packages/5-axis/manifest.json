@@ -47,8 +47,8 @@
     },
     "toolTable": {
       "path": "tools/tool-table.json",
-      "sha256": "1bec33a6889f42be0eee9f2d8165aa07536b9bb2a981744a7ec5d0d3b890ffdc",
-      "sizeBytes": 464
+      "sha256": "307c77a55b50176dfb5f44eae8109516bbdac48db7bce065be612f5afc4e37b9",
+      "sizeBytes": 528
     },
     "stock": [
       {

@@ -46,7 +46,8 @@ public sealed class SimulationPackageValidator
             return Empty(full, false, diagnostics);
         }
 
-        if (!File.Exists(Path.Combine(full, ManifestJson.CompleteMarkerFileName)))
+        var complete = File.Exists(Path.Combine(full, ManifestJson.CompleteMarkerFileName));
+        if (!complete && options.RequireCompleteMarker)
         {
             diagnostics.Add(PackageDiagnostic.Error(PackageIncomplete,
                 "The package has no COMPLETE marker: the export did not finish (or is still running), so it is not imported.",
@@ -58,7 +59,7 @@ public sealed class SimulationPackageValidator
         if (!File.Exists(manifestPath))
         {
             diagnostics.Add(PackageDiagnostic.Error(ManifestMissing, "The package has no manifest.json.", ("packagePath", full)));
-            return Empty(full, true, diagnostics);
+            return Empty(full, complete, diagnostics);
         }
 
         var manifestLength = new FileInfo(manifestPath).Length;
@@ -66,7 +67,7 @@ public sealed class SimulationPackageValidator
         {
             diagnostics.Add(PackageDiagnostic.Error(FileTooLarge, "manifest.json is larger than allowed.",
                 ("path", ManifestJson.ManifestFileName), ("sizeBytes", Invariant(manifestLength)), ("limitBytes", Invariant(options.MaxManifestBytes))));
-            return Empty(full, true, diagnostics);
+            return Empty(full, complete, diagnostics);
         }
 
         var manifestBytes = await File.ReadAllBytesAsync(manifestPath, cancellationToken);
@@ -83,7 +84,7 @@ public sealed class SimulationPackageValidator
                 || !version.TryGetInt32(out var schemaVersion))
             {
                 diagnostics.Add(PackageDiagnostic.Error(SchemaVersionMissing, "manifest.json has no integer schemaVersion."));
-                return new(full, true, manifestSha, null, [], null, [], diagnostics);
+                return new(full, complete, manifestSha, null, [], null, [], diagnostics);
             }
 
             if (schemaVersion != ManifestJson.CurrentSchemaVersion)
@@ -93,7 +94,7 @@ public sealed class SimulationPackageValidator
                         ? "The package was written for an older manifest schema this Meimad no longer reads; export it again."
                         : "The package was written for a newer manifest schema; update Meimad before importing it.",
                     ("schemaVersion", Invariant(schemaVersion)), ("supported", Invariant(ManifestJson.CurrentSchemaVersion))));
-                return new(full, true, manifestSha, null, [], null, [], diagnostics);
+                return new(full, complete, manifestSha, null, [], null, [], diagnostics);
             }
 
             foreach (var pointer in MeasuredOffsetProperties(root, ""))
@@ -110,13 +111,13 @@ public sealed class SimulationPackageValidator
         {
             diagnostics.Add(PackageDiagnostic.Error(ManifestInvalidJson, "manifest.json is not valid JSON of the package contract.",
                 ("detail", exception.Message), ("line", exception.LineNumber?.ToString(CultureInfo.InvariantCulture))));
-            return new(full, true, manifestSha, null, [], null, [], diagnostics);
+            return new(full, complete, manifestSha, null, [], null, [], diagnostics);
         }
 
         if (manifest is null)
         {
             diagnostics.Add(PackageDiagnostic.Error(ManifestInvalidJson, "manifest.json is empty."));
-            return new(full, true, manifestSha, null, [], null, [], diagnostics);
+            return new(full, complete, manifestSha, null, [], null, [], diagnostics);
         }
 
         var coordinateDiagnostics = new List<PackageDiagnostic>();
@@ -137,7 +138,7 @@ public sealed class SimulationPackageValidator
         var toolNumbers = await CheckToolTableAsync(manifest, files, nc, diagnostics, cancellationToken);
         CheckGeometry(manifest, files, diagnostics);
         CheckAlignment(manifest, ucsInModel, files, nc, diagnostics);
-        return new(full, true, manifestSha, manifest, files, nc, toolNumbers, diagnostics);
+        return new(full, complete, manifestSha, manifest, files, nc, toolNumbers, diagnostics);
     }
 
     private string? CheckPackagePath(string packagePath, List<PackageDiagnostic> diagnostics)

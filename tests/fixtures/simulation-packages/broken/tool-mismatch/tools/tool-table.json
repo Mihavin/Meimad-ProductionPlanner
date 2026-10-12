@@ -8,6 +8,8 @@
   "tools": [
     {
       "number": 1,
+      "toolIdentifier": "T1",
+      "description": "D10 FLAT",
       "name": "D10 FLAT",
       "type": "flat",
       "diameterMm": 10,

@@ -30,6 +30,13 @@ public sealed record ToolTableSource
 public sealed record ToolTableEntry
 {
     public int Number { get; init; }
+
+    /// <summary>"T" + number: makes tool-table.json a structured JSON tool table the Server accepts for an NC release.</summary>
+    public string? ToolIdentifier { get; init; }
+
+    /// <summary>The release tool table description (the tool name).</summary>
+    public string? Description { get; init; }
+
     public string Name { get; init; } = "";
     public string? Type { get; init; }
     public string? CutterId { get; init; }

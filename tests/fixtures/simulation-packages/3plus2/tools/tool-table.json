@@ -8,6 +8,8 @@
   "tools": [
     {
       "number": 3,
+      "toolIdentifier": "T3",
+      "description": "D12 R1 BULL",
       "name": "D12 R1 BULL",
       "type": "bull-nose",
       "diameterMm": 12,

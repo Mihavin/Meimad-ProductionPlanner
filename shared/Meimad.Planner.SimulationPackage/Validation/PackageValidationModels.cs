@@ -14,6 +14,9 @@ public sealed record PackageValidationOptions
     /// </summary>
     public IReadOnlyList<string> ApprovedRoots { get; init; } = [];
 
+    /// <summary>False only for the exporter checking its own staging folder before it writes COMPLETE.</summary>
+    public bool RequireCompleteMarker { get; init; } = true;
+
     public long MaxManifestBytes { get; init; } = 1L << 20;
     public long MaxFileBytes { get; init; } = 512L << 20;
     public long MaxPackageBytes { get; init; } = 2L << 30;
