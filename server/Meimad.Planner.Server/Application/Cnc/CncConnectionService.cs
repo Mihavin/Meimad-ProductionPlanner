@@ -230,7 +230,7 @@ internal sealed class CncConnectionService(
             ? CncDprntSources.Tcp : value.Source.Trim().ToUpperInvariant();
         if (!CncDprntSources.IsSupported(source) || (source == CncDprntSources.None && !allowNone))
             throw new CncValidationException("configuration.dprnt.source",
-                allowNone ? "DPRNT source must be TCP, FILE, FTP, or NONE." : "DPRNT source must be TCP, FILE, or FTP.");
+                allowNone ? "DPRNT source must be TCP, FILE, FTP, SERIAL, or NONE." : "DPRNT source must be TCP, FILE, FTP, or SERIAL.");
         var filePath = Optional(value.FilePath);
         if (filePath is { Length: > 1024 })
             throw new CncValidationException("configuration.dprnt.filePath", "DPRNT file path must be 1024 characters or fewer.");
@@ -252,7 +252,24 @@ internal sealed class CncConnectionService(
         var ftpPassword = Optional(value.FtpPassword);
         if (ftpPassword is { Length: > 256 })
             throw new CncValidationException("configuration.dprnt.ftpPassword", "DPRNT FTP password must be 256 characters or fewer.");
-        return new(source, filePath, clearPolicy, value.Port, tcpHost, ftpUsername, ftpPassword, value.Enabled);
+        var serialPort = Optional(value.SerialPort)?.ToUpperInvariant();
+        if (serialPort is not null && !System.Text.RegularExpressions.Regex.IsMatch(serialPort, "^COM[1-9][0-9]{0,2}$"))
+            throw new CncValidationException("configuration.dprnt.serialPort", "DPRNT serial port must be a COM port such as COM1.");
+        if (source == CncDprntSources.Serial && serialPort is null)
+            throw new CncValidationException("configuration.dprnt.serialPort",
+                "A DPRNT serial port (COM1, COM2, ...) is required when the DPRNT source is SERIAL.");
+        if (value.BaudRate is { } baud && baud is not (1200 or 2400 or 4800 or 9600 or 19200 or 38400 or 57600 or 115200))
+            throw new CncValidationException("configuration.dprnt.baudRate",
+                "DPRNT serial baud rate must be 1200, 2400, 4800, 9600, 19200, 38400, 57600, or 115200.");
+        var parity = Optional(value.Parity)?.ToUpperInvariant();
+        if (parity is not null && !CncSerialParities.IsSupported(parity))
+            throw new CncValidationException("configuration.dprnt.parity", "DPRNT serial parity must be NONE, EVEN, or ODD.");
+        if (value.DataBits is { } dataBits && dataBits is not (7 or 8))
+            throw new CncValidationException("configuration.dprnt.dataBits", "DPRNT serial data bits must be 7 or 8.");
+        if (value.StopBits is { } stopBits && stopBits is not (1 or 2))
+            throw new CncValidationException("configuration.dprnt.stopBits", "DPRNT serial stop bits must be 1 or 2.");
+        return new(source, filePath, clearPolicy, value.Port, tcpHost, ftpUsername, ftpPassword, value.Enabled,
+            serialPort, value.BaudRate, parity, value.DataBits, value.StopBits);
     }
 
     private static string Required(string? value, string field)

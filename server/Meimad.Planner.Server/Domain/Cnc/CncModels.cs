@@ -112,10 +112,22 @@ internal static class CncDprntSources
     internal const string File = "FILE";
     /// <summary>Fanuc style: the controller's own embedded FTP server serves the print file the DPRNT statement writes.</summary>
     internal const string Ftp = "FTP";
+    /// <summary>The control's RS-232 DPRNT output wired straight to a COM port of the Server PC (no bridge).</summary>
+    internal const string Serial = "SERIAL";
     /// <summary>No DPRNT output is read; Part identity can only come from the NC header and no workflow events arrive.</summary>
     internal const string None = "NONE";
 
-    internal static bool IsSupported(string value) => value is Tcp or File or Ftp or None;
+    internal static bool IsSupported(string value) => value is Tcp or File or Ftp or Serial or None;
+}
+
+/// <summary>Parity of a SERIAL DPRNT source.</summary>
+internal static class CncSerialParities
+{
+    internal const string None = "NONE";
+    internal const string Even = "EVEN";
+    internal const string Odd = "ODD";
+
+    internal static bool IsSupported(string value) => value is None or Even or Odd;
 }
 
 /// <summary>When the Server empties a controller-written DPRNT file that no G-code ever deletes.</summary>
@@ -142,7 +154,9 @@ internal static class CncDprntClearPolicies
 /// address carries the DPRNT output; <paramref name="FilePath"/> and <paramref name="ClearPolicy"/>
 /// apply to the FILE and FTP sources (for FTP, the path of the print file on the controller's
 /// embedded FTP server); <paramref name="FtpUsername"/> and <paramref name="FtpPassword"/> are
-/// the FTP source's login, when the controller's FTP server requires one. <paramref name="Enabled"/>
+/// the FTP source's login, when the controller's FTP server requires one. <paramref name="SerialPort"/>
+/// (<c>COM1</c>...), <paramref name="BaudRate"/>, <paramref name="Parity"/>, <paramref name="DataBits"/> and
+/// <paramref name="StopBits"/> are the SERIAL source's line settings (defaults 9600, NONE, 8, 1). <paramref name="Enabled"/>
 /// switches the Machine's DPRNT output off while keeping the source settings (owner decision
 /// 2026-09-29): nothing is read, packages print no cycle events, and the planner reports the
 /// Machine's workflow statuses by hand on the Planning Board.
@@ -155,7 +169,12 @@ internal sealed record CncDprntConfiguration(
     string? Host = null,
     string? FtpUsername = null,
     string? FtpPassword = null,
-    bool Enabled = true);
+    bool Enabled = true,
+    string? SerialPort = null,
+    int? BaudRate = null,
+    string? Parity = null,
+    int? DataBits = null,
+    int? StopBits = null);
 internal sealed record HaasProgramAccessConfiguration(
     string Provider,
     bool Enabled,

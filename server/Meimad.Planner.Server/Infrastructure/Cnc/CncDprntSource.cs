@@ -24,10 +24,13 @@ internal sealed class CncDprntSource : IAsyncDisposable
     private readonly HaasDprntPartReader tcpReader = new();
     private readonly HaasDprntFileReader fileReader = new();
     private readonly CncFtpDprntReader ftpReader = new();
+    private readonly CncSerialDprntReader serialReader;
     private string? lastOffsetLoaderEventId;
 
-    internal CncDprntSource(string host, int tcpPort, int timeoutMs, CncDprntConfiguration? configuration)
+    internal CncDprntSource(string host, int tcpPort, int timeoutMs, CncDprntConfiguration? configuration,
+        Func<CncSerialDprntSettings, ICncSerialLink>? openSerialLink = null)
     {
+        serialReader = new CncSerialDprntReader(openSerialLink);
         var value = configuration ?? new CncDprntConfiguration();
         // A serial-to-Ethernet bridge has its own address; otherwise the controller itself serves DPRNT.
         this.host = string.IsNullOrWhiteSpace(value.Host) ? host : value.Host.Trim();
@@ -41,6 +44,7 @@ internal sealed class CncDprntSource : IAsyncDisposable
         FtpPort = value.Port ?? 21;
         FtpUsername = value.FtpUsername;
         FtpPassword = value.FtpPassword;
+        Serial = UsesSerial && !string.IsNullOrWhiteSpace(value.SerialPort) ? CncSerialDprntSettings.From(value) : null;
     }
 
     internal string Source { get; }
@@ -55,11 +59,14 @@ internal sealed class CncDprntSource : IAsyncDisposable
     internal bool UsesFile => Source == CncDprntSources.File;
     internal bool UsesTcp => Source == CncDprntSources.Tcp;
     internal bool UsesFtp => Source == CncDprntSources.Ftp;
+    internal bool UsesSerial => Source == CncDprntSources.Serial;
+    internal CncSerialDprntSettings? Serial { get; }
 
     internal string Description => UsesFile
         ? $"DPRNT file '{FilePath}'"
         : UsesTcp ? $"DPRNT TCP port {TcpPort} on {host}"
         : UsesFtp ? $"DPRNT FTP file '{FilePath}' on {host}:{FtpPort}"
+        : UsesSerial ? $"DPRNT serial port {Serial?.PortName ?? "(none)"}"
         : "DPRNT (not configured)";
 
     /// <summary>
@@ -75,6 +82,12 @@ internal sealed class CncDprntSource : IAsyncDisposable
             var tcp = await tcpReader.DrainAsync(host, TcpPort, timeoutMs, token);
             return new(tcp, tcpReader.Connected,
                 tcpReader.Connected ? null : $"{Description} is not connected.");
+        }
+        if (UsesSerial)
+        {
+            if (Serial is null) return new(new(null, []), false, $"{Description} has no serial port configured.");
+            var serial = serialReader.Drain(Serial);
+            return new(serial, serialReader.Connected, serialReader.LastError is null ? null : Safe(serialReader.LastError));
         }
         if (UsesFtp)
         {
@@ -105,7 +118,7 @@ internal sealed class CncDprntSource : IAsyncDisposable
         }
     }
 
-    internal string SuccessMessage(CncDprntObservation observation) => UsesFile || UsesFtp
+    internal string SuccessMessage(CncDprntObservation observation) => UsesFile || UsesFtp || UsesSerial
         ? $"{Description} is readable" + (observation.Result.PartName is null ? "." : $"; last PartName {observation.Result.PartName}.")
         : $"{Description} accepted the read-only connection.";
 
@@ -114,14 +127,18 @@ internal sealed class CncDprntSource : IAsyncDisposable
         CncDprntObservation observation, IDictionary<string, string> components,
         IDictionary<string, string> health, ref string? error)
     {
-        if (!UsesFile && !UsesFtp) return;
+        if (!UsesFile && !UsesFtp && !UsesSerial) return;
         var state = observation.Available ? CncComponentStates.Available : CncComponentStates.Unavailable;
         components["DPRNT"] = state;
         health["dprntFile"] = state;
         if (observation.Error is not null) error ??= observation.Error;
     }
 
-    public async ValueTask DisposeAsync() => await tcpReader.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        serialReader.Dispose();
+        await tcpReader.DisposeAsync();
+    }
 
     private CncFtpDprntEndpoint FtpEndpoint() =>
         new(new Uri($"ftp://{host}:{FtpPort}/{FilePath!.TrimStart('/')}"), FtpUsername, FtpPassword);
