@@ -230,6 +230,73 @@ public partial class CaseWorkspaceView : UserControl
         }
     }
 
+    /// <summary>
+    /// Imports a Cimatron simulation package folder (manifest.json + COMPLETE) into the selected Operation.
+    /// A blocked import shows the Server's report; when the planner answers its questions (stock, Machine,
+    /// replacing a manual Work CS) the import is sent again with those answers.
+    /// </summary>
+    private async void ImportCimatronPackage_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel) return;
+        var dialog = new OpenFolderDialog
+        {
+            Title = "Choose the Cimatron package folder (with manifest.json and COMPLETE)"
+        }.Localized();
+        var start = viewModel.CamSetup.SuggestedPackageFolder ?? viewModel.CaseBrowseStartFolder();
+        if (!string.IsNullOrWhiteSpace(start) && Directory.Exists(start)) dialog.InitialDirectory = start;
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
+        var folder = dialog.FolderName;
+        SimulationPackageChoices? choices = null;
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            var result = await viewModel.CamSetup.ImportPackageAsync(folder, choices);
+            if (result is null) return;
+            if (result is { Outcome: SimulationPackageImportResult.Imported, Import: { } imported }) await SavePartThumbnailAsync(viewModel, imported);
+            var hasNotes = result.Report.Diagnostics?.Any(item => item.Severity is "error" or "warning") == true;
+            if (!result.IsBlocked && !hasNotes) return;
+            choices = SimulationPackageReportWindow.Show(Window.GetWindow(this), result, canManageSetup: true);
+            if (choices is null || !result.IsBlocked) return;
+        }
+    }
+
+    /// <summary>
+    /// Renders the package's finished part (STL or STEP) offscreen with the Case model viewer and saves the
+    /// picture for the TV dashboard; a part that cannot be rendered only leaves the picture out.
+    /// </summary>
+    private static async Task SavePartThumbnailAsync(CaseWorkspaceViewModel viewModel, SimulationPackageImport imported)
+    {
+        if (imported.FilePath("part") is not { } part || !File.Exists(part)) return;
+        try
+        {
+            var png = await PartThumbnailRenderer.RenderAsync(part);
+            await viewModel.SaveOperationThumbnailAsync(imported, part, png);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or InvalidDataException
+            or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            viewModel.ReportThumbnailProblem($"The finished-part picture could not be drawn: {exception.Message}");
+        }
+    }
+
+    private void CimatronPackageReport_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel) return;
+        if (viewModel.CamSetup.LastPackageResult is { } last)
+        {
+            SimulationPackageReportWindow.Show(Window.GetWindow(this), last, canManageSetup: false);
+            return;
+        }
+
+        if (viewModel.CamSetup.CurrentPackage is { Report: { } report } current)
+        {
+            SimulationPackageReportWindow.Show(Window.GetWindow(this),
+                new SimulationPackageImportResult(SimulationPackageImportResult.Imported, current, report), canManageSetup: false);
+            return;
+        }
+
+        LocalizedMessageBox.Show("No Cimatron package was imported for this Operation yet.", "Package report", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
     private async void ImportCimatronFiles_Click(object sender, RoutedEventArgs e) => await AddCimatronFilesAsync(null);
 
     private async void AddCimatronFixture_Click(object sender, RoutedEventArgs e) => await AddCimatronFilesAsync("fixture");

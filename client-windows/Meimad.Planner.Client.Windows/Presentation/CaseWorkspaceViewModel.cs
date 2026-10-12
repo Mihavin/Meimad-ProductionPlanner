@@ -1043,6 +1043,50 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public string NewBatchStockQuantity { get => newBatchStockQuantity; set => SetField(ref newBatchStockQuantity, value); }
     public string NewBatchScrapAllowance { get => newBatchScrapAllowance; set => SetField(ref newBatchScrapAllowance, value); }
 
+    /// <summary>
+    /// Receives the finished-part thumbnails of imported Cimatron packages (TV dashboard). Until the Server
+    /// has a thumbnail endpoint this is the pending sink; see <see cref="PendingOperationThumbnailSink"/>.
+    /// </summary>
+    internal IOperationThumbnailSink ThumbnailSink { get; set; } = PendingOperationThumbnailSink.Instance;
+
+    internal void ReportThumbnailProblem(string message) => StatusMessage = message;
+
+    /// <summary>
+    /// After a Cimatron package import the Release G-code form takes the package's NC program and tool table
+    /// (the Cimatron tool report when the package has one, else its tool-table.json), so a release made from
+    /// it carries the same NC and tool table the package was checked with.
+    /// </summary>
+    private Task UseImportedPackageForRelease(SimulationPackageImport import)
+    {
+        if (import.FilePath("nc") is { } nc && File.Exists(nc)) GCodeFilePath = nc;
+        if (import.FilePath("toolReport", "toolTable") is { } tools && File.Exists(tools)) ToolTableFilePath = tools;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Saves a finished-part thumbnail rendered from an imported package's part model in the Working Folder's
+    /// <c>_MeimadPlanner\thumbnails</c> folder and hands it to <see cref="ThumbnailSink"/>. Returns the saved
+    /// path, or null with the reason in the status line (no Working Folder, not writable).
+    /// </summary>
+    internal async Task<string?> SaveOperationThumbnailAsync(SimulationPackageImport import, string partModelPath, byte[] png)
+    {
+        if (SelectedCase is not { } selectedCase || SelectedOperation is not { } operation
+            || operation.CaseOperationId != import.CaseOperationId) return null;
+        try
+        {
+            var thumbnail = await OperationThumbnailStore.SaveAsync(
+                WorkingFolderPath, selectedCase.PartNumber, operation.OperationNumber, selectedCase.CaseId,
+                operation.CaseOperationId, partModelPath, png, ThumbnailSink);
+            return thumbnail.SavedPath;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or ArgumentException or NotSupportedException or System.Security.SecurityException)
+        {
+            StatusMessage = $"The finished-part picture was not saved: {exception.Message}";
+            return null;
+        }
+    }
+
     internal void AttachSession(
         IPlannerApiClient? newApiClient,
         string newClientId,
@@ -1055,6 +1099,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         CamSetup.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         CamSetup.FilesChanged ??= () => SelectedCase is { } current ? RefreshModelFilesAsync(current.CaseId) : Task.CompletedTask;
         CamSetup.ToolTableChosen ??= path => ToolTableFilePath = path;
+        CamSetup.PackageImported ??= UseImportedPackageForRelease;
         WorkOrderMaterialOrders.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         if (newApiClient is not null && (apiChanged || networkRootPath is null)) _ = LoadNetworkRootAsync(newApiClient);
         if (!apiChanged

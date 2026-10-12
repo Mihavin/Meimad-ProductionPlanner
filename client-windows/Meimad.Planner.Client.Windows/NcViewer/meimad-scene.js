@@ -29,6 +29,8 @@
 
   const FIXTURE_COLOR = 0x7c8fa6;
   const REST_COLOR = 0xd6a65a;
+  // A finished part linked by a Cimatron package import: translucent so the toolpath and stock stay visible.
+  const PART_COLOR = 0x4f9d69;
   const MESH_TAG = "meimadSceneMesh";
 
   let hooks = null;
@@ -210,7 +212,8 @@
     // over it would fight it for the same faces.
     const cutting = Boolean(elements.materialRemoval && elements.materialRemoval.checked);
     const wanted = scene.items.filter((item) =>
-      (item.kind === "fixture" && elements.fixtures.checked) || (item.kind === "stock" && elements.rest.checked && !cutting));
+      (item.kind === "fixture" && elements.fixtures.checked) || (item.kind === "part" && elements.fixtures.checked)
+      || (item.kind === "stock" && elements.rest.checked && !cutting));
     if (!wanted.length) {
       hooks.upstream.render();
       return;
@@ -231,7 +234,9 @@
         const placed = core.modelToDrawing(positions, workCs, { scale: scaleOf(), shift });
         group.add(item.kind === "stock"
           ? meshObject(placed, REST_COLOR, elements.restSeeThrough && elements.restSeeThrough.checked ? 0.4 : 1)
-          : meshObject(placed, FIXTURE_COLOR, 0.9));
+          : item.kind === "part"
+            ? meshObject(placed, PART_COLOR, 0.35)
+            : meshObject(placed, FIXTURE_COLOR, 0.9));
       } catch (error) {
         status(`${item.name} could not be loaded: ${message(error)}`, "error");
       }
@@ -243,7 +248,7 @@
   // ----- card ---------------------------------------------------------------------------------
 
   function kindLabel(kind) {
-    return kind === "stock" ? "Rest material" : "Fixture";
+    return kind === "stock" ? "Rest material" : kind === "part" ? "Finished part" : "Fixture";
   }
 
   function renderItems() {

@@ -1,0 +1,80 @@
+<Window Style="{DynamicResource {x:Type Window}}" x:Class="Meimad.Planner.Client.Windows.Views.SimulationPackageReportWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Cimatron package import report" Width="1000" Height="700" MinWidth="700" MinHeight="460"
+        WindowStartupLocation="CenterOwner" Background="{DynamicResource CanvasBrush}">
+  <Grid Margin="12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="2*" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+    <StackPanel Grid.Row="0" Margin="0,0,0,8">
+      <TextBlock Text="{Binding OutcomeText}" FontSize="18" FontWeight="Bold" AutomationProperties.Name="Import outcome" />
+      <TextBlock Text="{Binding OutcomeDetail}" TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" />
+    </StackPanel>
+    <Border Grid.Row="1" Padding="10" Margin="0,0,0,8" Background="{DynamicResource RaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+      <StackPanel>
+        <TextBlock Text="{Binding PackagePath}" TextWrapping="Wrap" FontWeight="SemiBold" />
+        <TextBlock Text="{Binding ExportText}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding OperationText}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding CoordinateText}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding MachineText}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding ToolsText}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding CountsText}" FontWeight="SemiBold" Margin="0,4,0,0" />
+      </StackPanel>
+    </Border>
+    <DataGrid Grid.Row="2" ItemsSource="{Binding Diagnostics}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+              AutomationProperties.Name="Package diagnostics">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="Severity" Binding="{Binding SeverityText}" Width="100" />
+        <DataGridTextColumn Header="Code" Binding="{Binding Code}" Width="210" />
+        <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="2*" />
+        <DataGridTextColumn Header="Details" Binding="{Binding Details}" Width="*" />
+      </DataGrid.Columns>
+    </DataGrid>
+    <TextBlock Grid.Row="3" Text="Package files" FontWeight="SemiBold" Margin="0,8,0,4" />
+    <DataGrid Grid.Row="4" ItemsSource="{Binding Files}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+              AutomationProperties.Name="Package files">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="Role" Binding="{Binding RoleText}" Width="170" />
+        <DataGridTextColumn Header="File" Binding="{Binding Path}" Width="2*" />
+        <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
+        <DataGridTextColumn Header="State" Binding="{Binding State}" Width="110" />
+        <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="80" />
+        <DataGridTextColumn Header="Triangles" Binding="{Binding Triangles}" Width="80" />
+      </DataGrid.Columns>
+    </DataGrid>
+    <Border Grid.Row="5" Padding="10" Margin="0,8,0,0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4"
+            x:Name="ChoicesPanel">
+      <StackPanel>
+        <TextBlock Text="Your choices" FontWeight="SemiBold" Margin="0,0,0,4" />
+        <StackPanel x:Name="StockChoice" Margin="0,0,0,8">
+          <TextBlock Text="Stock to start from" Margin="0,0,0,2" FontWeight="SemiBold" />
+          <ComboBox ItemsSource="{Binding StockOptions}" SelectedItem="{Binding SelectedStock}" DisplayMemberPath="Label"
+                    AutomationProperties.Name="Stock to start from" />
+        </StackPanel>
+        <StackPanel x:Name="MachineChoice" Margin="0,0,0,8">
+          <TextBlock Text="Machine for this package" Margin="0,0,0,2" FontWeight="SemiBold" />
+          <ComboBox ItemsSource="{Binding MachineOptions}" SelectedItem="{Binding SelectedMachine}" DisplayMemberPath="Label"
+                    AutomationProperties.Name="Machine for this package" />
+          <CheckBox Content="Remember this Machine for the package's Cimatron machine" IsChecked="{Binding RememberMachineMapping}"
+                    IsEnabled="{Binding CanRememberMachineMapping}" Margin="0,4,0,0"
+                    ToolTip="Adds a Machine mapping in Setup; needs the Setup permission" />
+        </StackPanel>
+        <CheckBox x:Name="OverwriteChoice" Content="Replace the manually entered Work CS with the package Work CS" IsChecked="{Binding OverwriteManualWorkCs}" />
+      </StackPanel>
+    </Border>
+    <DockPanel Grid.Row="6" Margin="0,10,0,0">
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+        <Button x:Name="ImportButton" Content="Import with these choices" Width="190" Margin="0,0,8,0" Click="Import_Click" IsDefault="True" />
+        <Button Content="Close" Width="90" IsCancel="True" />
+      </StackPanel>
+      <TextBlock x:Name="StatusText" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
+    </DockPanel>
+  </Grid>
+</Window>

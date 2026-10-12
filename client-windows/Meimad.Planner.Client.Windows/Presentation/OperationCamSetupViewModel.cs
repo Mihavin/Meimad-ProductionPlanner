@@ -43,13 +43,16 @@ internal sealed class OperationCamSetupViewModel : INotifyPropertyChanged
     private string notes = string.Empty;
     private string savedSummary = string.Empty;
     private CamSetupFileRow? selectedFile;
+    private int camSetupVersion;
+    private SimulationPackageImport? currentPackage;
+    private string packageSummary = string.Empty;
 
     internal OperationCamSetupViewModel()
     {
         SaveCommand = new AsyncCommand(SaveAsync, () => CanEdit && HasOperation);
         ClearCommand = new AsyncCommand(ClearAsync, () => CanEdit && entityTag is not null);
         RemoveFileCommand = new AsyncCommand(RemoveFileAsync, () => CanEdit && SelectedFile is not null);
-        ToggleKindCommand = new AsyncCommand(ToggleKindAsync, () => CanEdit && SelectedFile is not null);
+        ToggleKindCommand = new AsyncCommand(ToggleKindAsync, () => CanEdit && SelectedFile is { Kind: "fixture" or "stock" });
         FindSimulationDataCommand = new AsyncCommand(() => FindSimulationDataAsync(LastNcFilePath, null, automatic: false),
             () => apiClient is not null && HasOperation && !IsSearching);
         CancelSearchCommand = new AsyncCommand(CancelSearchAsync, () => IsSearching);
@@ -61,6 +64,120 @@ internal sealed class OperationCamSetupViewModel : INotifyPropertyChanged
 
     /// <summary>Called after the Operation's linked files change, so the 3D Models tab reloads.</summary>
     internal Func<Task>? FilesChanged { get; set; }
+
+    /// <summary>Called after a Cimatron package was imported (the release form takes its NC and tool table).</summary>
+    internal Func<SimulationPackageImport, Task>? PackageImported { get; set; }
+
+    /// <summary>The Operation's current Cimatron package (status imported), or null.</summary>
+    public SimulationPackageImport? CurrentPackage
+    {
+        get => currentPackage;
+        private set
+        {
+            if (!SetField(ref currentPackage, value)) return;
+            PackageSummary = value is null
+                ? string.Empty
+                : string.Create(CultureInfo.InvariantCulture,
+                    $"Cimatron package {value.NcFileName ?? value.ManifestSha256[..8]} imported {value.ImportedAt.ToLocalTime():yyyy-MM-dd HH:mm} by {value.ImportedBy}; Machine {value.MachineName ?? value.MachineId ?? "?"} ({value.MachineMatchedBy}).");
+        }
+    }
+
+    /// <summary>Where the package folder dialog starts: the current package's folder, if it is reachable.</summary>
+    internal string? SuggestedPackageFolder =>
+        CurrentPackage?.PackagePath is { } path && Directory.Exists(path) ? Path.GetDirectoryName(path) : null;
+
+    /// <summary>One line about the current package.</summary>
+    public string PackageSummary { get => packageSummary; private set => SetField(ref packageSummary, value); }
+
+    /// <summary>The last import answer of this session (for "View package report").</summary>
+    internal SimulationPackageImportResult? LastPackageResult { get; private set; }
+
+    /// <summary>
+    /// Imports a Cimatron simulation package folder into the Operation. The request carries the CAM setup
+    /// version and the current package this view shows, so a change made meanwhile is refused (409) and
+    /// shown, never overwritten. A blocked import returns the Server's report with nothing changed.
+    /// </summary>
+    internal async Task<SimulationPackageImportResult?> ImportPackageAsync(string packageFolder, SimulationPackageChoices? choices = null)
+    {
+        if (!CanEdit || caseId is null || caseOperationId is null || apiClient is null)
+        {
+            StatusMessage = "Select an Operation, with an account that may edit Cases, to import a Cimatron package.";
+            return null;
+        }
+
+        var operationId = caseOperationId;
+        IsBusy = true;
+        SimulationPackageImportResult? result = null;
+        try
+        {
+            StatusMessage = "The Server is checking the Cimatron package…";
+            result = await apiClient.ImportSimulationPackageAsync(
+                caseId,
+                operationId,
+                new SimulationPackageImportRequest(
+                    packageFolder,
+                    camSetupVersion,
+                    CurrentPackage?.ImportId,
+                    choices?.StockPath,
+                    choices?.MachineId,
+                    choices?.RememberMachineMapping ?? false,
+                    choices?.OverwriteManualWorkCs ?? false),
+                clientId,
+                editGeneration);
+            LastPackageResult = result;
+            var warnings = result.Report.Diagnostics?.Count(item => item.Severity == "warning") ?? 0;
+            var errors = result.Report.Diagnostics?.Count(item => item.Severity == "error") ?? 0;
+            StatusMessage = result.Outcome switch
+            {
+                SimulationPackageImportResult.Imported => warnings == 0
+                    ? "Cimatron package imported: stock, fixtures and finished part linked, Work CS set from the package."
+                    : string.Format(CultureInfo.InvariantCulture,
+                        "Cimatron package imported with {0} warning(s): stock, fixtures and finished part linked, Work CS set from the package.", warnings),
+                SimulationPackageImportResult.AlreadyImported => "This Cimatron package is already imported for the Operation; nothing changed.",
+                _ => string.Format(CultureInfo.InvariantCulture, "The Cimatron package was not imported: {0} blocking problem(s). Nothing was changed.", errors)
+            };
+        }
+        catch (PlannerApiException exception) when (exception.StatusCode == HttpStatusCode.Conflict)
+        {
+            StatusMessage = $"{exception.Message} The current setup is shown; import the package again if it is still needed.";
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = Friendly(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        if (caseOperationId != operationId) return result;
+        if (result is null || result.Outcome == SimulationPackageImportResult.Imported)
+        {
+            await ReloadSetupAsync();
+            await RefreshFilesAsync();
+            await LoadPackagesAsync(operationId);
+            if (result is not null && FilesChanged is not null) await FilesChanged();
+        }
+
+        if (result is { Outcome: SimulationPackageImportResult.Imported, Import: { } imported } && PackageImported is not null)
+            await PackageImported(imported);
+        return result;
+    }
+
+    private async Task LoadPackagesAsync(string operationId)
+    {
+        if (apiClient is null || caseId is null) return;
+        try
+        {
+            var imports = await apiClient.ListSimulationPackageImportsAsync(caseId, operationId);
+            if (caseOperationId == operationId) CurrentPackage = imports.FirstOrDefault(item => item.Status == "imported");
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            // An older Server without packages, or offline: the card works without the package line.
+            if (caseOperationId == operationId) CurrentPackage = null;
+        }
+    }
 
     public ObservableCollection<CamSetupFileRow> Files { get; } = [];
 
@@ -318,6 +435,8 @@ internal sealed class OperationCamSetupViewModel : INotifyPropertyChanged
         caseId = newCaseId;
         caseOperationId = operationId;
         entityTag = null;
+        camSetupVersion = 0;
+        CurrentPackage = null;
         Files.Clear();
         SelectedFile = null;
         ResetFields();
@@ -338,6 +457,7 @@ internal sealed class OperationCamSetupViewModel : INotifyPropertyChanged
             Show(await setup);
             ReplaceFiles(await files, operationId);
             StatusMessage = string.Empty;
+            await LoadPackagesAsync(operationId);
         }
         catch (Exception exception) when (IsExpected(exception))
         {
@@ -568,6 +688,7 @@ internal sealed class OperationCamSetupViewModel : INotifyPropertyChanged
     private void Show(CaseOperationCamSetupResource? resource)
     {
         entityTag = resource?.EntityTag;
+        camSetupVersion = resource?.Value?.Version ?? 0;
         if (resource?.Value is not { } setup)
         {
             ResetFields();
@@ -604,8 +725,8 @@ internal sealed class OperationCamSetupViewModel : INotifyPropertyChanged
         var selectedId = SelectedFile?.CaseModelFileId;
         Files.Clear();
         foreach (var file in files
-                     .Where(file => file.CaseOperationId == operationId && file.Kind is "fixture" or "stock")
-                     .OrderBy(file => file.Kind == "stock" ? 1 : 0)
+                     .Where(file => file.CaseOperationId == operationId && file.Kind is "fixture" or "stock" or "part")
+                     .OrderBy(file => file.Kind switch { "fixture" => 0, "stock" => 1, _ => 2 })
                      .ThenBy(file => file.SortOrder)
                      .ThenBy(file => file.Label, StringComparer.CurrentCultureIgnoreCase))
         {
@@ -618,7 +739,7 @@ internal sealed class OperationCamSetupViewModel : INotifyPropertyChanged
     public string FilesSummary => Files.Count == 0
         ? "No fixture or rest-material files linked to this Operation."
         : string.Create(CultureInfo.InvariantCulture,
-            $"{Files.Count(file => file.Kind == "fixture")} fixture file(s), {Files.Count(file => file.Kind == "stock")} rest-material file(s).");
+            $"{Files.Count(file => file.Kind == "fixture")} fixture file(s), {Files.Count(file => file.Kind == "stock")} rest-material file(s), {Files.Count(file => file.Kind == "part")} finished-part file(s).");
 
     private void RaiseCommands()
     {
@@ -713,7 +834,7 @@ internal sealed class CamSetupFileRow(CaseModelFile file)
     public string CaseModelFileId => file.CaseModelFileId;
     public int Version => file.Version;
     public string Kind => file.Kind;
-    public string KindLabel => file.Kind == "stock" ? "Rest material" : "Fixture";
+    public string KindLabel => file.Kind switch { "stock" => "Rest material", "part" => "Finished part", _ => "Fixture" };
     public string Label => file.Label;
     public string Path => file.FilePath;
     public string Format => file.Format.ToUpperInvariant();
