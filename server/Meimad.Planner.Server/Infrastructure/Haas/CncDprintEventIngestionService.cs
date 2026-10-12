@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Meimad.Planner.Server.Application.Anomalies;
 using Meimad.Planner.Server.Application.Cnc;
+using Meimad.Planner.Server.Application.MachineEvidence;
 using Meimad.Planner.Server.Application.ProductionRuns;
 using Meimad.Planner.Server.Domain.Cnc;
 
@@ -24,6 +25,8 @@ internal sealed class CncDprintEventIngestionService(
     {
         foreach (var item in telemetry.Where(value => value.Operation == "DPRINT_EVENT"))
         {
+            // MEIMAD/OFFSET... lines are WORK_OFFSET evidence for WorkOffsetDprntConsumer, not workflow events.
+            if (DprntLineNormalizer.IsWorkOffsetLine(item.RawPayload)) continue;
             if (!HaasDprintProtocol.TryParse(item.RawPayload, out var parsed, out var parseError))
             {
                 logger.LogWarning("Rejected malformed CNC DPRINT event. MachineId={MachineId} Error={Error}",

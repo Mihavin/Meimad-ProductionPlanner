@@ -2,6 +2,7 @@ using System.Reflection;
 using Meimad.Planner.Server.Backup;
 using Meimad.Planner.Server.Api.Cases;
 using Meimad.Planner.Server.Api.Cnc;
+using Meimad.Planner.Server.Api.MachineEvidence;
 using Meimad.Planner.Server.Api.AdministrativeSetup;
 using Meimad.Planner.Server.Api.Anomalies;
 using Meimad.Planner.Server.Api.EventLogging;
@@ -42,6 +43,7 @@ using Meimad.Planner.Server.Api.ShiftRoster;
 using Meimad.Planner.Server.Api.WorkingCalendars;
 using Meimad.Planner.Server.Application.Cases;
 using Meimad.Planner.Server.Application.Cnc;
+using Meimad.Planner.Server.Application.MachineEvidence;
 using Meimad.Planner.Server.Application.AdministrativeSetup;
 using Meimad.Planner.Server.Application.Anomalies;
 using Meimad.Planner.Server.Application.Concurrency;
@@ -342,6 +344,13 @@ public static class ServerApplication
         builder.Services.AddSingleton<ICncConnectionRepository, SqliteCncConnectionRepository>();
         builder.Services.AddSingleton<IDprntLogRepository, SqliteDprntLogRepository>();
         builder.Services.AddSingleton<DprntLogService>();
+        builder.Services.AddSingleton(WorkOffsetOptions.FromConfiguration(builder.Configuration));
+        builder.Services.AddSingleton<IWorkOffsetRepository, SqliteWorkOffsetRepository>();
+        builder.Services.AddSingleton<WorkOffsetIngestService>();
+        builder.Services.AddSingleton<WorkOffsetService>();
+        builder.Services.AddSingleton<WorkOffsetDprntConsumer>();
+        builder.Services.AddSingleton<ICncRawTelemetryConsumer>(services =>
+            services.GetRequiredService<WorkOffsetDprntConsumer>());
         builder.Services.AddSingleton<CncAdapterRegistry>();
         builder.Services.AddSingleton<ICncAdapterFactory, CncAdapterFactory>();
         builder.Services.AddSingleton<ICncSnapshotConsumer, BenchAutomationService>();
@@ -534,6 +543,7 @@ public static class ServerApplication
         application.MapMachineSimulationEndpoints();
         application.MapCncEndpoints();
         application.MapCncVerificationEndpoints();
+        application.MapWorkOffsetEndpoints();
         application.MapHaasEndpoints();
         application.MapMachineDowntimeEndpoints();
         application.MapMachineTypeEndpoints();

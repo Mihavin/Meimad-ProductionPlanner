@@ -16,7 +16,7 @@ internal sealed class SqliteKitaronImportContext(SqliteDatabase database) : IKit
         "projection_revision", "schema_migrations", "structured_event_log", "kitaron_sync_state",
         "kitaron_connection_settings", "kitaron_mapping_settings", "kitaron_push_runs",
         "user_accounts", "user_sessions", "user_types", "user_type_permissions", "user_account_types",
-        "machine_telemetry_raw", "machine_dprnt_lines", "machine_connection_events", "machine_state_history",
+        "machine_telemetry_raw", "machine_dprnt_lines", "machine_work_offsets", "machine_connection_events", "machine_state_history",
         "machine_current_state", "machine_connections", "haas_machine_snapshots", "haas_connection_settings",
         "haas_events", "haas_bench_sessions", "haas_bench_state_intervals", "operational_anomalies",
         "local_ai_requests", "local_ai_feedback", "wipe_v82_archive"
