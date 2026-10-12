@@ -64,7 +64,7 @@ public sealed class NcViewerWrapperModuleTests
                     uniforms: { opacity: { value: 1 } },
                     vertexShader: "attribute float instancePick; void main() { vColor = instanceColor; if (instanceStyle.z < 0.5) { } }"
                   });
-                  const state = { model: undefined, playback: undefined, frame: "part", view: "iso" };
+                  const state = { model: undefined, playback: undefined, frame: "part", view: "iso", target: new THREE.Vector3(), up: new THREE.Vector3(0, 0, 1), front: new THREE.Vector3(0, -1, 0) };
                   return {
                     dispose() {}, fit() {}, pick() {}, pointerDown() {}, pointerMove() {}, pointerUp() {},
                     render() { onRender?.(); }, resize() {},
@@ -116,7 +116,8 @@ public sealed class NcViewerWrapperModuleTests
                   alphaAfter: internals.renderer.clearAlpha, alphaCanvas: internals.renderer.parameters.alpha === true,
                   shaderPatched: internals.line.vertexShader.includes("meimadHidden"), keptUniform: internals.line.uniforms.opacity.value === 1,
                   upstreamComplete: upstreamPlayback.complete === true && upstreamPlayback.completedIndex === 4,
-                  hiddenMode: internals.line.uniforms.meimadPathMode.value, pathMode: hooks.pathMode
+                  hiddenMode: internals.line.uniforms.meimadPathMode.value, pathMode: hooks.pathMode,
+                  cameraTarget: hooks.cameraTarget === internals.state.target
                 }));
                 """);
             var process = Process.Start(new ProcessStartInfo(node, "probe.mjs")
@@ -152,6 +153,7 @@ public sealed class NcViewerWrapperModuleTests
             Assert.True(root_.GetProperty("upstreamComplete").GetBoolean()); // the shader, not the instance count, hides moves
             Assert.Equal(4, root_.GetProperty("hiddenMode").GetDouble());
             Assert.Equal("hidden", root_.GetProperty("pathMode").GetString());
+            Assert.True(root_.GetProperty("cameraTarget").GetBoolean()); // Follow tool moves the upstream camera target
         }
         finally
         {

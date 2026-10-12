@@ -1,5 +1,79 @@
 # Implementation Plan
 
+## NC viewer 3D stock simulation, verification and visual layer (2026-10-12; implemented locally)
+
+**Source:** the owner's execution plan and specifications of 2026-10-12 (`docs/meimad-execution-plan.md`,
+`docs/nc-viewer-material-simulation-implementation-plan.md`, `docs/nc-viewer-visualization-spec.md`,
+`docs/cimatron-to-meimad-exporter-definition.md`). This entry covers the simulation core (stages 1–4 of the
+material-simulation plan, "Этап 1–4" of the execution plan), the finished-part comparison, the WebGPU backend and the
+visual layer ("Этап 7"). The Cimatron package (stages 0 and 5), measured work offsets (stage 6) and the TV thumbnail
+(stage 8) are separate sections.
+
+**Implemented (client, NC viewer page; no Server or schema change):**
+- `meimad-voxel-core.js`: the stock as a sparse grid of 16³ voxel blocks (uniform blocks hold no voxel array; voxels are
+  air, material or cut by this program), filled from a box, a round blank or a closed STL (column parity). Tools are
+  convex pieces of revolution (frusta, spheres; a bull-nose corner as six inscribed frusta) built from the Tool Room's
+  `ToolShapeGeometry` segments — the cutting profile (cutter, ball, point, cone, disc, dovetail, insert, a pilot below
+  the cutter) and the collision profile (shank, extension, holder, flange; parts above the gauge line left out) — or,
+  without a Tool Room drawing, from the tool table with the whole stick-out cutting and no holder (each estimate is
+  listed). A motion is cut as exact translation sweeps (closed-form minimum of a quadratic over the swept parameter per
+  piece), blocks and 4³ bricks are classified first (all corners inside one convex sweep / outside the axis sheet's
+  reach), and a vertical tool skips whole voxel columns outside its footprint. A turning axis is split so no tool point
+  moves more than half a cell between orientations (great-circle interpolation). Checkpoints pack the stock at 2 bits
+  per voxel.
+- `meimad-voxel-mesh.js`: surface nets per render chunk of 2×2×2 blocks, normals from a 4³ occupancy gradient, light
+  ambient occlusion, colors (stock grey, cuts by depth, gouges red, material left outside the part amber); STL export.
+- `meimad-voxel-sim.js`: motions planned, executed and committed in program order; events HolderCollision (holder or
+  shank in the stock / in the finished part), FixtureCollision (tool or holder in a fixture), RapidInMaterial, Gouge and
+  AxisLimit with NC row, program, tool, position, tool axis, contact volume, estimated-geometry flag and severity; one
+  continuous contact over consecutive motions is one event; cutting the stock is never an event; a rapid removes
+  nothing. Severity per check (`allowed`, `warning`, `error`, `stop`) comes from the machine definition's
+  `simulation.collisionPolicy` when present, else the page's rules (this PC). Journal per motion; checkpoints every
+  2000 motions within a 320 MB budget; the finished-part comparison (gouge and remaining voxel counts and volumes,
+  deepest gouge, thickest material left — distances searched shell by shell up to 10 mm, sampled).
+- `meimad-voxel-gpu.js`: WebGPU backend run by the worker: the CPU culls blocks per operation, one compute pass handles a
+  batch of motions with per-block operation lists in program order, changed blocks are read back. A self-check against
+  the CPU engine runs once per worker; any GPU failure falls back to the CPU. The shader uses no break/continue in its
+  loops: the Intel D3D compiler mis-ordered such a loop around atomics (found by differential testing).
+- `meimad-voxel-worker.js`, `meimad-simulation.js`: the 3D stock is the default for milling (Verification card: Stock
+  model, Compute on, Check collisions, Collision rules, events list with markers, finished part from the Operation's
+  setup or a chosen STL, heat map and summary, Copy journal); the column model stays selectable; turning is unchanged.
+  Machine travel limits per move from the machine definition (linear axes only when work offsets have values).
+- Visual layer: Path selector gains run/remaining in two colors, current tool only, tool of the selected row and
+  operation of the selected row (a per-move class texture in the patched line shader; no geometry rebuild);
+  `meimad-display.js` (machined stock, collision markers and holder visibility; Shaded / Wireframe / X-ray; Follow tool
+  through the captured upstream camera target; Fit all); `meimad-dashboard.js` (operator card with Case picture, Part
+  Number, Case, Operation, Machine, active tool and one main result with icon and word; icon buttons with tooltips and
+  shortcuts; information strip; operator view hiding the program and technical panels). `NcViewerScenes.CardAsync`
+  adds the card data (Case, Operation, Machine, Case picture as a data URL up to 4 MB) to the scene; the document state
+  carries `readOnly`. The page also fixes a race where a stock chosen before the program had loaded became a cylinder.
+
+**Measured (headless Chrome on this PC, Intel Gen12 integrated GPU):** 3000.nc (126,331 motions, Doosan B90 sides),
+0.4375 mm voxels: CPU (Node) 103 s, GPU 34.7 s, identical removed volume (7,633,657 mm³); first 20,000 motions in the
+worker: CPU 23.7 s, GPU 4.9 s. Self-check scene: GPU and CPU identical voxel by voxel. The column model took 58 s.
+
+**Verified locally:** `VoxelSimulationTests` (every tool shape, long versus short moves, tilted, turning and upward tools,
+undercuts, closed STL with matching volume, collisions with rows and one event per contact, rewind equivalence,
+finished-part comparison, determinism, the ToolShapeGeometry adapter), `PathVisibilityCoreTests` (filter modes,
+operations, header rows, split colors), `NcViewerWrapperModuleTests` (camera target), `NcViewerSetupSceneTests`
+(picture data URL), and a smoke run of the whole page in headless Chrome with a test double of the WebView2 host on
+O1000.cnc (3D stock on the GPU, events, Display modes, operator view). Not verified in WebView2 on the factory PCs, on a
+discrete GPU, or against a real collision on a machine.
+
+**Decisions (reversible) and open points:**
+- The stock is binary voxels meshed by surface nets, not marching cubes over an SDF (the plan allows either; SDF stays
+  optional).
+- A tool known only from the tool table cuts with its whole stick-out and has no holder check; a Tool Room drawing is
+  needed for holder and shank collisions. Estimated sizes are listed, never silently used.
+- Collision rules live on this PC until the Machine Designer edits `simulation.collisionPolicy`; per-Operation rules
+  (spec §11.3) are not stored yet — **TBD**.
+- MachineCollision (the tool assembly against machine components on kinematic nodes) is not checked yet; fixture and
+  finished-part meshes are. **Open.**
+- The execution plan's gate ("do not start simultaneous 5-axis, DPRNT transport and GPU compute before the vertical
+  slice passes end to end") was overridden by the owner's instruction of 2026-10-12 to implement all documents; the
+  end-to-end demo (Cimatron package → Meimad import → simulation → TV row) still needs a real Cimatron export.
+- Operator view starts on for read-only releases and off for editing; remembered per PC.
+
 ## NC viewer background, Path selector and stock shading (2026-10-11; implemented locally)
 
 **Found:** three.js r185 assigns `WebGLRenderer.render` as an instance property in its constructor, so the wrapper's

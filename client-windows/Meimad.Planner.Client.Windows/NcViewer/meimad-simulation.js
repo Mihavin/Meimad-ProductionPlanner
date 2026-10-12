@@ -3,8 +3,12 @@
 // Meimad Planner stock and material removal for the NC viewer page. Loaded after preview.js.
 // - Stock definition (box, cylinder or STL, relative to a work offset), saved next to the NC
 //   program in the Case Working Folder and reloaded with it.
-// - Material removal in a worker (meimad-material-worker.js): the stock follows the playback
-//   position, or shows the finished part while playback is idle; ON/OFF and resolution.
+// - Material removal in a worker: milling on the 3D voxel stock (meimad-voxel-worker.js, with
+//   collision checks, the finished-part comparison and a journal; the earlier column model in
+//   meimad-material-worker.js stays selectable), turning on the radius profile. The stock follows
+//   the playback position, or shows the finished part while playback is idle; ON/OFF and resolution.
+// - Verification card: collision rules, the events with their NC rows (markers in the 3D view;
+//   a "stop" rule pauses the playback), gouges and material left outside the finished part.
 // - Playback from the selected NC row, single-tool playback that skips the other tools' moves,
 //   and a progress bar for both the cutting computation and the playback.
 // - Export of the machined stock as STL into the next Operation's Stock folder.
@@ -37,7 +41,20 @@
     note: byId("meimadStockNote"),
     reference: byId("meimadStockReference"),
     runButton: byId("runButton"),
-    toolFilter: byId("toolFilter")
+    pauseButton: byId("pauseButton"),
+    toolFilter: byId("toolFilter"),
+    engine: byId("meimadEngine"),
+    backend: byId("meimadBackend"),
+    collisions: byId("meimadCollisions"),
+    policyRows: byId("meimadPolicyRows"),
+    verifyStats: byId("meimadVerifyStats"),
+    events: byId("meimadEvents"),
+    partSource: byId("meimadPartSource"),
+    partPath: byId("meimadPartPath"),
+    partBrowse: byId("meimadPartBrowse"),
+    deviation: byId("meimadDeviation"),
+    deviationResult: byId("meimadDeviationResult"),
+    journalCopy: byId("meimadJournalCopy")
   };
   if (!elements.card || !elements.toggle) return;
   const field = (name) => elements.card.querySelector(`[data-stock="${name}"]`);
@@ -74,6 +91,41 @@
   let playbackDone = 0;
   let seeking = false;
   let tiltedMoves = 0;
+  let boxBeforeLathe = false;
+  // 3D stock: the surface arrives in render chunks; events, totals and the finished part.
+  let voxelGroup;
+  const chunkMeshes = new Map();
+  let chunkMaterial;
+  let markerGroup;
+  let events = [];
+  let lastStats = null;
+  let workerEngine = "";
+  let partPositions = null;   // finished part in program coordinates
+  let partSourceText = "";
+  let userPartPath = "";
+  let sceneFixtures = [];
+  let assemblies = {};
+  let axisLimitMoves = 0;
+  let deviationAsked = false;
+
+  // Collision rules: the checks of meimad-voxel-sim.js and their default severity.
+  const CHECKS = [
+    ["holderStock", "Holder or shank in the stock", "error"],
+    ["toolFixture", "Tool in a fixture", "stop"],
+    ["holderFixture", "Holder in a fixture", "stop"],
+    ["holderPart", "Holder in the finished part", "warning"],
+    ["rapidStock", "Rapid through material", "error"],
+    ["gouge", "Cut into the finished part", "error"],
+    ["axisLimit", "Axis travel limit", "error"]
+  ];
+  const SEVERITIES = [["allowed", "Off"], ["warning", "Warning"], ["error", "Error"], ["stop", "Stop playback"]];
+  const STORE = { backend: "meimad.ncViewer.backend", engine: "meimad.ncViewer.engine", policy: "meimad.ncViewer.collisionPolicy", collisions: "meimad.ncViewer.collisions" };
+  const readStore = (key) => {
+    try { return window.localStorage?.getItem(key) ?? null; } catch { return null; }
+  };
+  const writeStore = (key, value) => {
+    try { window.localStorage?.setItem(key, value); } catch { /* not remembered */ }
+  };
 
   const editor = () => document.querySelector(".CodeMirror")?.CodeMirror;
   const message = (error) => (error && error.message) || String(error || "Unknown error");
@@ -143,7 +195,19 @@
     for (const option of elements.type.options) {
       if (option.value === "box") option.hidden = lathe;
     }
-    if (lathe && type === "box") elements.type.value = "cylinder";
+    // A lathe has no box stock. The page first shows a blank lathe program, so a box chosen meanwhile
+    // comes back with the milling program instead of staying a cylinder.
+    if (lathe && type === "box") {
+      elements.type.value = "cylinder";
+      boxBeforeLathe = true;
+    } else if (!lathe && model && boxBeforeLathe && type === "cylinder") {
+      elements.type.value = "box";
+      boxBeforeLathe = false;
+      elements.boxFields.hidden = false;
+      elements.cylinderFields.hidden = true;
+    } else if (!lathe && model) {
+      boxBeforeLathe = false;
+    }
   }
 
   function fillWorkOffsets() {
@@ -287,8 +351,38 @@
     }
   }
 
+  // Machine axes outside their travel at the end of each move (linear axes only when the work offsets
+  // have real values, so machine positions are known).
+  function travelChecker() {
+    const axes = window.MeimadAxes;
+    if (!model || model.kind === "lathe" || !axes?.createCalculator || !axes.machineAxes) return null;
+    const calculator = axes.createCalculator(model, window.CncKinematics);
+    const known = !(model.meta?.defaultedWorkOffsets || []).length;
+    const limits = axes.machineAxes(model).filter((axis) => !axis.wraps && (axis.limitMin !== null || axis.limitMax !== null)
+      && (axis.type === "rotary" || known));
+    if (!limits.length) return null;
+    return (segment) => {
+      const points = segment.points || [];
+      if (!points.length) return undefined;
+      const rotary = segment.rotary || {};
+      const joints = calculator.joints(points[points.length - 1], { A: rotary.a1 || 0, B: rotary.b1 || 0, C: rotary.c1 || 0 }, segment.toolLength);
+      if (!joints) return undefined;
+      const outside = [];
+      for (const axis of limits) {
+        const value = joints[axis.axis];
+        if (!Number.isFinite(value)) continue;
+        if ((axis.limitMin !== null && value < axis.limitMin - 1e-3) || (axis.limitMax !== null && value > axis.limitMax + 1e-3)) {
+          outside.push({ axis: axis.label || axis.axis, value, min: axis.limitMin, max: axis.limitMax });
+        }
+      }
+      return outside.length ? outside : undefined;
+    };
+  }
+
   function compactSegments() {
     const chain = buildChain();
+    const travel = travelChecker();
+    axisLimitMoves = 0;
     tiltedMoves = 0;
     let elapsed = 0;
     timeline = [];
@@ -321,9 +415,17 @@
           axes = undefined;
         }
       }
+      const axisLimit = travel ? travel(segment) : undefined;
+      if (axisLimit) axisLimitMoves += 1;
       return {
         tool: segment.tool,
         cutting: isCutting(segment),
+        rapid: segment.kind === "rapid",
+        nonCutting: Boolean(segment.nonCutting),
+        line: segment.line,
+        sourceUnit: segment.sourceUnit,
+        sourceLine: segment.sourceLine,
+        axisLimit,
         points: (segment.points || []).map((point) => model.kind === "lathe"
           ? { x: point.x, z: point.z, r: Number.isFinite(point.r) ? point.r : point.x / 2 }
           : { x: point.x, y: point.y ?? 0, z: point.z }),
@@ -446,8 +548,9 @@
       showProgress(false);
       return;
     }
+    const voxel = model.kind !== "lathe" && engineChoice() === "voxel";
     try {
-      worker = new Worker("./meimad-material-worker.js");
+      worker = new Worker(voxel ? "./meimad-voxel-worker.js" : "./meimad-material-worker.js");
     } catch (error) {
       status(`Material removal is unavailable: ${message(error)}`, "error");
       return;
@@ -456,6 +559,38 @@
     worker.onerror = (event) => status(`Material removal stopped: ${event.message || "worker error"}`, "error");
     const stl = definition.type === "stl" && model.kind !== "lathe" ? stlPositions : undefined;
     const stockDefinition = stockForWorker();
+    workerEngine = voxel ? "voxel" : "column";
+    events = [];
+    lastStats = null;
+    deviationAsked = false;
+    renderEvents();
+    renderStats();
+    elements.deviationResult.textContent = "";
+    if (voxel) {
+      const resolution = Number(elements.resolution.value) || autoResolution(stockDefinition, stl);
+      const shift = stockDefinition.offset || { x: 0, y: 0, z: 0 };
+      const stock = stl ? { positions: shifted(stl, shift) } : stockDefinition;
+      worker.postMessage({
+        type: "init",
+        stock,
+        resolution,
+        tools: toolsByNumber(),
+        assemblies,
+        motions: compact,
+        fixtures: sceneFixtures.map((fixture) => ({ name: fixture.name, positions: fixture.positions })),
+        target: partPositions,
+        policy: currentPolicy(),
+        collisions: elements.collisions.checked,
+        extent: extentOf([...sceneFixtures.map((fixture) => fixture.positions), partPositions]),
+        filterTool,
+        deviation: elements.deviation.checked,
+        backend: elements.backend && elements.backend.value === "cpu" ? "cpu" : "auto"
+      });
+      lastTarget = { index: -2, fraction: 0 };
+      showProgress(true);
+      setProgress(0, compact.length, "Preparing the stock…");
+      return;
+    }
     worker.postMessage({
       type: "init",
       kind: model.kind,
@@ -473,6 +608,46 @@
 
   function onWorkerMessage(event) {
     const data = event.data || {};
+    if (data.type === "ready" && workerEngine === "voxel") {
+      workerReady = true;
+      const notes = Object.entries(data.notes || {}).filter(([, list]) => list && list.length)
+        .map(([tool, list]) => `T${tool}: ${list.join("; ")}`);
+      elements.note.textContent = `3D stock: ${Number(data.resolution).toFixed(3)} mm voxels, computed on ${data.backend || "CPU"} · grey: stock faces, cyan to violet: cut depth` +
+        (tiltedMoves ? ` · ${tiltedMoves} tilted-axis cutting move(s)` : "") +
+        (notes.length ? ` · Estimated tool geometry: ${notes.join(" · ")}` : "");
+      followPlayback();
+      return;
+    }
+    if (data.type === "chunks") {
+      applyChunks(data);
+      return;
+    }
+    if (data.type === "backend") {
+      status(`Material removal continues on the ${data.note || "CPU"}.`, "warning");
+      return;
+    }
+    if (data.type === "events") {
+      receiveEvents(data);
+      return;
+    }
+    if (data.type === "stats") {
+      lastStats = data.stats;
+      renderStats();
+      window.dispatchEvent(new CustomEvent("meimad:verification", { detail: { events, stats: lastStats } }));
+      if (!workerBusy && elements.deviation.checked && partPositions && !deviationAsked && lastStats.cursor >= compact.length - 1) {
+        deviationAsked = true;
+        worker.postMessage({ type: "deviation", limitMm: 10 });
+      }
+      return;
+    }
+    if (data.type === "deviation") {
+      renderDeviation(data.result);
+      return;
+    }
+    if (data.type === "journal") {
+      copyJournal(data.rows);
+      return;
+    }
     if (data.type === "ready") {
       workerReady = true;
       const notes = toolNotes();
@@ -540,6 +715,7 @@
       });
       mesh = new THREE.Mesh(geometry, material);
       mesh.renderOrder = 1;
+      mesh.name = "meimad-stock-columns";
       mesh.frustumCulled = false;
       hooks.contentRoot.add(mesh);
     }
@@ -616,6 +792,8 @@
   }
 
   function removeMesh() {
+    clearChunks();
+    clearMarkers();
     if (mesh && hooks) {
       hooks.contentRoot.remove(mesh);
       mesh.geometry.dispose();
@@ -677,6 +855,299 @@
     }
     hooks.contentRoot.add(outline);
     hooks.upstream.render();
+  }
+
+  // ----- 3D stock surface, events and the finished part -------------------------------------------
+
+  function engineChoice() {
+    return elements.engine && elements.engine.value === "column" ? "column" : "voxel";
+  }
+
+  function shifted(positions, shift) {
+    if (!shift || (!shift.x && !shift.y && !shift.z)) return new Float32Array(positions);
+    const out = new Float32Array(positions.length);
+    for (let index = 0; index + 2 < positions.length; index += 3) {
+      out[index] = positions[index] + shift.x;
+      out[index + 1] = positions[index + 1] + shift.y;
+      out[index + 2] = positions[index + 2] + shift.z;
+    }
+    return out;
+  }
+
+  function extentOf(list) {
+    let box = null;
+    for (const positions of list) {
+      if (!positions || positions.length < 9) continue;
+      const b = window.MeimadVoxel ? window.MeimadVoxel.bounds(positions) : null;
+      if (!b) continue;
+      box = box ? window.MeimadVoxel.union(box, b) : b;
+    }
+    return box;
+  }
+
+  function ensureChunkGroup() {
+    if (!hooks) return null;
+    const THREE = hooks.THREE;
+    ensureLights();
+    if (!voxelGroup) {
+      voxelGroup = new THREE.Group();
+      voxelGroup.name = "meimad-stock-3d";
+      chunkMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.82, metalness: 0.05 });
+    }
+    if (voxelGroup.parent !== hooks.contentRoot) hooks.contentRoot.add(voxelGroup);
+    return voxelGroup;
+  }
+
+  function clearChunks() {
+    for (const chunk of chunkMeshes.values()) {
+      chunk.parent?.remove(chunk);
+      chunk.geometry.dispose();
+    }
+    chunkMeshes.clear();
+  }
+
+  function applyChunks(data) {
+    const group = ensureChunkGroup();
+    if (!group) return;
+    const THREE = hooks.THREE;
+    if (data.reset) clearChunks();
+    for (const key of data.empty || []) {
+      const old = chunkMeshes.get(key);
+      if (!old) continue;
+      group.remove(old);
+      old.geometry.dispose();
+      chunkMeshes.delete(key);
+    }
+    for (const part of data.meshes || []) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(part.positions, 3));
+      geometry.setAttribute("normal", new THREE.BufferAttribute(part.normals, 3));
+      geometry.setAttribute("color", new THREE.BufferAttribute(part.colors, 3));
+      geometry.setIndex(new THREE.BufferAttribute(part.index, 1));
+      geometry.computeBoundingSphere();
+      const old = chunkMeshes.get(part.key);
+      if (old) {
+        old.geometry.dispose();
+        old.geometry = geometry;
+      } else {
+        const chunk = new THREE.Mesh(geometry, chunkMaterial);
+        chunk.renderOrder = 1;
+        chunk.userData.meimadStockChunk = part.key;
+        group.add(chunk);
+        chunkMeshes.set(part.key, chunk);
+      }
+    }
+    if ((data.meshes || []).length || (data.empty || []).length || data.reset) {
+      group.visible = true;
+      removeOutline();
+      hooks.upstream.render();
+    }
+  }
+
+  function clearMarkers() {
+    if (markerGroup) {
+      markerGroup.parent?.remove(markerGroup);
+      markerGroup.traverse((child) => { child.geometry?.dispose?.(); child.material?.dispose?.(); });
+      markerGroup = undefined;
+    }
+  }
+
+  // Red markers where a collision or gouge starts (a sphere and a short line along the tool axis).
+  function drawMarkers() {
+    clearMarkers();
+    if (!hooks || !events.length) {
+      hooks?.upstream.render();
+      return;
+    }
+    const THREE = hooks.THREE;
+    markerGroup = new THREE.Group();
+    markerGroup.name = "meimad-collision-markers";
+    const span = definition.box && Number.isFinite(definition.box.maxX) ? Math.max(definition.box.maxX - definition.box.minX, 20) : 100;
+    const size = Math.max(1.5, span / 120);
+    const sphere = new THREE.SphereGeometry(size, 16, 12);
+    for (const event of events) {
+      if (!event.position) continue;
+      const color = event.severity === "warning" ? 0xffb020 : 0xff2a2a;
+      const marker = new THREE.Mesh(sphere, new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.85 }));
+      marker.position.set(event.position.x, event.position.y, event.position.z);
+      marker.renderOrder = 9;
+      marker.userData.meimadEvent = event.id;
+      markerGroup.add(marker);
+    }
+    markerGroup.visible = window.meimadSceneFlags ? window.meimadSceneFlags.collisionMarkers() : true;
+    hooks.contentRoot.add(markerGroup);
+    hooks.upstream.render();
+  }
+
+  const SEVERITY_TEXT = { stop: "⏹ Stop", error: "⛔ Error", warning: "⚠ Warning" };
+  const TYPE_TEXT = {
+    HolderCollision: "Holder collision", FixtureCollision: "Fixture collision", RapidInMaterial: "Rapid in material",
+    Gouge: "Gouge", AxisLimit: "Axis limit", MachineCollision: "Machine collision"
+  };
+
+  function receiveEvents(data) {
+    const incoming = data.events || [];
+    const fresh = data.replace ? incoming.filter((event) => !events.some((known) => known.id === event.id)) : incoming;
+    events = data.replace ? incoming : events.concat(incoming);
+    renderEvents();
+    drawMarkers();
+    if (fresh.some((event) => event.severity === "stop") && playbackState() === "running" && elements.pauseButton && !elements.pauseButton.disabled) {
+      const stop = fresh.find((event) => event.severity === "stop");
+      elements.pauseButton.click();
+      status(`Playback stopped: ${TYPE_TEXT[stop.type] || stop.type} at row ${stop.line ?? "?"} (T${stop.tool}). ${stop.message}`, "error");
+    }
+    window.dispatchEvent(new CustomEvent("meimad:verification", { detail: { events, stats: lastStats } }));
+  }
+
+  function renderEvents() {
+    if (!elements.events) return;
+    elements.events.replaceChildren();
+    for (const event of events.slice(0, 500)) {
+      const item = document.createElement("li");
+      item.className = `meimad-event severity-${event.severity}`;
+      item.tabIndex = 0;
+      const row = event.sourceUnit ? `${event.sourceUnit} row ${event.sourceLine ?? "?"}` : `row ${event.line ?? "?"}`;
+      const span = event.lastIndex > event.executionIndex ? ` (${event.lastIndex - event.executionIndex + 1} moves)` : "";
+      const estimated = event.estimatedGeometry ? " · estimated tool geometry" : "";
+      item.textContent = `${SEVERITY_TEXT[event.severity] || event.severity} · ${TYPE_TEXT[event.type] || event.type} · ${row} · T${event.tool}${span} — ${event.message}${estimated}`;
+      item.title = "Go to this move";
+      const go = () => goToEvent(event);
+      item.addEventListener("click", go);
+      item.addEventListener("keydown", (key) => { if (key.key === "Enter") go(); });
+      elements.events.appendChild(item);
+    }
+    if (events.length > 500) {
+      const more = document.createElement("li");
+      more.className = "meimad-event";
+      more.textContent = `… ${events.length - 500} more`;
+      elements.events.appendChild(more);
+    }
+  }
+
+  function goToEvent(event) {
+    const entry = timeline[event.executionIndex];
+    if (entry) window.cncPreviewSeek?.(entry.startSeconds + entry.duration * 0.5);
+    if (!event.sourceUnit && Number.isFinite(event.line)) {
+      const cm = editor();
+      if (cm) {
+        cm.setCursor({ line: event.line - 1, ch: 0 });
+        cm.scrollIntoView({ line: event.line - 1, ch: 0 }, 120);
+      }
+    }
+  }
+
+  function renderStats() {
+    if (!elements.verifyStats) return;
+    if (!lastStats || workerEngine !== "voxel") {
+      elements.verifyStats.textContent = workerEngine === "column"
+        ? "Collision checks and the finished-part comparison need the 3D stock."
+        : axisLimitMoves ? `${axisLimitMoves} move(s) outside the machine travel.` : "";
+      return;
+    }
+    const volume = (value) => `${Math.round(value).toLocaleString()} mm³`;
+    const parts = [
+      `Removed ${volume(lastStats.removedVolume)}`,
+      `${lastStats.collisions} collision${lastStats.collisions === 1 ? "" : "s"}`,
+      `${lastStats.gouges} gouge${lastStats.gouges === 1 ? "" : "s"}`
+    ];
+    if (lastStats.axisLimits) parts.push(`${lastStats.axisLimits} axis limit${lastStats.axisLimits === 1 ? "" : "s"}`);
+    if (!elements.collisions.checked) parts.push("collision checks off");
+    elements.verifyStats.textContent = parts.join(" · ");
+  }
+
+  function renderDeviation(result) {
+    if (!result) {
+      elements.deviationResult.textContent = "No finished part to compare with.";
+      return;
+    }
+    const mm = (value) => `${Number(value).toFixed(2)} mm`;
+    const volume = (value) => `${Math.round(value).toLocaleString()} mm³`;
+    const gouge = result.gougeVoxelCount
+      ? `⛔ Gouges ${volume(result.gougeVolume)}, deepest ≈ ${mm(result.maxGouge)}${result.firstGougeRow ? `, first at row ${result.firstGougeRow}` : ""}`
+      : "✔ No gouges";
+    const left = result.remainingVoxelCount
+      ? `Left outside the part ${volume(result.remainingVolume)}, thickest ≈ ${result.remainingCapped ? "over " : ""}${mm(result.maxRemainingStock)}`
+      : "✔ No material left outside the part";
+    elements.deviationResult.textContent = `${gouge} · ${left}`;
+  }
+
+  // The finished part: the Operation's Cimatron part model, else an STL chosen here.
+  async function refreshSceneGeometry() {
+    if (!window.meimadSceneGeometry || !model || model.kind === "lathe") return;
+    const placed = await window.meimadSceneGeometry.placed(["fixture", "part", "finished-part"]);
+    sceneFixtures = placed.filter((item) => item.kind === "fixture");
+    const part = placed.find((item) => item.kind === "part");
+    if (part && !userPartPath) {
+      partPositions = part.positions;
+      partSourceText = `Finished part: ${part.name} (Operation setup)`;
+    }
+    renderPartSource();
+  }
+
+  function renderPartSource() {
+    elements.partSource.textContent = partPositions
+      ? partSourceText
+      : "No finished part: link the part model in the Operation's Cimatron setup, or choose its STL.";
+    elements.deviation.disabled = !partPositions;
+  }
+
+  async function loadPart(path) {
+    try {
+      const result = await meimad.stock.readStl(path);
+      const bytes = Uint8Array.from(atob(result.base64), (character) => character.charCodeAt(0));
+      partPositions = window.MeimadMaterial.readStl(bytes.buffer);
+      userPartPath = path;
+      elements.partPath.value = path;
+      partSourceText = `Finished part: ${result.name || path} (${Math.floor(partPositions.length / 9).toLocaleString()} triangles)`;
+      renderPartSource();
+      return true;
+    } catch (error) {
+      status(`The finished part STL could not be read: ${message(error)}`, "error");
+      return false;
+    }
+  }
+
+  function currentPolicy() {
+    const policy = {};
+    for (const select of elements.policyRows?.querySelectorAll("select[data-check]") || []) policy[select.dataset.check] = select.value;
+    return policy;
+  }
+
+  function buildPolicyRows() {
+    if (!elements.policyRows) return;
+    let stored = {};
+    try { stored = JSON.parse(readStore(STORE.policy) || "{}") || {}; } catch { stored = {}; }
+    const fromMachine = (model?.machineDefinition?.simulation?.collisionPolicy) || {};
+    elements.policyRows.replaceChildren();
+    for (const [check, label, fallback] of CHECKS) {
+      const row = document.createElement("label");
+      row.textContent = label;
+      const select = document.createElement("select");
+      select.dataset.check = check;
+      for (const [value, text] of SEVERITIES) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = text;
+        select.appendChild(option);
+      }
+      select.value = stored[check] || fromMachine[check] || fallback;
+      select.addEventListener("change", () => {
+        writeStore(STORE.policy, JSON.stringify(currentPolicy()));
+        if (elements.toggle.checked) applyStock();
+      });
+      row.appendChild(select);
+      elements.policyRows.appendChild(row);
+    }
+  }
+
+  function copyJournal(rows) {
+    const header = "index,row,program,program row,tool,removed mm3,sweeps,cut,collision,gouge,rapid in material,axis limit";
+    const lines = rows.map((row) => [row.index, row.line ?? "", row.sourceUnit ?? "", row.sourceLine ?? "", row.tool,
+      row.removedVolume.toFixed(3), row.sweeps, row.cut ? 1 : 0, row.collision ? 1 : 0, row.gouge ? 1 : 0, row.rapidInMaterial ? 1 : 0, row.axisLimit ? 1 : 0].join(","));
+    const text = [header, ...lines].join("\n");
+    const done = () => status(`Journal of ${rows.length.toLocaleString()} moves copied (CSV).`, "success");
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done, (error) => status(message(error), "error"));
+    else status("The clipboard is not available here.", "warning");
   }
 
   // ----- playback following ----------------------------------------------------------------------
@@ -880,6 +1351,8 @@
     }
     hooks.on("model", (next) => {
       model = next;
+      buildPolicyRows();
+      refreshSceneGeometry();
       compactSegments();
       fillWorkOffsets();
       refreshTypeFields();
@@ -910,6 +1383,74 @@
 
   if (window.meimadViewer3d) attachHooks();
   else window.addEventListener("meimad:viewer3d", attachHooks, { once: true });
+
+  // Verification wiring.
+  if (elements.engine) {
+    elements.engine.value = readStore(STORE.engine) === "column" ? "column" : "voxel";
+    elements.engine.addEventListener("change", () => {
+      writeStore(STORE.engine, elements.engine.value);
+      if (elements.toggle.checked) applyStock();
+    });
+  }
+  if (elements.backend) {
+    elements.backend.value = readStore(STORE.backend) === "cpu" ? "cpu" : "auto";
+    elements.backend.addEventListener("change", () => {
+      writeStore(STORE.backend, elements.backend.value);
+      if (elements.toggle.checked) applyStock();
+    });
+  }
+  if (elements.collisions) {
+    elements.collisions.checked = readStore(STORE.collisions) !== "off";
+    elements.collisions.addEventListener("change", () => {
+      writeStore(STORE.collisions, elements.collisions.checked ? "on" : "off");
+      if (elements.toggle.checked) applyStock();
+    });
+  }
+  buildPolicyRows();
+  elements.deviation?.addEventListener("change", () => {
+    if (!worker || workerEngine !== "voxel") return;
+    worker.postMessage({ type: "view", deviation: elements.deviation.checked });
+    if (elements.deviation.checked && partPositions) {
+      deviationAsked = true;
+      worker.postMessage({ type: "deviation", limitMm: 10 });
+    } else {
+      elements.deviationResult.textContent = "";
+    }
+  });
+  elements.partBrowse?.addEventListener("click", async () => {
+    try {
+      const result = await meimad.stock.chooseStl();
+      if (result && !result.canceled && result.path && await loadPart(result.path) && elements.toggle.checked) applyStock();
+    } catch (error) {
+      status(message(error), "error");
+    }
+  });
+  elements.partPath?.addEventListener("change", async () => {
+    const path = elements.partPath.value.trim();
+    if (!path) {
+      userPartPath = "";
+      partPositions = null;
+      await refreshSceneGeometry();
+    } else if (await loadPart(path) && elements.toggle.checked) applyStock();
+  });
+  elements.journalCopy?.addEventListener("click", () => {
+    if (!worker || workerEngine !== "voxel") {
+      status("The journal needs material removal on the 3D stock.", "warning");
+      return;
+    }
+    worker.postMessage({ type: "journal" });
+  });
+  window.addEventListener("meimad:scene-loaded", async () => {
+    await refreshSceneGeometry();
+    if (elements.toggle.checked && workerEngine === "voxel" && (sceneFixtures.length || partPositions)) applyStock();
+  });
+  if (typeof meimad.toolAssemblies === "function") {
+    meimad.toolAssemblies().then((result) => {
+      assemblies = Object.fromEntries((result?.tools || []).map((tool) => [Number(tool.number), tool]));
+      if (Object.keys(assemblies).length && elements.toggle.checked && workerEngine === "voxel") applyStock();
+    }).catch(() => { assemblies = {}; });
+  }
+  renderPartSource();
 
   elements.toggle.addEventListener("change", applyStock);
   elements.resolution.addEventListener("change", () => { if (elements.toggle.checked) applyStock(); });
@@ -968,6 +1509,9 @@
   });
 
   window.meimadSimulationState = () => ({
+    engine: workerEngine,
+    events: events.length,
+    stats: lastStats,
     stockType: definition.type,
     materialRemoval: elements.toggle.checked,
     workerReady,

@@ -22,13 +22,28 @@ export { SEGMENT_STYLES };
 
 export function createToolpathViewer(options) {
   const THREE = options.THREE;
-  const captured = { scenes: [], groups: [], cameras: [], renderers: [] };
+  const captured = { scenes: [], groups: [], cameras: [], renderers: [], vectors: [] };
+  // The first three vectors the upstream viewer makes are its camera target, up and front (its state
+  // object); "Follow tool" (meimad-display.js) moves the target.
+  let capturingVectors = true;
   // The Path selector (meimad-path-visibility-core.js): the upstream line materials get a pick-id
   // range test whose inputs every line material shares, so a mode or playback change is a uniform
   // update, not a geometry rebuild.
   const Path = typeof window !== "undefined" ? window.MeimadPathVisibility : undefined;
+  const CLASS_WIDTH = 4096;
+  let classTexture = null;
+  try {
+    classTexture = new THREE.DataTexture(new Uint8Array(CLASS_WIDTH).fill(255), CLASS_WIDTH, 1, THREE.RedFormat, THREE.UnsignedByteType);
+    classTexture.magFilter = THREE.NearestFilter;
+    classTexture.minFilter = THREE.NearestFilter;
+    classTexture.needsUpdate = true;
+  } catch {
+    classTexture = null;
+  }
   const pathUniforms = {
     meimadPathMode: { value: 0 },
+    meimadFilter: { value: 0 },
+    meimadClass: { value: classTexture },
     meimadBaseCount: { value: 0 },
     meimadBaseThreshold: { value: 1 },
     meimadCompensatedThreshold: { value: 1 },
@@ -61,6 +76,14 @@ export function createToolpathViewer(options) {
       OrthographicCamera: class extends THREE.OrthographicCamera {
         constructor(...args) { super(...args); captured.cameras.push(this); }
       },
+      ...(THREE.Vector3 ? {
+        Vector3: class extends THREE.Vector3 {
+          constructor(...args) {
+            super(...args);
+            if (capturingVectors && captured.vectors.length < 3) captured.vectors.push(this);
+          }
+        }
+      } : {}),
       // The toolpath view asks for the discrete (high-performance) GPU on dual-GPU PCs.
       // An alpha canvas, so the 3D view background (meimad-background.js) can show through.
       WebGLRenderer: class extends THREE.WebGLRenderer {
@@ -102,7 +125,9 @@ export function createToolpathViewer(options) {
       }
     }
   };
-  const upstream = createUpstreamViewer({
+  let upstream;
+  try {
+    upstream = createUpstreamViewer({
     ...options,
     THREE: capturing,
     onRender: () => {
@@ -110,6 +135,14 @@ export function createToolpathViewer(options) {
       if (typeof options.onRender === "function") options.onRender();
     }
   });
+  } finally {
+    capturingVectors = false;
+  }
+  const [vectorTarget, vectorUp, vectorFront] = captured.vectors;
+  const cameraTarget = vectorTarget && vectorUp && vectorFront
+    && vectorUp.x === 0 && vectorUp.y === 0 && vectorUp.z === 1 && vectorFront.x === 0 && vectorFront.y === -1 && vectorFront.z === 0
+    ? vectorTarget
+    : null;
   // Creation order in viewer3d.js: scene, camera, contentRoot, machineRoot, gridRoot, pickScene, pickRoot.
   const hooks = {
     THREE,
@@ -121,6 +154,7 @@ export function createToolpathViewer(options) {
     pickRoot: captured.groups[3],
     camera: captured.cameras[0],
     renderer: captured.renderers[0],
+    cameraTarget,
     upstream,
     on(name, listener) {
       if (!listeners.has(name)) listeners.set(name, new Set());
@@ -146,10 +180,64 @@ export function createToolpathViewer(options) {
   let pathFilters = {};
   let pathPlayback;
   let pathLayout = null;
+  let pathSelection;          // execution index of the selected row's move
+  let pathOperations = null;  // CAM operation per segment
+  let classKey = "";
   // Without a patched shader (an upstream change) the vendored playback range stays in charge.
   const pathActive = () => Boolean(Path && pathPatched);
   function refreshPathLayout() {
     pathLayout = pathActive() ? Path.index(pathModel, pathFilters) : null;
+    classKey = "";
+  }
+
+  // The NC program's text in the editor (operation header rows).
+  function programText() {
+    try {
+      return document.querySelector(".CodeMirror")?.CodeMirror?.getValue() || "";
+    } catch {
+      return "";
+    }
+  }
+
+  // Which moves the filter modes keep, uploaded to the class texture when it changes.
+  function refreshClasses() {
+    if (!pathLayout || !classTexture || !Path.FILTERS.has(pathMode)) return;
+    const segments = pathModel?.segments || [];
+    const running = pathPlayback && !pathPlayback.complete && Number.isFinite(pathPlayback.completedIndex);
+    let key;
+    let keep;
+    if (pathMode === "tool") {
+      const active = running ? segments[Math.max(0, Math.min(segments.length - 1, pathPlayback.completedIndex + 1))] : null;
+      key = `tool|${active ? active.tool : "all"}`;
+      keep = active ? (segment) => segment && segment.tool === active.tool : () => true;
+    } else if (pathMode === "rowTool") {
+      const selected = Number.isFinite(pathSelection) ? segments[pathSelection] : null;
+      key = `row|${selected ? selected.tool : "all"}`;
+      keep = selected ? (segment) => segment && segment.tool === selected.tool : () => true;
+    } else {
+      if (!pathOperations) pathOperations = Path.operations(segments, Path.headerLines(programText()));
+      const operation = Number.isFinite(pathSelection) ? pathOperations[pathSelection] : undefined;
+      key = `op|${operation ?? "all"}`;
+      keep = operation !== undefined ? (segment, index) => pathOperations[index] === operation : () => true;
+    }
+    if (key === classKey) return;
+    classKey = key;
+    const flags = Path.classes(pathLayout, segments, keep);
+    const height = Math.max(1, Math.ceil(flags.length / CLASS_WIDTH));
+    const data = new Uint8Array(CLASS_WIDTH * height);
+    data.set(flags);
+    if (classTexture.image.height !== height) {
+      const next = new THREE.DataTexture(data, CLASS_WIDTH, height, THREE.RedFormat, THREE.UnsignedByteType);
+      next.magFilter = THREE.NearestFilter;
+      next.minFilter = THREE.NearestFilter;
+      next.needsUpdate = true;
+      classTexture.dispose();
+      classTexture = next;
+      pathUniforms.meimadClass.value = next;
+    } else {
+      classTexture.image.data = data;
+      classTexture.needsUpdate = true;
+    }
   }
   function applyPath() {
     if (!pathActive()) return;
@@ -159,7 +247,19 @@ export function createToolpathViewer(options) {
     pathUniforms.meimadBaseThreshold.value = values.baseThreshold;
     pathUniforms.meimadCompensatedThreshold.value = values.compensatedThreshold;
     pathUniforms.meimadDim.value = values.dim;
+    pathUniforms.meimadFilter.value = values.filter && classTexture ? 1 : 0;
+    refreshClasses();
   }
+  // The first move of a selected main-program row.
+  function selectionExecution(line) {
+    if (!Number.isFinite(line)) return undefined;
+    const segments = pathModel?.segments || [];
+    for (let index = 0; index < segments.length; index += 1) {
+      if (segments[index].line === line && !segments[index].sourceUnit) return index;
+    }
+    return undefined;
+  }
+
   // The shader decides what is drawn, so the upstream viewer always keeps every instance.
   const upstreamPlayback = (playback) => (pathActive() && playback && !playback.complete ? { ...playback, complete: true } : playback);
   bindPathControl(pathActive(), pathMode);
@@ -186,6 +286,8 @@ export function createToolpathViewer(options) {
     setModel(model, modelOptions) {
       emit("model", model, modelOptions);
       pathModel = model;
+      pathOperations = null;
+      pathSelection = undefined;
       refreshPathLayout();
       applyPath();
       upstream.setModel(model, modelOptions);
@@ -199,6 +301,11 @@ export function createToolpathViewer(options) {
       emit("playback", playback);
     },
     setSelection(line, executionIndex) {
+      pathSelection = Number.isFinite(executionIndex) ? executionIndex : selectionExecution(line);
+      if (Path && Path.FILTERS.has(pathMode)) {
+        applyPath();
+        upstream.setPlayback(upstreamPlayback(pathPlayback));
+      }
       upstream.setSelection(line, executionIndex);
       emit("selection", line, executionIndex);
     },

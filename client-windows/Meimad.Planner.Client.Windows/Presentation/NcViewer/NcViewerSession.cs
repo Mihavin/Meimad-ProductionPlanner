@@ -1295,6 +1295,17 @@ internal sealed class NcViewerSession : IDisposable
         return new
         {
             operationTitle = scene.OperationTitle,
+            card = scene.Card is null
+                ? null
+                : new
+                {
+                    partNumber = scene.Card.PartNumber,
+                    caseName = scene.Card.CaseName,
+                    operationNumber = scene.Card.OperationNumber,
+                    operationName = scene.Card.OperationName,
+                    machineName = scene.Card.MachineName,
+                    picture = scene.Card.PictureDataUrl
+                },
             workCs = PublicWorkCs(scene.WorkCs),
             items = scene.Files.Select(file => SceneFileItem(file, imported: false))
                 .Concat(importedFiles.Select(file => SceneFileItem(file, imported: true)))
@@ -1410,6 +1421,7 @@ internal sealed class NcViewerSession : IDisposable
             ["eol"] = lineEnding switch { "\n" => "LF", "\r" => "CR", _ => "CRLF" },
             ["encoding"] = hasBom ? "UTF-8 with BOM" : encodingName,
             ["dirty"] = dirty && !readOnly,
+            ["readOnly"] = readOnly,
             ["selectedLine"] = selectedLine,
             ["toolTablePath"] = toolTableSource,
             ["machineParameterPath"] = string.IsNullOrWhiteSpace(settings.MachineParametersFile) ? "Bundled CNC-PARA.TXT" : settings.MachineParametersFile,

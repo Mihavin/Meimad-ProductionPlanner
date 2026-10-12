@@ -24,7 +24,8 @@ internal sealed record NcViewerSetupScene(
     CaseOperationCamSetup? WorkCs,
     IReadOnlyList<NcViewerSceneFile> Files,
     IReadOnlyDictionary<string, IReadOnlyList<NcViewerMachineModel>> MachineModels,
-    IReadOnlyList<NcViewerCompiledMachine>? CompiledMachines = null)
+    IReadOnlyList<NcViewerCompiledMachine>? CompiledMachines = null,
+    NcViewerOperationCard? Card = null)
 {
     internal static NcViewerSetupScene Empty { get; } = new(null, null, [], new Dictionary<string, IReadOnlyList<NcViewerMachineModel>>());
 
@@ -87,7 +88,63 @@ internal static class NcViewerScenes
             // No files: the machine models are still drawn.
         }
         var compiled = await NcViewerMachineDefinitions.LoadAsync(api, cancellationToken: cancellationToken);
-        return new NcViewerSetupScene(operationTitle, workCs, files, WithCompiledModels(MachineModels(machines, machineId), compiled), compiled);
+        var card = await CardAsync(api, caseId, caseOperationId, machineId, machines, cancellationToken);
+        return new NcViewerSetupScene(operationTitle, workCs, files, WithCompiledModels(MachineModels(machines, machineId), compiled), compiled, card);
+    }
+
+    /// <summary>
+    /// The viewer's operator card: Part Number, Case name, Operation, Machine and the Case picture (the stored
+    /// picture, else the Case's picture link, as the Case workspace shows it). Parts the Server cannot give stay empty.
+    /// </summary>
+    internal static async Task<NcViewerOperationCard> CardAsync(
+        IPlannerApiClient api,
+        string caseId,
+        string caseOperationId,
+        string? machineId,
+        IReadOnlyList<PlannerMachine> machines,
+        CancellationToken cancellationToken = default)
+    {
+        PlannerCase? plannerCase = null;
+        CaseOperation? operation = null;
+        string? picture = null;
+        try
+        {
+            plannerCase = (await api.GetCaseAsync(caseId, cancellationToken)).Value;
+        }
+        catch (Exception exception) when (IsTransient(exception))
+        {
+        }
+        try
+        {
+            operation = (await api.ListCaseOperationsAsync(caseId, cancellationToken))
+                .FirstOrDefault(candidate => candidate.CaseOperationId == caseOperationId);
+        }
+        catch (Exception exception) when (IsTransient(exception))
+        {
+        }
+        try
+        {
+            picture = PictureDataUrl(await api.GetCasePreviewAsync(caseId, cancellationToken));
+        }
+        catch (Exception exception) when (IsTransient(exception))
+        {
+        }
+        var machine = machineId is null ? null : machines.FirstOrDefault(candidate => candidate.MachineId == machineId);
+        return new NcViewerOperationCard(
+            plannerCase?.PartNumber, plannerCase?.Name, operation?.OperationNumber, operation?.Name,
+            machine is null ? null : $"{machine.Number} {machine.Name}".Trim(), picture);
+    }
+
+    /// <summary>A PNG, JPEG, GIF or BMP picture as a data URL for the viewer page (at most 4 MB; others are left out).</summary>
+    internal static string? PictureDataUrl(byte[]? bytes)
+    {
+        if (bytes is null || bytes.Length < 8 || bytes.Length > 4 * 1024 * 1024) return null;
+        var mediaType = bytes[0] == 0x89 && bytes[1] == 0x50 ? "image/png"
+            : bytes[0] == 0xFF && bytes[1] == 0xD8 ? "image/jpeg"
+            : bytes[0] == (byte)'G' && bytes[1] == (byte)'I' ? "image/gif"
+            : bytes[0] == (byte)'B' && bytes[1] == (byte)'M' ? "image/bmp"
+            : null;
+        return mediaType is null ? null : $"data:{mediaType};base64,{Convert.ToBase64String(bytes)}";
     }
 
     /// <summary>The template-keyed models plus each compiled Machine's meshes under its compiled id.</summary>
@@ -183,3 +240,12 @@ internal static class NcViewerMeshes
         return bytes;
     }
 }
+
+/// <summary>What the NC viewer's operator card shows about the opened Operation (any part may be missing).</summary>
+internal sealed record NcViewerOperationCard(
+    string? PartNumber,
+    string? CaseName,
+    int? OperationNumber,
+    string? OperationName,
+    string? MachineName,
+    string? PictureDataUrl);

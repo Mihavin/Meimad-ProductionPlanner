@@ -20,6 +20,18 @@ public sealed class NcViewerSetupSceneTests : IDisposable
     public NcViewerSetupSceneTests() => Directory.CreateDirectory(folder);
 
     [Fact]
+    public void Operator_card_picture_becomes_a_data_url_only_for_images_the_page_can_show()
+    {
+        var png = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2 };
+        var jpeg = new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0 };
+        Assert.Equal("data:image/png;base64," + Convert.ToBase64String(png), NcViewerScenes.PictureDataUrl(png));
+        Assert.StartsWith("data:image/jpeg;base64,", NcViewerScenes.PictureDataUrl(jpeg));
+        Assert.Null(NcViewerScenes.PictureDataUrl(null));
+        Assert.Null(NcViewerScenes.PictureDataUrl([1, 2, 3, 4, 5, 6, 7, 8, 9]));      // not an image
+        Assert.Null(NcViewerScenes.PictureDataUrl(new byte[5 * 1024 * 1024]));      // too large for the page
+    }
+
+    [Fact]
     public void Machine_models_are_keyed_by_viewer_machine_and_the_assigned_machine_wins()
     {
         NcViewerMachineModel Model(string node) => new(node, $@"C:\models\{node}.stl");

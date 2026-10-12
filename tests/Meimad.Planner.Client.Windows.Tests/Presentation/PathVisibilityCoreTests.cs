@@ -85,6 +85,33 @@ public sealed class PathVisibilityCoreTests : IDisposable
     }
 
     [Fact]
+    public void Filter_modes_keep_the_running_tool_the_selected_rows_tool_or_its_operation()
+    {
+        var result = Run("""
+            // Tool filter: tool 2 is running (execution 4); compensated ids follow their executions.
+            const toolTwo = P.classes(layout, model.segments, (segment) => segment.tool === 2);
+            const values = P.uniforms("tool", layout, { completedIndex: 3, complete: false });
+            const kept = [1, 2, 3, 4, 5, 6].map((id) => P.drawn(id, values, toolTwo).visible ? "y" : "-").join("");
+            const idle = P.uniforms("rowTool", layout);
+            // Operations: header rows 1 and 3 split the program; without headers every tool change does.
+            const withHeaders = Array.from(P.operations([{ line: 2, tool: 1 }, { line: 4, tool: 1 }, { line: 5, tool: 2 }], [1, 3]));
+            const byTool = Array.from(P.operations([{ line: 2, tool: 1 }, { line: 4, tool: 1 }, { line: 5, tool: 2 }], []));
+            const headers = P.headerLines(["O1000", "N21 (VOLUME MILLING)", "G1 X1", " N22(PROFILE)", "(NOTE)", ""].join(String.fromCharCode(10)));
+            const split = P.uniforms("split", layout, { completedIndex: 2, complete: false });
+            return { kept, filterOn: values.filter, idleFilter: idle.filter, withHeaders, byTool, headers, splitMode: split.mode, splitHides: [1, 6].map((id) => P.drawn(id, split).visible) };
+            """);
+        // Pick ids 4 and 6 are tool 2's feed and its compensated twin (the tool change has no id without G30).
+        Assert.Equal("---y-y", result.GetProperty("kept").GetString());
+        Assert.Equal(1, result.GetProperty("filterOn").GetInt32());
+        Assert.Equal(1, result.GetProperty("idleFilter").GetInt32());
+        Assert.Equal("[1,2,2]", result.GetProperty("withHeaders").GetRawText());
+        Assert.Equal("[1,1,2]", result.GetProperty("byTool").GetRawText());
+        Assert.Equal("[2,4]", result.GetProperty("headers").GetRawText());
+        Assert.Equal(5, result.GetProperty("splitMode").GetInt32());
+        Assert.Equal("[true,true]", result.GetProperty("splitHides").GetRawText());
+    }
+
+    [Fact]
     public void The_vendored_line_shader_takes_the_patch_exactly_once()
     {
         var viewer = File.ReadAllText(Path.Combine(RepositoryRoot(), "third_party", "chevalier-nc-viewer", "media", "viewer3d.js"));
@@ -99,6 +126,7 @@ public sealed class PathVisibilityCoreTests : IDisposable
         Assert.Contains("uniform float meimadPathMode;", patched);
         Assert.Contains("if (instanceStyle.z < 0.5 || meimadHidden) {", patched);
         Assert.Contains("vColor.a *= meimadDim;", patched);
+        Assert.Contains("texelFetch(meimadClass", patched);
         Assert.True(patched.IndexOf("bool meimadHidden", StringComparison.Ordinal) < patched.IndexOf("|| meimadHidden", StringComparison.Ordinal));
         Assert.Equal(JsonValueKind.Null, result.GetProperty("other").ValueKind);
         // A patched shader is not patched again (a cloned material keeps its one set of uniforms).

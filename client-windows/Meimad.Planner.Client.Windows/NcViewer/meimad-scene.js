@@ -20,6 +20,7 @@
     fixtures: document.getElementById("meimadSceneFixtures"),
     rest: document.getElementById("meimadSceneRest"),
     restSeeThrough: document.getElementById("meimadSceneRestSeeThrough"),
+    part: document.getElementById("meimadScenePart"),
     materialRemoval: document.getElementById("meimadMaterialToggle"),
     items: document.getElementById("meimadSceneItems"),
     importButton: document.getElementById("meimadSceneImport"),
@@ -29,6 +30,7 @@
 
   const FIXTURE_COLOR = 0x7c8fa6;
   const REST_COLOR = 0xd6a65a;
+  const PART_COLOR = 0x5aa9e6;
   const MESH_TAG = "meimadSceneMesh";
 
   let hooks = null;
@@ -210,7 +212,8 @@
     // over it would fight it for the same faces.
     const cutting = Boolean(elements.materialRemoval && elements.materialRemoval.checked);
     const wanted = scene.items.filter((item) =>
-      (item.kind === "fixture" && elements.fixtures.checked) || (item.kind === "stock" && elements.rest.checked && !cutting));
+      (item.kind === "fixture" && elements.fixtures.checked) || (item.kind === "stock" && elements.rest.checked && !cutting)
+      || (isPart(item) && (!elements.part || elements.part.checked)));
     if (!wanted.length) {
       hooks.upstream.render();
       return;
@@ -231,7 +234,7 @@
         const placed = core.modelToDrawing(positions, workCs, { scale: scaleOf(), shift });
         group.add(item.kind === "stock"
           ? meshObject(placed, REST_COLOR, elements.restSeeThrough && elements.restSeeThrough.checked ? 0.4 : 1)
-          : meshObject(placed, FIXTURE_COLOR, 0.9));
+          : isPart(item) ? meshObject(placed, PART_COLOR, 0.4) : meshObject(placed, FIXTURE_COLOR, 0.9));
       } catch (error) {
         status(`${item.name} could not be loaded: ${message(error)}`, "error");
       }
@@ -243,7 +246,7 @@
   // ----- card ---------------------------------------------------------------------------------
 
   function kindLabel(kind) {
-    return kind === "stock" ? "Rest material" : "Fixture";
+    return kind === "stock" ? "Rest material" : kind === "part" || kind === "finished-part" ? "Finished part" : "Fixture";
   }
 
   function renderItems() {
@@ -334,7 +337,8 @@
         machineModels: (result && result.machineModels) || {},
         workCs: (result && result.workCs) || null,
         items: (result && result.items) || [],
-        operationTitle: result && result.operationTitle
+        operationTitle: result && result.operationTitle,
+        card: (result && result.card) || null
       };
       if (result && result.note) status(result.note, "warning");
     } catch (error) {
@@ -343,6 +347,7 @@
     renderWorkCs();
     renderItems();
     redraw();
+    window.dispatchEvent(new CustomEvent("meimad:scene-loaded", { detail: { card: scene.card || null, operationTitle: scene.operationTitle } }));
   }
 
   function redraw() {
@@ -366,6 +371,32 @@
     }
   }
 
+  function isPart(item) {
+    return item && (item.kind === "part" || item.kind === "finished-part");
+  }
+
+  // The Operation's fixtures and finished part in program coordinates (placed through the Work CS),
+  // for the stock simulation's collision checks and finished-part comparison.
+  async function placedGeometry(kinds) {
+    if (!model || model.kind === "lathe") return [];
+    const wanted = new Set(kinds || ["fixture", "part", "finished-part"]);
+    const workCs = scene.workCs;
+    const shift = core.offsetShift(model, workCs && workCs.workOffset);
+    const result = [];
+    for (const item of scene.items) {
+      if (!wanted.has(item.kind) || !item.meshUrl) continue;
+      try {
+        const positions = await fetchMesh(item.meshUrl);
+        result.push({ kind: isPart(item) ? "part" : item.kind, name: item.name || kindLabel(item.kind), path: item.path, positions: core.modelToDrawing(positions, workCs, { scale: scaleOf(), shift }) });
+      } catch (error) {
+        status(`${item.name} could not be loaded: ${message(error)}`, "error");
+      }
+    }
+    return result;
+  }
+
+  window.meimadSceneGeometry = Object.freeze({ placed: placedGeometry, card: () => scene.card || null, operationTitle: () => scene.operationTitle || null });
+
   function attach(value) {
     if (!value || hooks === value) return;
     hooks = value;
@@ -387,6 +418,7 @@
   window.addEventListener("meimad:lathe-machine", () => drawMachineModels());
   elements.fixtures.addEventListener("change", drawFixtures);
   elements.rest.addEventListener("change", drawFixtures);
+  elements.part?.addEventListener("change", drawFixtures);
   elements.restSeeThrough?.addEventListener("change", drawFixtures);
   elements.materialRemoval?.addEventListener("change", drawFixtures);
   elements.importButton.addEventListener("click", importCimatron);

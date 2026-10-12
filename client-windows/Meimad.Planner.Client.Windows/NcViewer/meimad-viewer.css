@@ -749,3 +749,190 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: var(--app-selection);
   color: var(--app-text);
 }
+
+/* Verification card: collision and gouge events (icon and text carry the severity; color repeats it). */
+.meimad-verify h3 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+}
+
+.meimad-policy .meimad-stock-grid select {
+  width: 100%;
+}
+
+.meimad-events {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.meimad-event {
+  padding: 3px 6px;
+  margin-bottom: 2px;
+  border-left: 3px solid var(--app-border, #6e7681);
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.meimad-event:hover,
+.meimad-event:focus {
+  background: var(--app-selection, rgba(56, 139, 253, 0.15));
+  outline: none;
+}
+
+.meimad-event.severity-stop,
+.meimad-event.severity-error {
+  border-left-color: #f85149;
+}
+
+.meimad-event.severity-warning {
+  border-left-color: #d29922;
+}
+
+/* Operator card (meimad-dashboard.js): picture, Part Number, Operation, Machine, one main result.
+   The result always shows an icon and a word; the color only repeats it. */
+.meimad-operator-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.meimad-operator-picture,
+.meimad-operator-placeholder {
+  flex: 0 0 auto;
+  width: 84px;
+  height: 84px;
+  border-radius: 4px;
+  background: rgba(13, 17, 23, 0.6);
+  object-fit: contain;
+}
+
+.meimad-operator-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--app-border, #6e7681);
+  color: var(--app-fg-muted, #8b949e);
+  font-size: 12px;
+  text-align: center;
+  overflow: hidden;
+}
+
+.meimad-operator-text {
+  min-width: 0;
+}
+
+.meimad-operator-part {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+body.meimad-operator-mode .meimad-operator-part {
+  font-size: 24px;
+}
+
+.meimad-display,
+.meimad-verify,
+.meimad-operator-line {
+  font-size: 12px;
+}
+
+.meimad-operator-line {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.meimad-operator-status {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--app-border, #6e7681);
+  font-weight: 700;
+}
+
+.meimad-operator-status.status-running,
+.meimad-operator-status.status-completed { border-color: #3fb950; color: #3fb950; }
+.meimad-operator-status.status-paused { border-color: #d29922; color: #d29922; }
+.meimad-operator-status.status-collision,
+.meimad-operator-status.status-gouge,
+.meimad-operator-status.status-error { border-color: #f85149; color: #f85149; }
+
+.meimad-operator-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.meimad-operator-buttons button {
+  min-width: 34px;
+  height: 30px;
+  font-size: 15px;
+  padding: 0 6px;
+}
+
+.meimad-operator-buttons button[aria-pressed="true"],
+.meimad-display button[aria-pressed="true"],
+.meimad-operator-buttons button.active,
+.meimad-display button.active {
+  outline: 2px solid var(--app-accent, #58a6ff);
+}
+
+.meimad-display-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+}
+
+/* The information strip on the 3D view: tool, row, progress, collisions, gouges. */
+.meimad-info-strip {
+  position: absolute;
+  right: 14px;
+  top: 10px;
+  max-width: calc(60% - 28px);
+  padding: 5px 9px;
+  border: 1px solid rgba(88, 166, 255, 0.45);
+  border-radius: 4px;
+  background: rgba(13, 17, 23, 0.86);
+  color: #c9d1d9;
+  font: 12px/1.3 var(--vscode-editor-font-family, Consolas, monospace);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meimad-info-strip:empty {
+  display: none;
+}
+
+/* Operator mode: the program and the technical panels are hidden; the 3D view, the operator card,
+   the Display card and the verification results stay. */
+body.meimad-operator-mode .workspace {
+  grid-template-columns: minmax(430px, 1fr);
+}
+
+body.meimad-operator-mode #editorPane,
+body.meimad-operator-mode .workspace-splitter {
+  display: none;
+}
+
+body.meimad-operator-mode .preview-sidebar > section:not(#meimadOperatorCard):not(#meimadDisplayCard):not(#meimadVerifyCard) {
+  display: none;
+}
+
+body.meimad-operator-mode .meimad-operator-head {
+  flex-direction: column;
+}
+
+body.meimad-operator-mode .meimad-operator-picture,
+body.meimad-operator-mode .meimad-operator-placeholder {
+  width: 100%;
+  height: 180px;
+}

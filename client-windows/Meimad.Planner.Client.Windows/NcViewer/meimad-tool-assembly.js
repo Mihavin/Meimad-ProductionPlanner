@@ -204,6 +204,8 @@
           mesh.position.y = bottom + height / 2;
           break;
       }
+      // Display card (meimad-display.js): the holder, shank and other parts that do not cut can be hidden.
+      mesh.userData.meimadHolder = segment.kind !== "GAP" && !CUTTER_KINDS.has(segment.kind);
       group.add(mesh);
     }
     const tip = new THREE.Points(

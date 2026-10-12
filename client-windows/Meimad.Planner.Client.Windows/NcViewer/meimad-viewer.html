@@ -138,6 +138,10 @@
               <option value="all">Whole path</option>
               <option value="remaining">Not yet run</option>
               <option value="dim">Run so far, rest faint</option>
+              <option value="split">Run so far and the rest in two colors</option>
+              <option value="tool">Current tool only</option>
+              <option value="rowTool">Tool of the selected row</option>
+              <option value="operation">Operation of the selected row</option>
               <option value="hidden">Hidden</option>
             </select>
           </label>
@@ -196,6 +200,7 @@
           <canvas id="toolpathCanvas" aria-label="Three-dimensional toolpath"></canvas>
           <canvas id="toolpathOverlay" class="viewport-overlay" aria-hidden="true"></canvas>
           <div id="viewerStatus" class="viewer-status" hidden></div>
+          <div id="meimadInfoStrip" class="meimad-info-strip" aria-live="off"></div>
           <div id="tooltip" class="tooltip" hidden></div>
           <div id="playbackHud" class="playback-hud" aria-live="polite">Ready | 0:00 / 0:00</div>
           <div id="meimadStopNotice" class="meimad-stop-notice" role="status" aria-live="assertive" hidden></div>
@@ -203,6 +208,49 @@
           <div id="meimadProgress" class="meimad-progress" hidden role="progressbar" aria-live="polite"><div id="meimadProgressBar" class="meimad-progress-bar"></div><span id="meimadProgressText" class="meimad-progress-text"></span></div>
         </section>
         <aside class="preview-sidebar">
+          <section id="meimadOperatorCard" class="card meimad-operator" hidden>
+            <div class="meimad-operator-head">
+              <img id="meimadOperatorPicture" class="meimad-operator-picture" alt="" hidden>
+              <div id="meimadOperatorPlaceholder" class="meimad-operator-placeholder" aria-hidden="true"></div>
+              <div class="meimad-operator-text">
+                <div id="meimadOperatorPart" class="meimad-operator-part" translate="no"></div>
+                <div id="meimadOperatorCase" class="meimad-operator-line" translate="no"></div>
+                <div id="meimadOperatorOperation" class="meimad-operator-line"></div>
+                <div id="meimadOperatorMachine" class="meimad-operator-line"></div>
+                <div id="meimadOperatorTool" class="meimad-operator-line"></div>
+                <div id="meimadOperatorStatus" class="meimad-operator-status" role="status"></div>
+              </div>
+            </div>
+            <div class="meimad-operator-buttons" role="toolbar" aria-label="Operator">
+              <button id="meimadOpPlay" type="button" title="Play (Space)" aria-label="Play">▶</button>
+              <button id="meimadOpReset" type="button" title="Reset to the program start (R)" aria-label="Reset">⏮</button>
+              <button id="meimadOpStep" type="button" title="Single step (S)" aria-label="Single step">⏭</button>
+              <button id="meimadOpFollow" type="button" title="Follow tool (T)" aria-label="Follow tool" aria-pressed="false">⌖</button>
+              <button id="meimadOpPath" type="button" title="Toolpath visibility: next choice (P)" aria-label="Toolpath visibility">▣</button>
+              <button id="meimadOpMachine" type="button" title="Machine view on or off (M)" aria-label="Machine view">◈</button>
+              <button id="meimadOpCollisions" type="button" title="Collisions and gouges (C)" aria-label="Collisions">⚠</button>
+              <button id="meimadOpDetails" type="button" title="Details: show or hide the program and the technical panels (D)" aria-label="Details" aria-pressed="true">▤</button>
+            </div>
+          </section>
+          <section id="meimadDisplayCard" class="card meimad-display">
+            <h2>Display</h2>
+            <div class="meimad-display-grid">
+              <label class="check"><input id="meimadShowMachined" type="checkbox" checked> Machined stock</label>
+              <label class="check"><input id="meimadShowMarkers" type="checkbox" checked> Collision markers</label>
+              <label class="check" title="The holder, shank and other parts of a Tool Room tool that do not cut"><input id="meimadShowHolder" type="checkbox" checked> Holder</label>
+            </div>
+            <label>View
+              <select id="meimadViewMode">
+                <option value="shaded">Shaded</option>
+                <option value="wireframe">Wireframe</option>
+                <option value="xray">X-ray</option>
+              </select>
+            </label>
+            <div class="meimad-stock-actions">
+              <button id="meimadFollowTool" type="button" aria-pressed="false" title="Keep the tool in the middle of the view during playback (T)">⌖ Follow tool</button>
+              <button id="meimadFitAll" type="button" title="Fit everything in the view (Home)">⤢ Fit all</button>
+            </div>
+          </section>
           <section class="card">
             <h2>Program</h2>
             <dl id="stats"></dl>
@@ -264,6 +312,7 @@
             <label class="check"><input id="meimadSceneFixtures" type="checkbox" checked> Fixtures</label>
             <label class="check"><input id="meimadSceneRest" type="checkbox" checked> Rest material</label>
             <label class="check" title="Draw the rest material transparent, so the toolpath inside it shows"><input id="meimadSceneRestSeeThrough" type="checkbox"> Rest material see-through</label>
+            <label class="check"><input id="meimadScenePart" type="checkbox" checked> Finished part</label>
             <p id="meimadLatheNote" class="meimad-note"></p>
             <ul id="meimadSceneItems" class="meimad-scene-items"></ul>
             <div class="meimad-stock-actions">
@@ -324,6 +373,39 @@
               <button id="meimadStockExportAs" type="button">Save STL as…</button>
             </div>
             <p id="meimadStockNote" class="meimad-note"></p>
+          </section>
+          <section id="meimadVerifyCard" class="card meimad-verify">
+            <h2>Verification</h2>
+            <label title="3D stock: a true 3D volume with undercuts, holes from any direction and collision checks. Column stock: the earlier, lighter model.">Stock model
+              <select id="meimadEngine">
+                <option value="voxel">3D stock</option>
+                <option value="column">Column stock (earlier model)</option>
+              </select>
+            </label>
+            <label title="Auto: the graphics card when it is available and agrees with the CPU engine on a test cut, else the CPU">Compute on
+              <select id="meimadBackend">
+                <option value="auto">Auto (graphics card when available)</option>
+                <option value="cpu">CPU only</option>
+              </select>
+            </label>
+            <label class="check" title="Holder and shank in the stock, tool or holder in a fixture or the finished part, rapids through material and travel limits"><input id="meimadCollisions" type="checkbox" checked> Check collisions</label>
+            <details id="meimadPolicy" class="meimad-policy">
+              <summary>Collision rules</summary>
+              <div class="meimad-stock-grid" id="meimadPolicyRows"></div>
+            </details>
+            <p id="meimadVerifyStats" class="meimad-note" role="status"></p>
+            <ul id="meimadEvents" class="meimad-events" aria-label="Collisions and gouges"></ul>
+            <h3>Finished part</h3>
+            <p id="meimadPartSource" class="meimad-note"></p>
+            <div class="secret-input-row">
+              <input id="meimadPartPath" type="text" spellcheck="false" placeholder="STL of the finished part (program coordinates)">
+              <button id="meimadPartBrowse" class="field-button" type="button">Browse...</button>
+            </div>
+            <label class="check" title="Colors the stock: red where the program cut into the finished part, amber where material is left outside it"><input id="meimadDeviation" type="checkbox"> Show gouges and remaining stock</label>
+            <p id="meimadDeviationResult" class="meimad-note" role="status"></p>
+            <div class="meimad-stock-actions">
+              <button id="meimadJournalCopy" type="button" title="Copies every simulated move (row, tool, removed volume, collisions) as CSV">Copy journal</button>
+            </div>
           </section>
           <section class="card">
             <h2>Legend</h2>
@@ -646,6 +728,7 @@
   <script src="./meimad-viewer.js"></script>
   <script src="./meimad-material.js"></script>
   <script src="./meimad-lighting.js"></script>
+  <script src="./meimad-voxel-core.js"></script>
   <script src="./meimad-simulation.js"></script>
   <script src="./meimad-tool-assembly.js"></script>
   <script src="./meimad-playback-core.js"></script>
@@ -656,5 +739,7 @@
   <script src="./meimad-axes.js"></script>
   <script src="./meimad-scene.js"></script>
   <script src="./meimad-background.js"></script>
+  <script src="./meimad-display.js"></script>
+  <script src="./meimad-dashboard.js"></script>
 </body>
 </html>
