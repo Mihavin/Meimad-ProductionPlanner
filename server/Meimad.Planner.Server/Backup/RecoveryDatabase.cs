@@ -25,6 +25,10 @@ internal static class RecoveryDatabase
         command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'case_pictures'";
         if (Convert.ToInt32(await command.ExecuteScalarAsync(token)) == 1)
             machineAssets += " UNION ALL SELECT 'gcode/' || stored_relative_path,file_size,file_hash FROM case_pictures";
+        // Case Operation thumbnails (v118), below the release root as well.
+        command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'case_operation_thumbnails'";
+        if (Convert.ToInt32(await command.ExecuteScalarAsync(token)) == 1)
+            machineAssets += " UNION ALL SELECT 'gcode/' || stored_relative_path,file_size,file_hash FROM case_operation_thumbnails";
         command.CommandText = $"""
             SELECT 'gcode/' || stored_relative_path,file_size,file_hash FROM gcode_releases
             UNION ALL SELECT 'gcode/' || stored_relative_path,file_size,file_hash FROM tool_table_releases

@@ -13,7 +13,7 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
         this.database = database;
     }
 
-    public async Task<TvDashboardSource> ReadAsync(CancellationToken cancellationToken)
+    public async Task<TvDashboardSource> ReadAsync(bool includeLastWorked, CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: true);
@@ -21,6 +21,9 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
         var operations = await ReadOperationsAsync(connection, transaction, cancellationToken);
         var downtimes = await ReadDowntimesAsync(connection, transaction, cancellationToken);
         var dueDates = await ReadBatchDueDatesAsync(connection, transaction, cancellationToken);
+        var lastWorked = includeLastWorked
+            ? await ReadLastWorkedAsync(connection, transaction, cancellationToken)
+            : new Dictionary<string, TvSourceOperation>(StringComparer.Ordinal);
         await transaction.CommitAsync(cancellationToken);
         var backlogs = operations
             .GroupBy(value => value.MachineId, StringComparer.Ordinal)
@@ -34,7 +37,8 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
         return new TvDashboardSource(
             machines.Select(machine => machine with
             {
-                Backlog = backlogs.GetValueOrDefault(machine.MachineId, [])
+                Backlog = backlogs.GetValueOrDefault(machine.MachineId, []),
+                LastWorked = lastWorked.GetValueOrDefault(machine.MachineId)
             }).ToArray(),
             downtimes,
             dueDates);
@@ -142,7 +146,8 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                    EXISTS(SELECT 1 FROM production_run_workflow_events event
                        WHERE event.production_run_id=machine_assignments.production_run_id
                          AND event.machine_id=machine_assignments.machine_id
-                         AND event.event_type='CYCLE_START')
+                         AND event.event_type='CYCLE_START'),
+                   {{ThumbnailColumns}}
             FROM machine_assignments
             JOIN machines ON machines.id = machine_assignments.machine_id
             JOIN batch_operations
@@ -150,6 +155,7 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
             JOIN cases ON cases.id = production_batches.case_id
+            {{ThumbnailJoins}}
             WHERE machines.is_active = 1 AND machines.display_enabled = 1
               AND machine_assignments.released_at IS NULL
             ORDER BY machine_assignments.machine_id, machine_assignments.backlog_position;
@@ -175,7 +181,90 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                     reader.IsDBNull(19) ? null : reader.GetInt32(19),
                     reader.IsDBNull(20) ? null : reader.GetDouble(20),
                     reader.GetInt32(21),
-                    reader.GetInt32(22) == 1)));
+                    reader.GetInt32(22) == 1,
+                    reader.IsDBNull(23) ? null : reader.GetString(23),
+                    ReadThumbnails(reader, 24))));
+        }
+
+        return values;
+    }
+
+    // The Case name and the stored pictures of the Operation, in TV priority order (schema v115 Case picture,
+    // schema v118 package thumbnail and snapshot): the name, then six columns read by ReadThumbnails.
+    private const string ThumbnailColumns = """
+        NULLIF(trim(cases.name), ''),
+        tv_picture.file_hash, tv_picture.stored_relative_path,
+        tv_package.file_hash, tv_package.stored_relative_path,
+        tv_snapshot.file_hash, tv_snapshot.stored_relative_path
+        """;
+
+    private const string ThumbnailJoins = """
+        LEFT JOIN case_pictures tv_picture ON tv_picture.case_id = cases.id
+        LEFT JOIN case_operation_thumbnails tv_package
+          ON tv_package.case_operation_id = batch_operations.source_case_operation_id AND tv_package.source = 'package'
+        LEFT JOIN case_operation_thumbnails tv_snapshot
+          ON tv_snapshot.case_operation_id = batch_operations.source_case_operation_id AND tv_snapshot.source = 'snapshot'
+        """;
+
+    private static TvSourceThumbnails ReadThumbnails(SqliteDataReader reader, int first)
+    {
+        string? Text(int index) => reader.IsDBNull(index) ? null : reader.GetString(index);
+        return new TvSourceThumbnails(Text(first), Text(first + 1), Text(first + 2), Text(first + 3), Text(first + 4), Text(first + 5));
+    }
+
+    /// <summary>
+    /// The Operation each display-enabled Machine worked last (latest actual end, else start), for an idle row that may show
+    /// the last part (TvDashboard:ShowLastPartImageWhenIdle).
+    /// </summary>
+    private static async Task<Dictionary<string, TvSourceOperation>> ReadLastWorkedAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $$"""
+            SELECT machine_id, operation_id, batch_id, case_id, batch_number, part_number, operation_number, operation_name,
+                   status, planned_quantity, case_name, picture_hash, picture_path, package_hash, package_path,
+                   snapshot_hash, snapshot_path
+            FROM (
+                SELECT batch_operations.actual_machine_id AS machine_id,
+                       batch_operations.id AS operation_id,
+                       production_batches.id AS batch_id,
+                       cases.id AS case_id,
+                       production_batches.batch_number AS batch_number,
+                       cases.part_number AS part_number,
+                       batch_operations.operation_number AS operation_number,
+                       batch_operations.name AS operation_name,
+                       batch_operations.status AS status,
+                       production_batches.planned_quantity AS planned_quantity,
+                       NULLIF(trim(cases.name), '') AS case_name,
+                       tv_picture.file_hash AS picture_hash, tv_picture.stored_relative_path AS picture_path,
+                       tv_package.file_hash AS package_hash, tv_package.stored_relative_path AS package_path,
+                       tv_snapshot.file_hash AS snapshot_hash, tv_snapshot.stored_relative_path AS snapshot_path,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY batch_operations.actual_machine_id
+                           ORDER BY julianday(COALESCE(batch_operations.actual_end, batch_operations.actual_start)) DESC,
+                                    batch_operations.id DESC) AS recency
+                FROM batch_operations
+                JOIN machines ON machines.id = batch_operations.actual_machine_id
+                JOIN production_batches ON production_batches.id = batch_operations.production_batch_id
+                JOIN cases ON cases.id = production_batches.case_id
+                {{ThumbnailJoins}}
+                WHERE machines.is_active = 1 AND machines.display_enabled = 1
+                  AND batch_operations.actual_start IS NOT NULL)
+            WHERE recency = 1;
+            """;
+        var values = new Dictionary<string, TvSourceOperation>(StringComparer.Ordinal);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            values[reader.GetString(0)] = new TvSourceOperation(
+                reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5),
+                reader.GetInt32(6), reader.GetString(7), reader.GetString(8), 0, reader.GetInt32(9),
+                null, null, null, string.Empty, null, null, 0, null,
+                PartName: reader.IsDBNull(10) ? null : reader.GetString(10),
+                Thumbnails: ReadThumbnails(reader, 11));
         }
 
         return values;

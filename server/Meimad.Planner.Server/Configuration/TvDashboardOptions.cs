@@ -10,6 +10,12 @@ public sealed class TvDashboardOptions
 
     public int CalculationHorizonDays { get; init; } = 7;
 
+    /// <summary>
+    /// When a Machine has no current Operation, show the picture and Part Number of the part it worked last next to
+    /// IDLE (owner request 2026-10-12). Off by default: an idle row shows only IDLE.
+    /// </summary>
+    public bool ShowLastPartImageWhenIdle { get; init; }
+
     public static TvDashboardOptions FromConfiguration(IConfiguration configuration)
     {
         var options = configuration.GetSection(SectionName).Get<TvDashboardOptions>()
