@@ -262,6 +262,50 @@ public sealed class CimatronExporterTests : IDisposable
     }
 
     [Fact]
+    public async Task Remaining_stock_is_exported_in_the_frame_of_the_geometry()
+    {
+        // Mode B (part-model coordinates) by default when the API exports nothing in the procedure UCS; mode A on request.
+        using var modelFrame = new FakeCimatronApi { GeometryInUcs = false, UcsMatrix = [1, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] };
+        var result = Run(modelFrame, Options("--stock-procedure", "9"));
+        Assert.True(result.Complete, result.Log.ToReport());
+        Assert.Equal(CimatronUcsFrame.Model, modelFrame.RemainingStockFrame);
+        Assert.Equal("part-model-coordinates", (await ValidateAsync(result.PackagePath!)).Manifest!.CoordinateSystem!.Type);
+
+        using var procedureFrame = new FakeCimatronApi { GeometryInUcs = false };
+        Directory.Delete(Output, true);
+        var modeA = Run(procedureFrame, Options("--stock-procedure", "9", "--geometry-in-ucs"));
+        Assert.True(modeA.Complete, modeA.Log.ToReport());
+        Assert.Equal(CimatronUcsFrame.Procedure, procedureFrame.RemainingStockFrame);
+        Assert.Equal("nc-procedure-ucs", (await ValidateAsync(modeA.PackagePath!)).Manifest!.CoordinateSystem!.Type);
+    }
+
+    [Fact]
+    public async Task A_single_stock_stl_beside_the_document_is_the_fallback_when_the_api_exports_no_stock()
+    {
+        // Cimatron 2026.0 has no initial-stock export; its own NC\STOCK_OP1.stl beside the document is taken, with a warning.
+        var documentFolder = Path.Combine(root, "cimatron-doc");
+        Directory.CreateDirectory(Path.Combine(documentFolder, "NC"));
+        var stock = Path.Combine(documentFolder, "NC", "STOCK_OP1.stl");
+        File.WriteAllBytes(stock, MeshFiles.WriteBinaryStl(MeshFiles.Box(new(0, 0, -30), new(100, 60, 0))));
+        using var api = new FakeCimatronApi { SupportsInitialStock = false, DocumentPath = Path.Combine(documentFolder, "GOLDEN-PART.elt") };
+        var result = Run(api, Options());
+        Assert.True(result.Complete, result.Log.ToReport());
+        Assert.Contains(result.Log.Entries, entry => entry.Code == "stock_fallback_rule" && entry.Message.Contains("STOCK_OP1.stl", StringComparison.Ordinal));
+        var report = await ValidateAsync(result.PackagePath!);
+        Assert.Equal(("initial", "fallback"), (report.Manifest!.Files!.Stock![0].Kind, report.Manifest.Files.Stock[0].FoundBy));
+
+        // Two candidates are ambiguous; none blocks as before.
+        File.Copy(stock, Path.Combine(documentFolder, "STOCK_OP2.stl"));
+        Directory.Delete(Output, true);
+        var ambiguous = Run(api, Options());
+        Assert.False(ambiguous.Complete);
+        Assert.Contains(ambiguous.Log.Entries, entry => entry.Code == "stock_ambiguous");
+        using var none = new FakeCimatronApi { SupportsInitialStock = false, DocumentPath = Path.Combine(root, "nowhere", "X.elt") };
+        var blocked = Run(none, Options());
+        Assert.Contains(blocked.Log.Entries, entry => entry.Code == "stock_unavailable");
+    }
+
+    [Fact]
     public async Task Fallback_files_from_a_multi_stl_folder_and_a_stock_file_are_used()
     {
         var multi = Path.Combine(root, "multi-stl");
@@ -300,6 +344,8 @@ internal sealed class FakeCimatronApi : ICimatronApi
     public int OtherCount { get; init; }
     public int PostCalls { get; private set; }
     public int? RemainingStockProcedure { get; private set; }
+    public CimatronUcsFrame? RemainingStockFrame { get; private set; }
+    public string DocumentPath { get; init; } = @"C:\Cimatron\GOLDEN-PART.elt";
 
     public string? CimatronVersion => "2026.0";
     public string AdapterVersion => "fake-1";
@@ -310,7 +356,7 @@ internal sealed class FakeCimatronApi : ICimatronApi
         GeometryInUcs: GeometryInUcs, ToolList: true);
 
     public CimatronDocumentInfo GetActiveNcDocument() =>
-        HasDocument ? new("GOLDEN-PART.elt", @"C:\Cimatron\GOLDEN-PART.elt", null) : throw new CimatronApiException("cimatron_no_nc_document", "No document is open.");
+        HasDocument ? new("GOLDEN-PART.elt", DocumentPath, null) : throw new CimatronApiException("cimatron_no_nc_document", "No document is open.");
 
     public IReadOnlyList<CimatronProcedure> GetProcedures() => [new(17, "OP010_ROUGH", "UCS_OP010", true, "Pocket")];
 
@@ -349,14 +395,15 @@ internal sealed class FakeCimatronApi : ICimatronApi
 
     public void ExportJobsData(string xmlPath) => File.WriteAllText(xmlPath, "<jobs><job procedure=\"17\" name=\"OP010_ROUGH\"/></jobs>");
 
-    public void ExportRemainingStock(int procedureId, string ucsName, string stlPath)
+    public void ExportRemainingStock(int procedureId, CimatronUcsFrame frame, string stlPath)
     {
         if (FailRemainingStock) throw new CimatronApiException("cimatron_call_failed", "Remaining stock calculation failed.");
         RemainingStockProcedure = procedureId;
+        RemainingStockFrame = frame;
         File.WriteAllBytes(stlPath, MeshFiles.WriteBinaryStl(MeshFiles.Box(new(0, 0, -30), new(100, 60, 0))));
     }
 
-    public void ExportInitialStock(string ucsName, string stlPath) =>
+    public void ExportInitialStock(CimatronUcsFrame frame, string stlPath) =>
         File.WriteAllBytes(stlPath, MeshFiles.WriteBinaryStl(MeshFiles.Box(new(0, 0, -30), new(100, 60, 0))));
 
     public IReadOnlyList<CimatronGeometryFile> ExportPartGeometry(string ucsName, string folder)

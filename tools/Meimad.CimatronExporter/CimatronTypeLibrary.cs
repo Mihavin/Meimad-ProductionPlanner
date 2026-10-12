@@ -39,6 +39,12 @@ internal static class CimatronTypeLibrary
     [DllImport("oleaut32.dll", PreserveSig = true)]
     private static extern int UnRegisterTypeLibForUser(ref Guid libraryId, ushort major, ushort minor, int lcid, SYSKIND sysKind);
 
+    [DllImport("oleaut32.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
+    private static extern int RegisterTypeLib(ITypeLib library, string fullPath, string? helpDirectory);
+
+    [DllImport("oleaut32.dll", PreserveSig = true)]
+    private static extern int UnRegisterTypeLib(ref Guid libraryId, ushort major, ushort minor, int lcid, SYSKIND sysKind);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
 
@@ -202,11 +208,13 @@ internal static class CimatronTypeLibrary
     }
 
     /// <summary>
-    /// Registers (or with <paramref name="unregister"/> removes) every type library in the Cimatron Program folder for the
-    /// current Windows user only (HKEY_CURRENT_USER; no administrator rights, Cimatron's files are not touched). Libraries
-    /// that import another one are retried until no more succeed. Returns one line per library.
+    /// Registers (or with <paramref name="unregister"/> removes) every type library in the Cimatron Program folder: for the
+    /// current Windows user only (HKEY_CURRENT_USER; no administrator rights) or, with <paramref name="allUsers"/>, for
+    /// every user of the PC (HKEY_LOCAL_MACHINE; needs an administrator process, and administrator processes see only
+    /// that registration). Cimatron's files are not touched. Libraries that import another one are retried until no
+    /// more succeed. Returns one line per library.
     /// </summary>
-    internal static IReadOnlyList<string> RegisterForUser(string programFolder, bool unregister)
+    internal static IReadOnlyList<string> Register(string programFolder, bool unregister, bool allUsers)
     {
         var lines = new List<string>();
         var pending = Directory.EnumerateFiles(programFolder, "*.tlb").Order(StringComparer.OrdinalIgnoreCase).ToList();
@@ -216,7 +224,7 @@ internal static class CimatronTypeLibrary
             var progress = false;
             foreach (var file in pending.ToArray())
             {
-                var outcome = RegisterOne(file, unregister);
+                var outcome = RegisterOne(file, unregister, allUsers);
                 if (outcome is null)
                 {
                     lines.Add($"  {(unregister ? "unregistered" : "registered")}  {Path.GetFileName(file)}");
@@ -237,7 +245,7 @@ internal static class CimatronTypeLibrary
         return lines;
     }
 
-    private static string? RegisterOne(string file, bool unregister)
+    private static string? RegisterOne(string file, bool unregister, bool allUsers)
     {
         var result = LoadTypeLibEx(file, RegKindNone, out var library);
         if (result != 0) return $"could not be read (HRESULT 0x{result:X8})";
@@ -245,7 +253,7 @@ internal static class CimatronTypeLibrary
         {
             if (!unregister)
             {
-                result = RegisterTypeLibForUser(library, file, Path.GetDirectoryName(file));
+                result = allUsers ? RegisterTypeLib(library, file, Path.GetDirectoryName(file)) : RegisterTypeLibForUser(library, file, Path.GetDirectoryName(file));
                 return result == 0 ? null : $"HRESULT 0x{result:X8}";
             }
 
@@ -254,8 +262,10 @@ internal static class CimatronTypeLibrary
             {
                 var attributes = Marshal.PtrToStructure<TYPELIBATTR>(pointer);
                 var id = attributes.guid;
-                result = UnRegisterTypeLibForUser(ref id, (ushort)attributes.wMajorVerNum, (ushort)attributes.wMinorVerNum, attributes.lcid, attributes.syskind);
-                // TYPE_E_REGISTRYACCESS: it was not registered for this user.
+                // Removing takes both registrations away; TYPE_E_REGISTRYACCESS means there was none to remove.
+                var userResult = UnRegisterTypeLibForUser(ref id, (ushort)attributes.wMajorVerNum, (ushort)attributes.wMinorVerNum, attributes.lcid, attributes.syskind);
+                var machineResult = allUsers ? UnRegisterTypeLib(ref id, (ushort)attributes.wMajorVerNum, (ushort)attributes.wMinorVerNum, attributes.lcid, attributes.syskind) : 0;
+                result = machineResult is not (0 or unchecked((int)0x8002801C)) ? machineResult : userResult;
                 return result is 0 or unchecked((int)0x8002801C) ? null : $"HRESULT 0x{result:X8}";
             }
             finally

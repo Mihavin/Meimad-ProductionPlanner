@@ -232,6 +232,24 @@ migration, permissions, watcher), `ProjectionRevisionTests`, `MigrationTests`; t
 **Not verified (needs a PC with Cimatron and the factory network):** the COM adapter and every Cimatron call; a real
 package in mode A and mode B aligned in the NC viewer on a Haas and a Mazak program (§17 end-to-end, §18); the watcher on
 the share; the post-processor hook syntax; installing the exporter on the CAM PCs (not in any installer yet).
+
+**Connection to the Meimad CAM PC (2026-10-12, Cimatron 2026.0 SP3P1; adapter `cimatron-com-3`).** Five probes run by
+the CAM user (the exporter is not run under Claude there) showed: `CimAppAccess.AppAccess` and 381 of Cimatron's 384 COM
+classes are not registered; the adapter creates AppAccess from `CimAppAccess.dll` directly, calls members through the
+interop vtables, and `--register-cimatron` registers the type libraries (per user from a normal window, for every user
+from an administrator window). `GetApplication` connected and read the version `2026,0301,2064,782` but started a new
+empty Cimatron instead of reaching the user's instance, so it is skipped while Cimatron runs; `GetActiveApplication`
+failed with *Interface not registered* because every probe ran from an administrator PowerShell, where Windows ignores
+per-user registrations. The accessors were re-matched to the installed type libraries (`cimatron-api.txt`):
+procedures and UCS names from `GetProcessManagerAsXML` (tolerant reader), UCS matrix from `IUcs.Transformation`,
+`ExportProceduresRemainingStock` with the `NcUcsType` enum (the earlier adapter passed the UCS name there), the posted
+file from the out parameter, `NcExportJobsData` given a folder. Cimatron 2026.0 has no API that writes the initial stock
+or the part/fixture STL; the exporter takes `--stock-file`, else the single `STOCK*.stl` beside the document
+(`stock_ambiguous` when several), and `--geometry-folder`. Open until the next probe from a normal window: whether
+`GetActiveApplication` reaches the user's instance (else Cimatron's setup Repair), the process-manager XML layout, the
+UCS matrix layout (translation column or row), and what `NcExportJobsData` writes. Tests: `CimatronAccessorTests`,
+`CimatronBinderTests`, `CimatronExporterTests` (frame of the stock export, stock discovery); `SimulationPackages` suite
+80 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
 ## TV Dashboard part picture in every Machine row (2026-10-12, schema v118; implemented locally on branch ws/tv)
 
 **Owner request (2026-10-12, `nc-viewer-visualization-spec.md` "TV Dashboard: картинка детали в строке станка",

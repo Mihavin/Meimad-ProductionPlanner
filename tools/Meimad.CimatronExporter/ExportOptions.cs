@@ -7,7 +7,7 @@ internal sealed record ExportOptions
 {
     public bool ActiveCimatron { get; init; }
     public bool Probe { get; init; }
-    /// <summary>Register (or remove) Cimatron's type libraries for the current Windows user, then exit.</summary>
+    /// <summary>Register (or remove) Cimatron's type libraries (current user, or every user from an administrator window), then exit.</summary>
     public bool RegisterCimatron { get; init; }
     public bool UnregisterCimatron { get; init; }
     /// <summary>The Cimatron automation ProgID when it is not CimAppAccess.AppAccess (also MEIMAD_CIMATRON_PROGID).</summary>
@@ -77,7 +77,8 @@ internal sealed record ExportOptions
           --stock initial|remaining|auto     default auto (remaining when --stock-procedure is given)
           --stock-procedure <id>     procedure whose remaining stock is exported (Cimatron 2026+)
           --source-operation <num>   Operation the remaining stock comes from
-          --stock-file <stl>         take an existing stock STL (fallback rule; reported as a warning)
+          --stock-file <stl>         take an existing stock STL (fallback rule; reported as a warning); without it
+                                     a single STOCK*.stl beside the Cimatron document (or in its NC folder) is taken
           --geometry-folder <dir>    take a Multi STL export (files named *TARGET*/*FIXTURE*)
           --geometry-in-ucs          the geometry is already in the procedure UCS (mode A)
           --ucs-matrix "m00,...,m33" row-major UCS→model matrix (mode B) when the API cannot read it
@@ -91,9 +92,10 @@ internal sealed record ExportOptions
           --progid <name>            the Cimatron automation ProgID (default CimAppAccess.AppAccess)
           --cimatron-folder <path>   Cimatron's Program folder, used when the ProgID is not registered
                                      (default: the newest installed Cimatron)
-          --register-cimatron        register Cimatron's type libraries for the current Windows user (no
-                                     administrator; needed when Cimatron calls fail with "Library not
-                                     registered") and exit; --unregister-cimatron removes them again
+          --register-cimatron        register Cimatron's type libraries and exit (needed when Cimatron calls
+                                     fail with "Library not registered"): for the current Windows user from a
+                                     normal window, for every user from an administrator window;
+                                     --unregister-cimatron removes them again
 
         Exit codes: 0 package written (maybe with warnings), 1 blocked, 2 usage error, 3 Cimatron not available.
         """;

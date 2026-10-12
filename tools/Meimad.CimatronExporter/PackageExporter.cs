@@ -53,9 +53,9 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
             var tools = ExportTools(options, staging, ncFacts, log);
             var stock = ExportStock(options, state, staging, log);
             if (stock is null) return Finish(log, output, staging, options, null);
-            var (fixtures, part, geometryInUcs) = ExportGeometry(options, staging, log);
+            var (fixtures, part) = ExportGeometry(options, state, staging, log);
             if (log.HasErrors) return Finish(log, output, staging, options, null);
-            var coordinateSystem = ReadCoordinateSystem(options, geometryInUcs, log);
+            var coordinateSystem = ReadCoordinateSystem(options, state.GeometryInProcedureUcs, log);
             if (coordinateSystem is null) return Finish(log, output, staging, options, null);
 
             File.WriteAllText(Path.Combine(staging, "metadata", "coordinate-systems.json"), JsonSerializer.Serialize(new
@@ -159,7 +159,21 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         }
     }
 
-    private sealed record ExportState(CimatronDocumentInfo Document, IReadOnlyList<CimatronProcedure> Procedures);
+    /// <summary>
+    /// What step 1 settled: the document, its procedures, the stock STL to copy when Cimatron exports none (given or
+    /// found beside the document) and the frame every geometry file is in (procedure UCS = mode A, else part-model
+    /// coordinates = mode B). The stock export uses the same frame as the fixtures and the part.
+    /// </summary>
+    private sealed record ExportState(CimatronDocumentInfo Document, IReadOnlyList<CimatronProcedure> Procedures, string? StockFile,
+        bool StockFileDiscovered, bool GeometryInProcedureUcs)
+    {
+        public CimatronUcsFrame Frame => GeometryInProcedureUcs ? CimatronUcsFrame.Procedure : CimatronUcsFrame.Model;
+    }
+
+    // Mode A when the operator says so or the API exports entities in the procedure UCS; mode B otherwise.
+    private bool GeometryInProcedureUcs(ExportOptions options) =>
+        options.GeometryInUcs
+        || (options.GeometryFolder is null && (api.Capabilities.EntityExport || api.Capabilities.MultiStl) && api.Capabilities.GeometryInUcs);
 
     /// <summary>Step 1: an NC document, procedures with toolpath, a post, a known UCS, stock and geometry sources.</summary>
     private ExportState? ValidateState(ExportOptions options, ExportLog log)
@@ -209,13 +223,33 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
                 $"The procedures use UCS {string.Join(", ", procedureUcs)}, not '{options.Ucs}'; export one UCS per package.");
         }
 
-        if (options.StockFile is null && !api.Capabilities.InitialStock && !(api.Capabilities.RemainingStock && options.StockProcedureId is not null))
-            log.Error("state", "stock_unavailable", "No stock can be exported: give --stock-file, or --stock-procedure on Cimatron 2026+.");
+        var stockFile = options.StockFile;
+        var stockDiscovered = false;
+        if (stockFile is null && !api.Capabilities.InitialStock && !(api.Capabilities.RemainingStock && options.StockProcedureId is not null))
+        {
+            // Cimatron 2026.0 has no initial-stock export: a single STOCK*.stl Cimatron left beside the document is the fallback.
+            var found = StockFileDiscovery.Find(document.FilePath);
+            if (found.Count == 1)
+            {
+                stockFile = found[0];
+                stockDiscovered = true;
+            }
+            else if (found.Count > 1)
+            {
+                log.Error("state", "stock_ambiguous", "Several stock STL files lie beside the Cimatron document; choose one with --stock-file: " + string.Join(", ", found));
+            }
+            else
+            {
+                log.Error("state", "stock_unavailable", "No stock can be exported: give --stock-file, or --stock-procedure on Cimatron 2026+.");
+            }
+        }
+
         if (options.GeometryFolder is null && !api.Capabilities.EntityExport && !api.Capabilities.MultiStl)
             log.Warning("state", "geometry_unavailable", "No target/fixture export is available; the package will have no part or fixture (give --geometry-folder).");
         if (log.HasErrors) return null;
-        log.Ok("state", $"Active NC document '{document.Name}', {procedures.Count} procedure(s), UCS '{options.Ucs}'.");
-        return new ExportState(document, procedures);
+        var inUcs = GeometryInProcedureUcs(options);
+        log.Ok("state", $"Active NC document '{document.Name}', {procedures.Count} procedure(s), UCS '{options.Ucs}', geometry in {(inUcs ? "the procedure UCS (mode A)" : "part-model coordinates (mode B)")}.");
+        return new ExportState(document, procedures, stockFile, stockDiscovered, inUcs);
     }
 
     /// <summary>Step 3: post by UCS (fallback: post all, the UCS is still recorded). The NC text is never changed.</summary>
@@ -307,7 +341,12 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
             {
                 api.ExportJobsData(Path.Combine(staging, "metadata", "jobs.xml"));
                 jobs = Existing(staging, "metadata/jobs.xml");
-                log.Ok("jobs", "Job Manager XML exported.");
+                if (jobs is not null)
+                    log.Ok("jobs", "Job Manager XML exported.");
+                else if (Directory.Exists(Path.Combine(staging, "metadata", "jobs")))
+                    log.Warning("jobs", "jobs_export_many_files", "Cimatron wrote several Job Manager files; they are kept under metadata/jobs and not referenced by the manifest.");
+                else
+                    log.Warning("jobs", "jobs_export_failed", "Cimatron wrote no Job Manager XML.");
             }
             catch (CimatronApiException exception)
             {
@@ -356,16 +395,18 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         var remaining = options.Stock == "remaining" || (options.Stock == "auto" && options.StockProcedureId is not null);
         try
         {
-            if (options.StockFile is not null)
+            if (state.StockFile is not null)
             {
-                if (!File.Exists(options.StockFile))
+                if (!File.Exists(state.StockFile))
                 {
-                    log.Error("stock", "stock_file_missing", $"The stock file '{options.StockFile}' does not exist.");
+                    log.Error("stock", "stock_file_missing", $"The stock file '{state.StockFile}' does not exist.");
                     return null;
                 }
 
-                File.Copy(options.StockFile, Path.Combine(staging, "geometry", "stock.stl"));
-                log.Warning("stock", "stock_fallback_rule", $"Stock taken from '{options.StockFile}' (fallback rule).");
+                File.Copy(state.StockFile, Path.Combine(staging, "geometry", "stock.stl"));
+                log.Warning("stock", "stock_fallback_rule", state.StockFileDiscovered
+                    ? $"Stock taken from '{state.StockFile}', the only stock STL beside the Cimatron document (fallback rule; Cimatron 2026.0 exports no initial stock through its API). Check that it is in {(state.GeometryInProcedureUcs ? "the procedure UCS" : "part-model coordinates")}."
+                    : $"Stock taken from '{state.StockFile}' (fallback rule).");
                 return new StockFileReference
                 {
                     Path = "geometry/stock.stl",
@@ -384,14 +425,14 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
                 }
 
                 var name = options.SourceOperation is null ? "stock-remaining.stl" : $"stock-from-op{options.SourceOperation}.stl";
-                api.ExportRemainingStock(options.StockProcedureId.Value, options.Ucs!, Path.Combine(staging, "geometry", name));
+                api.ExportRemainingStock(options.StockProcedureId.Value, state.Frame, Path.Combine(staging, "geometry", name));
                 if (!File.Exists(Path.Combine(staging, "geometry", name)))
                 {
                     log.Error("stock", "stock_export_failed", "Cimatron reported success but wrote no remaining-stock STL.");
                     return null;
                 }
 
-                log.Ok("stock", $"Remaining stock of procedure {options.StockProcedureId} exported.");
+                log.Ok("stock", $"Remaining stock of procedure {options.StockProcedureId} exported in {(state.GeometryInProcedureUcs ? "the procedure UCS" : "part-model coordinates")}.");
                 return new StockFileReference
                 {
                     Path = "geometry/" + name,
@@ -401,7 +442,7 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
                 };
             }
 
-            api.ExportInitialStock(options.Ucs!, Path.Combine(staging, "geometry", "stock.stl"));
+            api.ExportInitialStock(state.Frame, Path.Combine(staging, "geometry", "stock.stl"));
             if (!File.Exists(Path.Combine(staging, "geometry", "stock.stl")))
             {
                 log.Error("stock", "stock_export_failed", "Cimatron reported success but wrote no stock STL.");
@@ -419,12 +460,11 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
     }
 
     /// <summary>Step 6: separate fixture files and one target part, never merged.</summary>
-    private (List<FixtureFileReference> Fixtures, PartFileReference? Part, bool InUcs) ExportGeometry(ExportOptions options, string staging, ExportLog log)
+    private (List<FixtureFileReference> Fixtures, PartFileReference? Part) ExportGeometry(ExportOptions options, ExportState state, string staging, ExportLog log)
     {
         var raw = Path.Combine(staging, "metadata", "geometry-export");
         Directory.CreateDirectory(raw);
         IReadOnlyList<CimatronGeometryFile> files;
-        var inUcs = options.GeometryInUcs;
         try
         {
             if (options.GeometryFolder is not null)
@@ -432,7 +472,7 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
                 if (!Directory.Exists(options.GeometryFolder))
                 {
                     log.Error("geometry", "geometry_folder_missing", $"The geometry folder '{options.GeometryFolder}' does not exist.");
-                    return ([], null, inUcs);
+                    return ([], null);
                 }
 
                 files = Directory.GetFiles(options.GeometryFolder)
@@ -444,7 +484,6 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
             else if (api.Capabilities.EntityExport || api.Capabilities.MultiStl)
             {
                 files = api.ExportPartGeometry(options.Ucs!, raw);
-                inUcs |= api.Capabilities.GeometryInUcs;
             }
             else
             {
@@ -454,14 +493,14 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         catch (CimatronApiException exception)
         {
             log.Error("geometry", "geometry_export_failed", exception.Message);
-            return ([], null, inUcs);
+            return ([], null);
         }
 
         var targets = files.Where(file => file.Role == GeometryRoles.Target).ToArray();
         if (targets.Length > 1)
         {
             log.Error("geometry", "part_ambiguous", "Several target parts were exported: " + string.Join(", ", targets.Select(file => Path.GetFileName(file.Path))));
-            return ([], null, inUcs);
+            return ([], null);
         }
 
         PartFileReference? part = null;
@@ -489,7 +528,7 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         if (others > 0) log.Skipped("geometry", $"{others} other part file(s) are not part of the package.");
         if (Directory.Exists(raw)) Directory.Delete(raw, true);
         log.Ok("geometry", $"{fixtures.Count} fixture(s), {(part is null ? "no" : "one")} finished part.");
-        return (fixtures, part, inUcs);
+        return (fixtures, part);
     }
 
     /// <summary>Step 7: mode A when the geometry is in the procedure UCS, else mode B with the UCS matrix. Never guessed.</summary>

@@ -58,6 +58,10 @@ internal sealed class CimatronBinder
     /// <summary>Whether <paramref name="target"/> has <paramref name="member"/> on one of the known vtable interfaces.</summary>
     internal bool Has(object target, string member) => Candidates(target, member, null).Any();
 
+    /// <summary>The names of the known interfaces <paramref name="target"/> answers to (for the probe; one query per interface).</summary>
+    internal IEnumerable<string> Interfaces(object target) =>
+        interfaces.Where(type => Implements(target, type)).Select(type => type.Name).Distinct().Order(StringComparer.Ordinal);
+
     /// <summary>
     /// Calls <paramref name="member"/> (a method, or a property getter when there are no arguments). Returns false when
     /// no known interface of the object has it; out parameter values are in <paramref name="outputs"/> afterwards.

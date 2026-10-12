@@ -32,8 +32,12 @@ static int Run(string[] args)
             return 3;
         }
 
-        Console.WriteLine($"{(options.RegisterCimatron ? "Registering" : "Removing")} Cimatron type libraries for user {Environment.UserName} from {folder}:");
-        var lines = CimatronTypeLibrary.RegisterForUser(folder, unregister: options.UnregisterCimatron);
+        // An administrator window registers for every user of the PC (HKEY_LOCAL_MACHINE), which administrator processes
+        // also see; a normal window registers for the current user only.
+        var allUsers = CimatronRunningApplication.Elevated;
+        var scope = allUsers ? "every user of this PC (administrator window)" : $"user {Environment.UserName} (normal window; run it as administrator to register for every user)";
+        Console.WriteLine($"{(options.RegisterCimatron ? "Registering" : "Removing")} Cimatron type libraries for {scope} from {folder}:");
+        var lines = CimatronTypeLibrary.Register(folder, unregister: options.UnregisterCimatron, allUsers);
         foreach (var line in lines) Console.WriteLine(line);
         return lines.Any(line => line.TrimStart().StartsWith("failed", StringComparison.Ordinal)) ? 1 : 0;
     }
@@ -81,13 +85,23 @@ static int Run(string[] args)
                 Console.WriteLine($"  {(available ? "yes" : "no "),-3}  {name}");
             foreach (var (owner, member, available) in api.Probe())
                 Console.WriteLine($"  {(available ? "yes" : "no "),-3}  {owner}.{member}");
+            foreach (var line in api.ProbeDetails()) Console.WriteLine(line);
             try
             {
                 var document = api.GetActiveNcDocument();
                 Console.WriteLine($"Active NC document: {document.Name} {document.FilePath}");
+                var stockFiles = StockFileDiscovery.Find(document.FilePath);
+                Console.WriteLine($"Stock STL files beside the document: {(stockFiles.Count == 0 ? "none" : string.Join(", ", stockFiles))}");
                 foreach (var procedure in api.GetProcedures())
-                    Console.WriteLine($"  procedure {procedure.Id} '{procedure.Name}' UCS {procedure.UcsName ?? "?"} toolpath {procedure.HasToolpath}");
-                Console.WriteLine("UCS: " + string.Join(", ", api.GetUcsNames()));
+                    Console.WriteLine($"  procedure {procedure.Id} '{procedure.Name}' UCS {procedure.UcsName ?? "?"} toolpath {procedure.HasToolpath}{(procedure.OperationName is null ? "" : $" in '{procedure.OperationName}'")}");
+                var ucsNames = api.GetUcsNames();
+                Console.WriteLine("UCS: " + (ucsNames.Count == 0 ? "(none read)" : string.Join(", ", ucsNames)));
+                foreach (var name in ucsNames.Take(8))
+                {
+                    var ucs = api.GetUcs(name);
+                    Console.WriteLine($"  UCS '{name}' matrix: {(ucs is null ? "not readable" : string.Join(", ", ucs.Matrix.Select(value => value.ToString("G6", System.Globalization.CultureInfo.InvariantCulture))))}");
+                }
+
                 var processXml = Path.Combine(AppContext.BaseDirectory, "process-manager.xml");
                 api.ExportProcessManagerXml(processXml);
                 Console.WriteLine(File.Exists(processXml) ? $"Process manager XML: {processXml}" : "Process manager XML: Cimatron wrote no file");

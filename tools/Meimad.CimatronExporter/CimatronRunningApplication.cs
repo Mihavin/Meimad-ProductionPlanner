@@ -113,7 +113,7 @@ internal static class CimatronRunningApplication
     internal static string Advice()
     {
         if (Elevated)
-            return "The exporter runs as administrator and cannot reach a Cimatron started normally: run it from a normal PowerShell (not \"Run as administrator\").";
+            return "The exporter runs as administrator and cannot reach a Cimatron started normally: run it from a normal window (Win+R, cmd, Enter), not \"Run as administrator\". Only --register-cimatron benefits from an administrator window (it then registers for every user).";
         if (!CimatronRunning())
             return "Cimatron is not running for this user: open Cimatron with the NC document and run the exporter again.";
         return "Cimatron is running but did not offer its application object, and its COM classes are not registered: repair the Cimatron installation as an administrator (or ask 3D Systems support how to register the Cimatron API).";

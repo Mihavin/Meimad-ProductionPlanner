@@ -7,19 +7,24 @@ namespace Meimad.CimatronExporter;
 /// <summary>
 /// <see cref="ICimatronApi"/> over a running Cimatron through late-bound COM, so no Cimatron interop
 /// assembly is needed to build or ship the exporter. Adapter version <see cref="Version"/>: it connects
-/// through <c>CimAppAccess.AppAccess.GetApplication()</c> (exporter definition §3.1), takes the active
-/// document and its NC model, and finds each API method by name on the model, the document and the
-/// application in that order. A member is called through the vtable interfaces of Cimatron's installed
-/// interop assemblies when they have it (<see cref="CimatronBinder"/>), else through IDispatch.
-/// Capability detection looks the member names up before anything is called, so a Cimatron version
-/// without a method reports it as unavailable instead of failing half-way. The names in
-/// <see cref="Members"/> are those of the Cimatron 2026.0 type libraries (probe of 2026-10-12); the
-/// procedure, UCS, tool and geometry accessors are still best guesses.
-/// UNVERIFIED: this adapter has never completed a call against a real Cimatron — run <c>--probe</c> first.
+/// through <c>CimAppAccess.AppAccess</c> (exporter definition §3.1), takes the active document and its NC
+/// model, and finds each API method by name on the model, the document and the application in that
+/// order. A member is called through the vtable interfaces of Cimatron's installed interop assemblies
+/// when they have it (<see cref="CimatronBinder"/>), else through IDispatch. Capability detection looks
+/// the member names up before anything is called, so a Cimatron version without a method reports it as
+/// unavailable instead of failing half-way.
+/// The names in <see cref="Members"/> and the argument lists are those of the Cimatron 2026.0 type libraries
+/// (<c>cimatron-api.txt</c> of the Meimad probe, 2026-10-12): procedures and UCS names come from
+/// <c>GetProcessManagerAsXML</c> (fallback: the <c>ModelProcedures</c> entity list and an entity query for UCS
+/// entities), the UCS matrix from <c>IUcs.Transformation</c>, the remaining stock from
+/// <c>ExportProceduresRemainingStock(procedure, NcUcsType, file)</c>. Cimatron 2026.0 has no API that writes the
+/// initial stock, the part or the fixtures as STL: those stay fallbacks (<c>--stock-file</c>, a stock STL found beside
+/// the document, <c>--geometry-folder</c>).
+/// UNVERIFIED: this adapter has not yet completed an export against a real Cimatron — run <c>--probe</c> first.
 /// </summary>
 internal sealed class CimatronComApi : ICimatronApi
 {
-    internal const string Version = "cimatron-com-2";
+    internal const string Version = "cimatron-com-3";
     internal const string AppAccessProgId = "CimAppAccess.AppAccess";
 
     /// <summary>How the last <see cref="Connect"/> reached Cimatron (null: the registered ProgID).</summary>
@@ -46,22 +51,36 @@ internal sealed class CimatronComApi : ICimatronApi
         internal const string CuttersCsv = "ExportCuttersAndHoldersToCSV";
         internal const string JobsXml = "NcExportJobsData";
         internal const string RemainingStock = "ExportProceduresRemainingStock";
-        internal static readonly string[] InitialStock = ["ExportStockToStl", "ExportStock"];
-        internal static readonly string[] Procedures = ["GetProcedures", "Procedures"];
-        internal static readonly string[] UcsList = ["GetUcsList", "GetUCSList", "UcsList"];
-        internal static readonly string[] Ucs = ["GetUcs", "GetUCS"];
-        internal static readonly string[] UcsMatrix = ["GetMatrix", "Matrix", "GetTransformation"];
-        internal static readonly string[] Tools = ["GetCutters", "GetTools"];
-        internal static readonly string[] EntityExport = ["ExportProcedureGeometry", "ExportPartsToStl"];
-        internal static readonly string[] MultiStl = ["ExportMultiStl", "ExportSimulatorMultiStl"];
+        internal const string ModelProcedures = "ModelProcedures";
+        internal const string ActiveUcs = "ActivateUcs";
+        internal const string CreateFilter = "CreateFilter";
+        internal const string SetFilter = "SetFilter";
+        internal const string SelectEntities = "Select";
+        internal const string Transformation = "Transformation";
+        internal static readonly string[] Matrix = ["Matrix", "Tranformation"];
+        internal const string Vector = "Vector";
+        // Cimatron 2026.0 exposes none of these; the lists are kept so a later version can be matched by name.
+        internal static readonly string[] InitialStock = [];
+        internal static readonly string[] EntityExport = [];
+        internal static readonly string[] MultiStl = [];
+        internal static readonly string[] Tools = [];
         internal static readonly string[] Version = ["Version", "GetVersion"];
         internal static readonly string[] Name = ["Title", "Name", "GetName"];
         internal static readonly string[] Path = ["GetPath", "Path", "FullName"];
+        internal static readonly string[] EntityId = ["ID", "Id", "GetId"];
+
+        /// <summary><c>EntityEnumType.cmUcs</c>.</summary>
+        internal const int UcsEntityType = 9;
+
+        /// <summary><c>NcUcsType.cmNcProcUcs</c> and <c>cmNcModelUcs</c>.</summary>
+        internal const int ProcedureUcsType = 1;
+        internal const int ModelUcsType = 3;
     }
 
     private readonly object application;
     private readonly object? document;
     private readonly object? model;
+    private ProcessManagerData? processManager;
 
     private CimatronComApi(object application, object? document, object? model)
     {
@@ -69,6 +88,8 @@ internal sealed class CimatronComApi : ICimatronApi
         this.document = document;
         this.model = model;
         CimatronVersion = TryGetString(application, Members.Version);
+        var ucsQuery = model is not null && HasMember(model, Members.CreateFilter) && HasMember(model, Members.SetFilter) && HasMember(model, Members.SelectEntities);
+        var activeUcs = model is not null && HasMember(model, Members.ActiveUcs);
         Capabilities = new CimatronCapabilities(
             PostByUcs: Find(Members.PostByUcs) is not null,
             PostToAll: Find(Members.PostToAll) is not null,
@@ -78,9 +99,11 @@ internal sealed class CimatronComApi : ICimatronApi
             InitialStock: FindAny(Members.InitialStock) is not null,
             EntityExport: FindAny(Members.EntityExport) is not null,
             MultiStl: FindAny(Members.MultiStl) is not null,
-            UcsTransform: FindAny(Members.Ucs) is not null,
+            UcsTransform: ucsQuery || activeUcs,
             GeometryInUcs: FindAny(Members.EntityExport) is not null,
-            ToolList: FindAny(Members.Tools) is not null);
+            ToolList: FindAny(Members.Tools) is not null,
+            Procedures: Find(Members.ProcessManagerXml) is not null || Find(Members.ModelProcedures) is not null,
+            UcsNames: ucsQuery || activeUcs || Find(Members.ProcessManagerXml) is not null);
     }
 
     public string? CimatronVersion { get; }
@@ -223,20 +246,83 @@ internal sealed class CimatronComApi : ICimatronApi
         }
     }
 
-    /// <summary>Lists which known members the application and the active document expose (read-only probe).</summary>
+    /// <summary>Lists which known members the application, the active document and the NC model expose (read-only probe).</summary>
     internal IEnumerable<(string Owner, string Member, bool Available)> Probe()
     {
         var names = new[]
         {
-            Members.GetActiveDoc, Members.Model, Members.ProcessManagerXml, Members.PostByUcs, Members.PostToAll, Members.CuttersCsv, Members.JobsXml, Members.RemainingStock
-        }.Concat(Members.InitialStock).Concat(Members.Procedures).Concat(Members.UcsList).Concat(Members.Ucs)
-         .Concat(Members.Tools).Concat(Members.EntityExport).Concat(Members.MultiStl).Distinct();
+            Members.GetActiveDoc, Members.Model, Members.ProcessManagerXml, Members.PostByUcs, Members.PostToAll, Members.CuttersCsv,
+            Members.JobsXml, Members.RemainingStock, Members.ModelProcedures, Members.ActiveUcs, Members.CreateFilter, Members.SetFilter,
+            Members.SelectEntities
+        }.Concat(Members.InitialStock).Concat(Members.EntityExport).Concat(Members.MultiStl).Concat(Members.Tools).Distinct();
         foreach (var name in names)
         {
             yield return ("application", name, HasMember(application, name));
             if (document is not null) yield return ("document", name, HasMember(document, name));
             if (model is not null) yield return ("model", name, HasMember(model, name));
         }
+    }
+
+    /// <summary>
+    /// What the probe shows about the connected objects beyond member names: the interop interfaces each object answers
+    /// to, the active UCS with the raw transformation values and the composed matrix, and the process-manager
+    /// procedures as the adapter read them. Read-only towards Cimatron.
+    /// </summary>
+    internal IEnumerable<string> ProbeDetails()
+    {
+        if (Binder is not null)
+        {
+            yield return "Interfaces of the application object: " + Join(Binder.Interfaces(application));
+            if (document is not null) yield return "Interfaces of the document object: " + Join(Binder.Interfaces(document));
+            if (model is not null) yield return "Interfaces of the NC model object: " + Join(Binder.Interfaces(model));
+        }
+
+        if (model is null)
+        {
+            yield return "NC model: none (the active document has no Model, or no document is active)";
+            yield break;
+        }
+
+        string activeLine;
+        try
+        {
+            var ucs = HasMember(model, Members.ActiveUcs) ? CallOrGet(model, Members.ActiveUcs) : null;
+            if (ucs is null)
+            {
+                activeLine = "Active UCS: none";
+            }
+            else
+            {
+                var name = TryGetString(ucs, Members.Name) ?? "(no name)";
+                var (raw, vector, composed) = ReadTransformation(ucs);
+                activeLine = $"Active UCS '{name}': Matrix [{Join(raw)}] Vector [{Join(vector)}] -> "
+                    + (composed is null ? "no 4x4 matrix" : $"{composed.Value.Layout}: [{Join(composed.Value.Matrix)}]");
+            }
+        }
+        catch (CimatronApiException exception)
+        {
+            activeLine = $"Active UCS: {exception.Message}";
+        }
+
+        yield return activeLine;
+
+        string entityLine;
+        try
+        {
+            var entityNames = UcsEntities().Select(ucs => TryGetString(ucs, Members.Name) ?? "(no name)").ToArray();
+            entityLine = $"UCS entities (entity query, type {Members.UcsEntityType}): {(entityNames.Length == 0 ? "none" : string.Join(", ", entityNames))}";
+        }
+        catch (CimatronApiException exception)
+        {
+            entityLine = $"UCS entities: {exception.Message}";
+        }
+
+        yield return entityLine;
+
+        var data = ProcessManager();
+        yield return data is null
+            ? "Process manager XML: not available"
+            : $"Process manager XML: {data.Procedures.Count} procedure(s) read, UCS names {(data.UcsNames.Count == 0 ? "none" : string.Join(", ", data.UcsNames))}";
     }
 
     public CimatronDocumentInfo GetActiveNcDocument()
@@ -250,20 +336,15 @@ internal sealed class CimatronComApi : ICimatronApi
 
     public IReadOnlyList<CimatronProcedure> GetProcedures()
     {
-        var owner = FindAny(Members.Procedures);
-        if (owner is null) return [];
-        var collection = CallOrGet(owner.Value.Target, owner.Value.Name);
+        var data = ProcessManager();
+        if (data is { Procedures.Count: > 0 }) return data.Procedures;
+        if (model is null || !HasMember(model, Members.ModelProcedures)) return [];
         var result = new List<CimatronProcedure>();
-        foreach (var item in Enumerate(collection))
+        foreach (var item in Enumerate(CallOrGet(model, Members.ModelProcedures)))
         {
-            var id = TryGetInt(item, ["Id", "ID", "GetId"]);
+            var id = TryGetInt(item, Members.EntityId);
             if (id is null) continue;
-            result.Add(new CimatronProcedure(
-                id.Value,
-                TryGetString(item, Members.Name) ?? $"Procedure {id}",
-                TryGetString(item, ["UcsName", "UCSName", "GetUcsName"]),
-                TryGetBool(item, ["HasToolpath", "IsCalculated", "Calculated"]) ?? true,
-                TryGetString(item, ["OperationName", "Comment"])));
+            result.Add(new CimatronProcedure(id.Value, TryGetString(item, Members.Name) ?? $"Procedure {id}", null, true));
         }
 
         return result;
@@ -271,32 +352,35 @@ internal sealed class CimatronComApi : ICimatronApi
 
     public IReadOnlyList<string> GetUcsNames()
     {
-        var owner = FindAny(Members.UcsList);
-        if (owner is null) return [];
-        return Enumerate(CallOrGet(owner.Value.Target, owner.Value.Name))
-            .Select(item => item as string ?? TryGetString(item, Members.Name))
-            .Where(name => !string.IsNullOrWhiteSpace(name))
-            .Select(name => name!)
-            .ToArray();
+        var names = new List<string>();
+        try
+        {
+            names.AddRange(UcsEntities().Select(ucs => TryGetString(ucs, Members.Name)).OfType<string>());
+        }
+        catch (CimatronApiException)
+        {
+            // The entity query is one of three sources; the others still answer.
+        }
+
+        if (model is not null && HasMember(model, Members.ActiveUcs))
+        {
+            var active = CallOrGet(model, Members.ActiveUcs);
+            if (active is not null && TryGetString(active, Members.Name) is { } name) names.Add(name);
+        }
+
+        if (ProcessManager() is { } data) names.AddRange(data.UcsNames);
+        return names.Where(name => !string.IsNullOrWhiteSpace(name)).Select(name => name.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     public CimatronUcs? GetUcs(string name)
     {
-        var owner = FindAny(Members.Ucs);
-        if (owner is null) return null;
-        var ucs = Call(owner.Value.Target, owner.Value.Name, name);
+        var ucs = FindUcs(name);
         if (ucs is null) return null;
-        foreach (var member in Members.UcsMatrix)
-        {
-            if (!HasMember(ucs, member)) continue;
-            var values = Enumerate(CallOrGet(ucs, member)).Select(item => Convert.ToDouble(item, CultureInfo.InvariantCulture)).ToArray();
-            if (values.Length == 16) return new CimatronUcs(name, values);
-            if (values.Length == 12) return new CimatronUcs(name, [.. values, 0, 0, 0, 1]);
-        }
-
-        return null;
+        var (_, _, composed) = ReadTransformation(ucs);
+        return composed is null ? null : new CimatronUcs(name, composed.Value.Matrix);
     }
 
+    /// <summary>Cimatron 2026.0 lists cutters only through <c>ExportCuttersAndHoldersToCSV</c>; the API has no tool list.</summary>
     public IReadOnlyList<CimatronTool> GetTools()
     {
         var owner = FindAny(Members.Tools);
@@ -318,30 +402,54 @@ internal sealed class CimatronComApi : ICimatronApi
     public IReadOnlyList<string> PostByUcs(string postName, string outputFolder, bool startHome, string ucsName)
     {
         var before = Snapshot(outputFolder);
-        Call(Require(Members.PostByUcs), Members.PostByUcs, postName, outputFolder, startHome, ucsName);
-        return Created(outputFolder, before);
+        var (_, outputs) = Invoke(Require(Members.PostByUcs), Members.PostByUcs, postName, outputFolder, startHome, ucsName);
+        return Created(outputFolder, before, outputs);
     }
 
     public IReadOnlyList<string> PostToAll(string postName, string outputFolder, bool startHome)
     {
         var before = Snapshot(outputFolder);
-        Call(Require(Members.PostToAll), Members.PostToAll, postName, outputFolder, startHome);
-        return Created(outputFolder, before);
+        var (_, outputs) = Invoke(Require(Members.PostToAll), Members.PostToAll, postName, outputFolder, startHome);
+        return Created(outputFolder, before, outputs);
     }
 
     public void ExportCuttersAndHolders(string cuttersCsv, string holdersCsv, string materialsCsv) =>
         Call(Require(Members.CuttersCsv), Members.CuttersCsv, Array.Empty<object>(), cuttersCsv, holdersCsv, materialsCsv);
 
-    public void ExportJobsData(string xmlPath) => Call(Require(Members.JobsXml), Members.JobsXml, xmlPath);
+    /// <summary>
+    /// <c>NcExportJobsData(iOutputPath, out oNumberOfJobs)</c> takes an output path; whether Cimatron writes one file at that
+    /// path or files into that folder is settled by <see cref="JobsExportFiles.Normalize"/> afterwards.
+    /// </summary>
+    public void ExportJobsData(string xmlPath)
+    {
+        var exportFolder = Path.Combine(Path.GetDirectoryName(xmlPath)!, "jobs-export");
+        Directory.CreateDirectory(exportFolder);
+        var target = Require(Members.JobsXml);
+        Invoke(target, Members.JobsXml, exportFolder);
+        if (Directory.Exists(exportFolder) && !Directory.EnumerateFileSystemEntries(exportFolder).Any() && !File.Exists(xmlPath))
+        {
+            // Nothing in the folder: Cimatron may want a file path.
+            Directory.Delete(exportFolder);
+            Invoke(target, Members.JobsXml, xmlPath);
+        }
 
-    public void ExportRemainingStock(int procedureId, string ucsName, string stlPath) =>
-        Call(Require(Members.RemainingStock), Members.RemainingStock, procedureId, ucsName, stlPath);
+        JobsExportFiles.Normalize(exportFolder, xmlPath);
+    }
 
-    public void ExportInitialStock(string ucsName, string stlPath)
+    public void ExportRemainingStock(int procedureId, CimatronUcsFrame frame, string stlPath)
+    {
+        var ucsType = frame == CimatronUcsFrame.Procedure ? Members.ProcedureUcsType : Members.ModelUcsType;
+        var (result, outputs) = Invoke(Require(Members.RemainingStock), Members.RemainingStock, procedureId, ucsType, stlPath);
+        var created = outputs.OfType<bool>().Cast<bool?>().FirstOrDefault() ?? result as bool?;
+        if (created == false && !File.Exists(stlPath))
+            throw new CimatronApiException("cimatron_call_failed", $"Cimatron wrote no remaining stock for procedure {procedureId} (ExportProceduresRemainingStock answered false).");
+    }
+
+    public void ExportInitialStock(CimatronUcsFrame frame, string stlPath)
     {
         var owner = FindAny(Members.InitialStock)
             ?? throw new CimatronApiException("capability_unavailable", "This Cimatron exposes no initial-stock export.");
-        Call(owner.Target, owner.Name, ucsName, stlPath);
+        Call(owner.Target, owner.Name, frame == CimatronUcsFrame.Procedure ? Members.ProcedureUcsType : Members.ModelUcsType, stlPath);
     }
 
     public IReadOnlyList<CimatronGeometryFile> ExportPartGeometry(string ucsName, string folder)
@@ -357,7 +465,7 @@ internal sealed class CimatronComApi : ICimatronApi
         if (owner is null) throw new CimatronApiException("capability_unavailable", "This Cimatron exposes no target/fixture geometry export.");
         var before = Snapshot(folder);
         Call(owner.Value.Target, owner.Value.Name, ucsName, folder);
-        return Created(folder, before)
+        return Created(folder, before, [])
             .Select(path => new CimatronGeometryFile(path, GeometryClassifier.Classify(path), Path.GetFileNameWithoutExtension(path), method))
             .ToArray();
     }
@@ -374,6 +482,105 @@ internal sealed class CimatronComApi : ICimatronApi
         if (model is not null && Marshal.IsComObject(model)) Marshal.FinalReleaseComObject(model);
         if (document is not null && Marshal.IsComObject(document)) Marshal.FinalReleaseComObject(document);
         if (Marshal.IsComObject(application)) Marshal.FinalReleaseComObject(application);
+    }
+
+    // The process manager XML, read once through a temporary file (GetProcessManagerAsXML writes a file).
+    private ProcessManagerData? ProcessManager()
+    {
+        if (processManager is not null) return processManager;
+        var owner = Find(Members.ProcessManagerXml);
+        if (owner is null) return null;
+        var file = Path.Combine(Path.GetTempPath(), $"meimad-process-manager-{Guid.NewGuid():N}.xml");
+        try
+        {
+            Call(owner, Members.ProcessManagerXml, false, file);
+            if (!File.Exists(file)) return null;
+            processManager = ProcessManagerXml.Parse(File.ReadAllText(file));
+            return processManager;
+        }
+        catch (CimatronApiException)
+        {
+            return null;
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(file)) File.Delete(file);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    // UCS entities of the NC model through its entity query: CreateFilter(cmUcs) -> SetFilter -> Select.
+    private IEnumerable<object> UcsEntities()
+    {
+        if (model is null || !HasMember(model, Members.CreateFilter) || !HasMember(model, Members.SetFilter) || !HasMember(model, Members.SelectEntities))
+            return [];
+        var filter = Result(Invoke(model, Members.CreateFilter, Members.UcsEntityType));
+        if (filter is null) return [];
+        Call(model, Members.SetFilter, filter);
+        var list = Result(Invoke(model, Members.SelectEntities));
+        return Enumerate(list).ToArray();
+    }
+
+    private object? FindUcs(string name)
+    {
+        try
+        {
+            foreach (var ucs in UcsEntities())
+            {
+                if (string.Equals(TryGetString(ucs, Members.Name), name, StringComparison.OrdinalIgnoreCase)) return ucs;
+            }
+        }
+        catch (CimatronApiException)
+        {
+            // Fall through to the active UCS.
+        }
+
+        if (model is null || !HasMember(model, Members.ActiveUcs)) return null;
+        var active = CallOrGet(model, Members.ActiveUcs);
+        return active is not null && string.Equals(TryGetString(active, Members.Name), name, StringComparison.OrdinalIgnoreCase) ? active : null;
+    }
+
+    // IUcs.Transformation -> IModelTransformation.Matrix / Vector, composed to a row-major 4x4 matrix.
+    private static (IReadOnlyList<double> Raw, IReadOnlyList<double> Vector, (IReadOnlyList<double> Matrix, string Layout)? Composed) ReadTransformation(object ucs)
+    {
+        var transformation = HasMember(ucs, Members.Transformation) ? CallOrGet(ucs, Members.Transformation) : null;
+        if (transformation is null) return ([], [], null);
+        IReadOnlyList<double> raw = [];
+        foreach (var member in Members.Matrix)
+        {
+            if (!HasMember(transformation, member)) continue;
+            raw = Doubles(CallOrGet(transformation, member));
+            if (raw.Count > 0) break;
+        }
+
+        var vector = HasMember(transformation, Members.Vector) ? Doubles(CallOrGet(transformation, Members.Vector)) : [];
+        return (raw, vector, UcsMatrix.Compose(raw, vector));
+    }
+
+    private static IReadOnlyList<double> Doubles(object? values)
+    {
+        var result = new List<double>();
+        foreach (var item in Enumerate(values))
+        {
+            if (item is IConvertible convertible)
+            {
+                try
+                {
+                    result.Add(convertible.ToDouble(CultureInfo.InvariantCulture));
+                }
+                catch (Exception exception) when (exception is FormatException or InvalidCastException or OverflowException)
+                {
+                    return [];
+                }
+            }
+        }
+
+        return result;
     }
 
     private object Require(string member) =>
@@ -399,21 +606,47 @@ internal sealed class CimatronComApi : ICimatronApi
     private static HashSet<string> Snapshot(string folder) =>
         Directory.Exists(folder) ? new(Directory.GetFiles(folder), StringComparer.OrdinalIgnoreCase) : new(StringComparer.OrdinalIgnoreCase);
 
-    private static string[] Created(string folder, HashSet<string> before) =>
-        Directory.Exists(folder) ? Directory.GetFiles(folder).Where(path => !before.Contains(path)).Order().ToArray() : [];
+    // New files in the folder, plus the file Cimatron named in an out parameter (oOutputFileName) when it exists.
+    private static string[] Created(string folder, HashSet<string> before, object?[] outputs)
+    {
+        var created = Directory.Exists(folder)
+            ? Directory.GetFiles(folder).Where(path => !before.Contains(path)).ToList()
+            : [];
+        foreach (var named in outputs.OfType<string>().Where(text => !string.IsNullOrWhiteSpace(text)))
+        {
+            var path = Path.IsPathRooted(named) ? named : Path.Combine(folder, named);
+            if (File.Exists(path) && !created.Contains(path, StringComparer.OrdinalIgnoreCase)) created.Add(path);
+        }
 
-    private static object? Call(object target, string member, params object[] arguments)
+        return created.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static string Join(IEnumerable<double> values) => string.Join(", ", values.Select(value => value.ToString("G6", CultureInfo.InvariantCulture)));
+
+    private static string Join(IEnumerable<string> values)
+    {
+        var list = values.ToArray();
+        return list.Length == 0 ? "(none of the known interop interfaces)" : string.Join(", ", list);
+    }
+
+    private static object? Result((object? Result, object?[] Outputs) call) =>
+        call.Result ?? call.Outputs.LastOrDefault(value => value is not null);
+
+    private static object? Call(object target, string member, params object[] arguments) => Invoke(target, member, arguments).Result;
+
+    // Calls a member and returns its result with the values of its out parameters (binder) or none (IDispatch).
+    private static (object? Result, object?[] Outputs) Invoke(object target, string member, params object[] arguments)
     {
         try
         {
-            if (Binder is not null && Binder.TryInvoke(target, member, arguments, out var result, out _)) return result;
-            return target.GetType().InvokeMember(member, BindingFlags.InvokeMethod, null, target, arguments, CultureInfo.InvariantCulture);
+            if (Binder is not null && Binder.TryInvoke(target, member, arguments, out var result, out var outputs)) return (result, outputs);
+            return (target.GetType().InvokeMember(member, BindingFlags.InvokeMethod | BindingFlags.GetProperty, null, target, arguments, CultureInfo.InvariantCulture), []);
         }
-        catch (TargetInvocationException exception) when (exception.InnerException is COMException or InvalidCastException)
+        catch (TargetInvocationException exception) when (exception.InnerException is not null)
         {
-            throw Failed(member, exception.InnerException!);
+            throw Failed(member, exception.InnerException);
         }
-        catch (Exception exception) when (exception is COMException or InvalidCastException)
+        catch (Exception exception) when (exception is COMException or InvalidCastException or ArgumentException)
         {
             throw Failed(member, exception);
         }
@@ -432,7 +665,7 @@ internal sealed class CimatronComApi : ICimatronApi
         var elevated = OperatingSystem.IsWindows() && CimatronRunningApplication.Elevated;
         var hint = !registration ? ""
             : elevated
-                ? " The exporter runs as administrator: Windows ignores the per-user registration of --register-cimatron for administrator processes. Run it from a normal window (Win+R, cmd, Enter), or repair the Cimatron installation as an administrator."
+                ? " The exporter runs as administrator: Windows ignores a per-user registration of Cimatron's type libraries for administrator processes. Run --register-cimatron once from this administrator window (it then registers them for every user), or run the exporter from a normal window (Win+R, cmd, Enter)."
                 : " Cimatron's type libraries are not registered on this PC: run the exporter once with --register-cimatron (current user, no administrator), or repair the Cimatron installation.";
         return new CimatronApiException("cimatron_call_failed", $"Cimatron {member} failed: {exception.Message}{hint}", exception);
     }
@@ -441,15 +674,16 @@ internal sealed class CimatronComApi : ICimatronApi
     {
         try
         {
-            if (Binder is not null && Binder.TryInvoke(target, member, [], out var result, out _)) return result;
+            if (Binder is not null && Binder.TryInvoke(target, member, [], out var result, out var outputs)) return result ?? outputs.LastOrDefault(value => value is not null);
             return target.GetType().InvokeMember(member, BindingFlags.GetProperty | BindingFlags.InvokeMethod, null, target, null, CultureInfo.InvariantCulture);
         }
-        catch (Exception exception) when (exception is COMException or TargetInvocationException or MissingMethodException or InvalidCastException)
+        catch (Exception exception) when (exception is COMException or TargetInvocationException or MissingMethodException or InvalidCastException or ArgumentException)
         {
             return null;
         }
     }
 
+    // A .NET collection, a SAFEARRAY (any rank), or a COM list with Count and Item (0- or 1-based).
     private static IEnumerable<object> Enumerate(object? collection)
     {
         switch (collection)
@@ -465,18 +699,26 @@ internal sealed class CimatronComApi : ICimatronApi
         }
 
         var count = TryGetInt(collection, ["Count"]);
-        for (var index = 0; index < (count ?? 0); index++)
+        if (count is null or <= 0) yield break;
+        var first = Item(collection, 0);
+        var offset = first is null ? 1 : 0;
+        for (var index = 0; index < count; index++)
         {
-            object? item = null;
-            try
-            {
-                item = collection.GetType().InvokeMember("Item", BindingFlags.InvokeMethod | BindingFlags.GetProperty, null, collection, [index], CultureInfo.InvariantCulture);
-            }
-            catch (Exception exception) when (exception is COMException or TargetInvocationException or MissingMethodException)
-            {
-            }
-
+            var item = index == 0 && offset == 0 ? first : Item(collection, index + offset);
             if (item is not null) yield return item;
+        }
+    }
+
+    private static object? Item(object collection, int index)
+    {
+        try
+        {
+            if (Binder is not null && Binder.TryInvoke(collection, "Item", [index], out var result, out var outputs)) return result ?? outputs.LastOrDefault(value => value is not null);
+            return collection.GetType().InvokeMember("Item", BindingFlags.InvokeMethod | BindingFlags.GetProperty, null, collection, [index], CultureInfo.InvariantCulture);
+        }
+        catch (Exception exception) when (exception is COMException or TargetInvocationException or MissingMethodException or ArgumentException or InvalidCastException)
+        {
+            return null;
         }
     }
 
@@ -502,16 +744,6 @@ internal sealed class CimatronComApi : ICimatronApi
             var value = CallOrGet(target, member);
             if (value is not null && double.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
                 return number;
-        }
-
-        return null;
-    }
-
-    private static bool? TryGetBool(object target, IEnumerable<string> members)
-    {
-        foreach (var member in members.Where(member => HasMember(target, member)))
-        {
-            if (CallOrGet(target, member) is bool value) return value;
         }
 
         return null;

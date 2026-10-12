@@ -12,10 +12,14 @@ internal sealed record CimatronCapabilities(
     bool MultiStl,
     bool UcsTransform,
     bool GeometryInUcs,
-    bool ToolList)
+    bool ToolList,
+    bool Procedures = true,
+    bool UcsNames = true)
 {
     public IEnumerable<(string Name, bool Available)> All()
     {
+        yield return ("Procedure list", Procedures);
+        yield return ("UCS list", UcsNames);
         yield return ("PostByUcsToAllNcProcedures", PostByUcs);
         yield return ("ExecutePostToAllNcProcedures", PostToAll);
         yield return ("ExportCuttersAndHoldersToCSV", CuttersAndHoldersCsv);
@@ -31,6 +35,16 @@ internal sealed record CimatronCapabilities(
 }
 
 internal sealed record CimatronDocumentInfo(string Name, string? FilePath, string? PartNumber);
+
+/// <summary>
+/// The coordinate frame a stock export is written in: the NC procedure UCS (mode A, Cimatron <c>cmNcProcUcs</c>) or
+/// the part-model coordinates (mode B, <c>cmNcModelUcs</c>). It must be the frame the fixtures and the part are in.
+/// </summary>
+internal enum CimatronUcsFrame
+{
+    Procedure,
+    Model
+}
 
 internal sealed record CimatronProcedure(int Id, string Name, string? UcsName, bool HasToolpath, string? OperationName = null);
 
@@ -90,9 +104,10 @@ internal interface ICimatronApi : IDisposable
 
     void ExportJobsData(string xmlPath);
 
-    void ExportRemainingStock(int procedureId, string ucsName, string stlPath);
+    /// <summary>Writes the remaining stock after <paramref name="procedureId"/> as STL in <paramref name="frame"/>.</summary>
+    void ExportRemainingStock(int procedureId, CimatronUcsFrame frame, string stlPath);
 
-    void ExportInitialStock(string ucsName, string stlPath);
+    void ExportInitialStock(CimatronUcsFrame frame, string stlPath);
 
     /// <summary>Exports target, fixture and other parts to separate meshes in <paramref name="folder"/>.</summary>
     IReadOnlyList<CimatronGeometryFile> ExportPartGeometry(string ucsName, string folder);
