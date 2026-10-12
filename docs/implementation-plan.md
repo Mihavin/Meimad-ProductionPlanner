@@ -267,7 +267,17 @@ post also wrote `<document>.<toolpath>.<post>.Tools.html`; post reports are no l
 tool report becomes the package `toolReport`. Exporter 0.1.1 then posted `TP_MODEL` of a second document, but `nc/6000.EIA` was missing when the NC was read
 (`export_io_failed`): the file Cimatron names in its out parameter was recorded by file name only. Exporter 0.1.2 keeps
 its real path below `nc/`, searches subfolders for new files, and reports `post_output_missing` with the folder contents.
-Still to confirm on the CAM PC: where Cimatron writes the NC, and the layout check on a tilted active UCS.
+Exporter 0.1.2 then got `5999.EIA` and `6000.EIA` from one toolpath post (`nc_ambiguous`). Exporter 0.1.3 takes the
+program that calls the others as the main program and describes each program when they are unrelated.
+Still to confirm on the CAM PC: where Cimatron writes the NC, whether `6000.EIA` calls `5999.EIA`, and the layout check
+on a tilted active UCS.
+
+**Open decision (Proposed, 2026-10-12): subprograms in a simulation package.** The package manifest has one `files.nc`
+and no subprogram role, while a Mazak post can write a main program plus subprogram files. Until decided, the exporter
+lists the main program as `files.nc` and leaves the subprograms beside it under `nc/`, unlisted, so they are not hashed,
+validated or simulated (warning `nc_subprograms_unlisted`). The alternative is an `ncSubprograms` file list in the
+manifest schema, validator and NC viewer, matching the release subprogram files of schema v88. Reversible in
+`PackageExporter.ExportNc`; awaiting the owner's decision.
 
 **Open decision (Proposed, 2026-10-12): procedures with their own UCS.** The exporter definition (§6, §18) says the NC
 and the geometry share one "procedure UCS", the frame the post writes the NC in. In the Meimad 5-axis document probed on
@@ -277,7 +287,7 @@ post UCS (`--ucs`): procedures in other UCS give the warning `ucs_procedures_dif
 package stays blocked (`ucs_mismatch`) only with `ExecutePostToAllNcProcedures`, whose output frame is unknown. Reversible
 in `PackageExporter.ValidateState`; awaiting the owner's confirmation. Tests: `CimatronAccessorTests`,
 `CimatronBinderTests`, `CimatronExporterTests` (frame of the stock export, stock discovery); `SimulationPackages` suite
-87 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
+89 passed. The self-contained build is `installer\artifacts\cimatron-exporter.zip` (gitignored, rebuilt 2026-10-12).
 ## TV Dashboard part picture in every Machine row (2026-10-12, schema v118; implemented locally on branch ws/tv)
 
 **Owner request (2026-10-12, `nc-viewer-visualization-spec.md` "TV Dashboard: картинка детали в строке станка",

@@ -375,7 +375,10 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         string selected;
         if (options.NcFile is not null)
         {
-            selected = inside.FirstOrDefault(path => string.Equals(Path.GetFileName(path), options.NcFile, StringComparison.OrdinalIgnoreCase)) ?? "";
+            // By file name, or by its path below nc/ when two folders hold the same name.
+            var wanted = options.NcFile.Replace('\\', '/').TrimStart('/');
+            selected = inside.FirstOrDefault(path => string.Equals(Path.GetFileName(path), wanted, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(Path.GetRelativePath(folder, path).Replace('\\', '/'), wanted, StringComparison.OrdinalIgnoreCase)) ?? "";
             if (selected.Length == 0)
             {
                 log.Error("nc", "nc_file_not_found", $"The post did not write '{options.NcFile}'.");
@@ -384,8 +387,21 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         }
         else if (inside.Length > 1)
         {
-            log.Error("nc", "nc_ambiguous", "The post wrote several NC files; choose one with --nc-file: " + string.Join(", ", inside.Select(Path.GetFileName)));
-            return null;
+            // A main program with its subprograms is one program; unrelated programs need the user's choice.
+            var programs = inside.Select(NcProgramSet.Read).ToArray();
+            if (NcProgramSet.MainProgram(programs) is not { } main)
+            {
+                log.Error("nc", "nc_ambiguous", "The post wrote several NC programs that do not call each other; choose one with --nc-file: "
+                    + string.Join("; ", programs.Select(program => NcProgramSet.Describe(program, staging))));
+                return null;
+            }
+
+            selected = main.Path;
+            log.Warning("nc", "nc_subprograms_unlisted",
+                $"{NcProgramSet.Describe(main, staging)} calls "
+                + string.Join("; ", programs.Where(program => program != main).Select(program => NcProgramSet.Describe(program, staging)))
+                + ". The package carries one NC program, so the subprograms stay beside it but are not hashed, checked or simulated "
+                + "(open decision in the implementation plan).");
         }
         else
         {

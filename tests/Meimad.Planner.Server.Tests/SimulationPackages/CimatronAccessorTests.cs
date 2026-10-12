@@ -11,6 +11,40 @@ namespace Meimad.Planner.Server.Tests.SimulationPackages;
 public sealed class CimatronAccessorTests
 {
     [Fact]
+    public void Several_posted_programs_are_one_main_program_only_when_it_calls_the_others()
+    {
+        var folder = Directory.CreateTempSubdirectory("meimad-nc-set-").FullName;
+        try
+        {
+            string Write(string name, string text)
+            {
+                var path = Path.Combine(folder, name);
+                File.WriteAllText(path, text);
+                return path;
+            }
+
+            // Mazak EIA: 6000 calls 5999 by number; 5999 calls a named subprogram.
+            var main = NcProgramSet.Read(Write("6000.EIA", "%\nO6000(MAIN)\nT1M6\nM98 P5999\nM30\n%\n"));
+            var sub = NcProgramSet.Read(Write("5999.EIA", "%\nO5999\nT2M6\nG65 P<CORNER>\nM99\n%\n"));
+            var named = NcProgramSet.Read(Write("CORNER.EIA", "%\nO<CORNER>\nG1X0\nM99\n%\n"));
+            Assert.Equal("6000", main.Number);
+            Assert.Equal(["5999"], main.Calls);
+            Assert.Equal([1], main.Tools);
+            Assert.Same(main, NcProgramSet.MainProgram([sub, named, main]));
+            Assert.Contains("calls 5999", NcProgramSet.Describe(main, folder));
+
+            // Two programs that do not call each other, and a file the main program does not reach: the user chooses.
+            var other = NcProgramSet.Read(Write("6001.EIA", "%\nO6001\nT3M6\nM30\n%\n"));
+            Assert.Null(NcProgramSet.MainProgram([main, other]));
+            Assert.Null(NcProgramSet.MainProgram([main, sub, named, other]));
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    [Fact]
     public void Process_manager_xml_gives_procedures_with_ids_names_ucs_and_operation()
     {
         const string xml = """

@@ -249,6 +249,18 @@ public sealed class CimatronExporterTests : IDisposable
     }
 
     [Fact]
+    public void A_main_program_with_its_subprogram_is_exported_without_a_choice()
+    {
+        using var api = new FakeCimatronApi { WritesSubprogram = true };
+        var result = Run(api, Options());
+        Assert.True(result.Complete, result.Log.ToReport());
+        Assert.Contains(result.Log.Entries, entry => entry.Code == "nc_subprograms_unlisted" && entry.Message.Contains("5999.EIA"));
+        var manifest = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(result.PackagePath!, "manifest.json")));
+        Assert.Equal("nc/O1001.nc", manifest.GetProperty("files").GetProperty("nc").GetProperty("path").GetString());
+        Assert.True(File.Exists(Path.Combine(result.PackagePath!, "nc", "5999.EIA")));
+    }
+
+    [Fact]
     public void An_nc_file_posted_into_a_subfolder_keeps_its_folder_in_the_package()
     {
         using var api = new FakeCimatronApi { NcSubfolder = "TP_MODEL", WritesPostReports = true };
@@ -433,6 +445,7 @@ internal sealed class FakeCimatronApi : ICimatronApi
     public bool ExtraNcFile { get; init; }
     public bool WritesPostReports { get; init; }
     public string? NcSubfolder { get; init; }
+    public bool WritesSubprogram { get; init; }
     public IReadOnlyList<string> UcsNames { get; init; } = ["UCS_OP010", "UCS_OP020"];
     public IReadOnlyList<double>? UcsMatrix { get; init; }
     public int FixtureCount { get; set; } = 2;
@@ -493,6 +506,16 @@ internal sealed class FakeCimatronApi : ICimatronApi
             var setup = Path.Combine(folder, "PART_NC1.TP_MODEL_0.Setup.pdf");
             File.WriteAllText(setup, "%PDF-1.4");
             return [path, tools, setup];
+        }
+        if (WritesSubprogram)
+        {
+            // The main program calls 5999, which the post writes as its own file.
+            var text = System.Text.Encoding.Latin1.GetString(NcBytes);
+            var end = text.LastIndexOf("M30", StringComparison.Ordinal);
+            File.WriteAllText(path, text[..end] + "M98 P5999\r\n" + text[end..], System.Text.Encoding.Latin1);
+            var subprogram = Path.Combine(ncFolder, "5999.EIA");
+            File.WriteAllText(subprogram, "%\r\nO5999\r\nG1 X0 Y0\r\nM99\r\n%\r\n");
+            return [subprogram, path];
         }
         if (!ExtraNcFile) return [path];
         var extra = Path.Combine(folder, "O1001_SUB.nc");
