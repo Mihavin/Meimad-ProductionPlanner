@@ -326,6 +326,41 @@ internal interface IPlannerApiClient : IDisposable
     Task<CaseResource> DeleteCasePictureAsync(string caseId, string entityTag, string clientId, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    /// <summary>The thumbnails of a Case Operation (Server schema v118) and which picture the TV Dashboard shows for it.</summary>
+    Task<OperationThumbnailList> ListOperationThumbnailsAsync(string caseId, string caseOperationId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    /// <summary>The stored image of one thumbnail slot, or null when the slot is empty.</summary>
+    Task<byte[]?> GetOperationThumbnailImageAsync(string caseId, string caseOperationId, string source, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    /// <summary>
+    /// Stores <paramref name="bytes"/> (PNG, JPEG, BMP or GIF, at most 10 MB) in the Operation's <paramref name="source"/> slot
+    /// (<see cref="OperationThumbnailSources"/>): <paramref name="entityTag"/> null adds it to an empty slot, otherwise it
+    /// replaces the version the tag names. <paramref name="sourceReference"/> records where the picture came from.
+    /// Needs the cases.edit permission; a change based on an older version fails with resource_version_stale.
+    /// </summary>
+    Task<OperationThumbnailInfo> UploadOperationThumbnailAsync(
+        string caseId, string caseOperationId, string source, string fileName, byte[] bytes, string? entityTag, string clientId,
+        string? sourceReference = null, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    Task DeleteOperationThumbnailAsync(string caseId, string caseOperationId, string source, string entityTag, string clientId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    /// <summary>
+    /// Puts <paramref name="bytes"/> in the Operation's <paramref name="source"/> slot whether or not it holds a picture
+    /// (reads the current version first). This is the call for importers, for example the Cimatron simulation package
+    /// import storing its finished-part PNG: <c>SetOperationThumbnailAsync(caseId, caseOperationId,
+    /// OperationThumbnailSources.Package, "finished-part.png", png, clientId, packagePath)</c>.
+    /// </summary>
+    async Task<OperationThumbnailInfo> SetOperationThumbnailAsync(
+        string caseId, string caseOperationId, string source, string fileName, byte[] bytes, string clientId,
+        string? sourceReference = null, CancellationToken cancellationToken = default)
+    {
+        var current = (await ListOperationThumbnailsAsync(caseId, caseOperationId, cancellationToken)).Items
+            .FirstOrDefault(item => string.Equals(item.Source, source, StringComparison.Ordinal));
+        return await UploadOperationThumbnailAsync(caseId, caseOperationId, source, fileName, bytes, current?.EntityTag,
+            clientId, sourceReference, cancellationToken);
+    }
+
     Task<PlannerMachine> CreateMachineAsync(
         MachineCreate create,
         string clientId,
@@ -1541,6 +1576,46 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         using var response = await httpClient.SendAsync(request, cancellationToken);
         var value = await ReadSuccessAsync<PlannerCase>(response, cancellationToken);
         return new CaseResource(value, RequiredEntityTag(response));
+    }
+
+    private static string OperationThumbnailsPath(string caseId, string caseOperationId) =>
+        $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(caseOperationId)}/thumbnails";
+
+    public async Task<OperationThumbnailList> ListOperationThumbnailsAsync(
+        string caseId, string caseOperationId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(OperationThumbnailsPath(caseId, caseOperationId), cancellationToken);
+        return await ReadSuccessAsync<OperationThumbnailList>(response, cancellationToken);
+    }
+
+    public Task<byte[]?> GetOperationThumbnailImageAsync(
+        string caseId, string caseOperationId, string source, CancellationToken cancellationToken = default) =>
+        GetValidatedFileAsync($"{OperationThumbnailsPath(caseId, caseOperationId)}/{Uri.EscapeDataString(source)}/image", cancellationToken);
+
+    public async Task<OperationThumbnailInfo> UploadOperationThumbnailAsync(
+        string caseId, string caseOperationId, string source, string fileName, byte[] bytes, string? entityTag, string clientId,
+        string? sourceReference = null, CancellationToken cancellationToken = default)
+    {
+        var reference = string.IsNullOrWhiteSpace(sourceReference) ? string.Empty : "&reference=" + Uri.EscapeDataString(sourceReference);
+        using var request = CreateRequest(HttpMethod.Put,
+            $"{OperationThumbnailsPath(caseId, caseOperationId)}/{Uri.EscapeDataString(source)}?name={Uri.EscapeDataString(Path.GetFileName(fileName))}{reference}",
+            clientId);
+        if (entityTag is null) request.Headers.TryAddWithoutValidation("If-None-Match", "*");
+        else request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Content = new ByteArrayContent(bytes);
+        request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<OperationThumbnailInfo>(response, cancellationToken);
+    }
+
+    public async Task DeleteOperationThumbnailAsync(
+        string caseId, string caseOperationId, string source, string entityTag, string clientId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Delete,
+            $"{OperationThumbnailsPath(caseId, caseOperationId)}/{Uri.EscapeDataString(source)}", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
     }
 
     public async Task<CaseResource> UpdateCaseAsync(

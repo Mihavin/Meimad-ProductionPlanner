@@ -77,6 +77,40 @@ internal sealed record CasePictureInfo(
     DateTimeOffset CreatedAt,
     string? CreatedBy);
 
+/// <summary>
+/// The kinds of Case Operation thumbnail (Server schema v118), after the Case picture in the TV Dashboard's order:
+/// <see cref="Package"/> is the finished-part picture of a Cimatron simulation package, <see cref="Snapshot"/> a
+/// screenshot or preview uploaded from the Case Workspace or the NC viewer.
+/// </summary>
+internal static class OperationThumbnailSources
+{
+    internal const string Package = "package";
+    internal const string Snapshot = "snapshot";
+}
+
+/// <summary>A Case Operation thumbnail stored on the Server (schema v118); <see cref="EntityTag"/> replaces or removes it.</summary>
+internal sealed record OperationThumbnailInfo(
+    string CaseOperationId,
+    string Source,
+    string FileName,
+    string MediaType,
+    long SizeBytes,
+    string Sha256,
+    string? SourceReference,
+    int Version,
+    string EntityTag,
+    DateTimeOffset UpdatedAt,
+    string? UpdatedBy);
+
+/// <summary>
+/// The thumbnails of a Case Operation and the picture the TV Dashboard shows for it: <c>case_picture</c>,
+/// <c>package</c>, <c>snapshot</c> or <c>placeholder</c>.
+/// </summary>
+internal sealed record OperationThumbnailList(
+    string CaseOperationId,
+    string TvSource,
+    IReadOnlyList<OperationThumbnailInfo> Items);
+
 /// <summary>A CAD file (STEP part model, STL stock, fixture, ...) linked to a Case by path.</summary>
 internal sealed record CaseModelFile(
     string CaseModelFileId,

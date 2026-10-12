@@ -674,6 +674,55 @@ public partial class CaseWorkspaceView : UserControl
         _ = viewModel.UploadPictureAsync(bytes, Path.GetFileName(dialog.FileName));
     }
 
+    // The TV Dashboard picture of the selected Operation: an image file becomes its snapshot on the Server.
+    private void ChooseOperationThumbnail_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel || !viewModel.TvPicture.CanEdit) return;
+        var dialog = new OpenFileDialog
+        {
+            Title = "Select the TV picture of the Operation",
+            Filter = "Image files|*.png;*.jpg;*.jpeg;*.bmp;*.gif|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        }.Localized();
+        if (viewModel.CaseBrowseStartFolder() is { } start) dialog.InitialDirectory = start;
+        if (dialog.ShowDialog() != true) return;
+        byte[] bytes;
+        try
+        {
+            bytes = File.ReadAllBytes(dialog.FileName);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            LocalizedMessageBox.Show(exception.Message, "TV picture", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        _ = viewModel.TvPicture.UploadSnapshotAsync(bytes, Path.GetFileName(dialog.FileName), dialog.FileName);
+    }
+
+    // The current view of the 3D Models tab becomes the Operation's snapshot (nothing is written to the Working Folder).
+    private void SnapshotOperationThumbnail_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel || !viewModel.TvPicture.CanEdit) return;
+        if (!StepViewer.HasModel)
+        {
+            LocalizedMessageBox.Show("Open the part model in the 3D Models tab first.", "TV picture", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var safePartNumber = string.Concat((viewModel.PartNumber ?? "case")
+            .Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
+        try
+        {
+            var png = StepViewer.SnapshotPng();
+            var operation = viewModel.SelectedOperation?.OperationNumber.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "op";
+            _ = viewModel.TvPicture.UploadSnapshotAsync(png, $"{safePartNumber}-op{operation}-tv.png", "3D view snapshot");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            LocalizedMessageBox.Show(exception.Message, "TV picture", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private void RemovePicture_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is CaseWorkspaceViewModel viewModel
