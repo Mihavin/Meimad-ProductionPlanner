@@ -1,3 +1,6 @@
+using Meimad.Planner.Client.Windows.Presentation.CimatronImport;
+using System.Globalization;
+using System.Diagnostics;
 using System.ComponentModel;
 using System.IO;
 using System.Threading;
@@ -298,6 +301,77 @@ public partial class CaseWorkspaceView : UserControl
     }
 
     private async void ImportCimatronFiles_Click(object sender, RoutedEventArgs e) => await AddCimatronFilesAsync(null);
+
+    /// <summary>
+    /// Import from Cimatron (specification of 2026-10-13): one window reads the active Cimatron document, offers its CAM
+    /// operations by setup and imports the chosen ones into this Operation; Open simulation then opens the program.
+    /// </summary>
+    private async void ImportFromCimatron_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel) return;
+        try
+        {
+            var context = viewModel.CreateCimatronImportContext();
+            if (context is null)
+            {
+                LocalizedMessageBox.Show(Window.GetWindow(this), "Select an Operation, with an account that may edit Cases, to import from Cimatron.",
+                    "Import from Cimatron", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var model = new CimatronImportViewModel(context, new CimatronBridgeProcess());
+            var window = CimatronImportWindow.Show(Window.GetWindow(this), model);
+            if (model.Imported is { } imported) await SavePartThumbnailAsync(viewModel, imported);
+            if (window.OpenSimulationRequested && model.ImportedProgram is not null) await OpenNcEditorAsync(editSelectedFile: true);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            LocalizedMessageBox.Show(Window.GetWindow(this), exception.Message, "Import from Cimatron", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    /// <summary>Opens the saved CAM file of the Operation in Cimatron (the file is opened, never changed).</summary>
+    private void OpenInCimatron_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel || viewModel.CamSetup.CamSource is not { } source) return;
+        if (!source.Shared && source.SourceHost is { } host && !string.Equals(host, Environment.MachineName, StringComparison.OrdinalIgnoreCase))
+        {
+            LocalizedMessageBox.Show(Window.GetWindow(this),
+                string.Format(CultureInfo.InvariantCulture, "The CAM file is on a local disk of {0} ({1}); open it on that PC, or save it to the shared folder and import again.", host, source.DocumentPath),
+                "Open in Cimatron", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!File.Exists(source.DocumentPath))
+        {
+            LocalizedMessageBox.Show(Window.GetWindow(this),
+                string.Format(CultureInfo.InvariantCulture, "The CAM file {0} cannot be found from this PC.", source.DocumentPath),
+                "Open in Cimatron", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        try
+        {
+            using var _ = Process.Start(new ProcessStartInfo(source.DocumentPath) { UseShellExecute = true });
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            LocalizedMessageBox.Show(Window.GetWindow(this), exception.Message, "Open in Cimatron", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    /// <summary>Opens the imported Meimad-format program with the Operation's stock, fixtures and part in the NC viewer.</summary>
+    private async void OpenCimatronSimulation_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel || viewModel.CamSetup.CamSource is not { } source) return;
+        if (source.PackagePath is { } package && source.NcFileName is { } ncFile
+            && Path.GetDirectoryName(package) is { } dataset && File.Exists(Path.Combine(dataset, ncFile)))
+        {
+            viewModel.GCodeFilePath = Path.Combine(dataset, ncFile);
+        }
+
+        await OpenNcEditorAsync(editSelectedFile: !string.IsNullOrWhiteSpace(viewModel.GCodeFilePath) && File.Exists(viewModel.GCodeFilePath));
+    }
 
     private async void AddCimatronFixture_Click(object sender, RoutedEventArgs e) => await AddCimatronFilesAsync("fixture");
 

@@ -123,7 +123,8 @@ internal sealed class DatabaseMigrator
         new SchemaV115CasePicturesMigration(),
         new SchemaV116MachineWorkOffsetsMigration(),
         new SchemaV117SimulationPackagesMigration(),
-        new SchemaV118OperationThumbnailsMigration()
+        new SchemaV118OperationThumbnailsMigration(),
+        new SchemaV119OperationCamSourcesMigration()
     ];
 
     internal static int LatestVersion => Migrations.Max(m => m.Version);

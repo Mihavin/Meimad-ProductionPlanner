@@ -111,6 +111,74 @@ public sealed class SimulationPackageApiTests : IDisposable
     }
 
     [Fact]
+    public async Task Import_from_cimatron_saves_the_cam_source_and_checks_the_operation_and_the_postprocessor()
+    {
+        await RunAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            await ScalarAsync(application.Services, "UPDATE case_operations SET required_machine_type = 'mill' WHERE id = 'case-op-10';");
+            var package = golden.Copy("3-axis");
+            void FromClient(string operationId, string post) => GoldenPackages.EditManifest(package, manifest =>
+            {
+                var source = manifest["source"]!.AsObject();
+                source["documentPath"] = @"C:\Cimatron\GOLDEN-PART_NC1.elt";
+                source["documentId"] = "PID-7";
+                source["setup"] = "NC_Setup";
+                source["operations"] = JsonNode.Parse("""[{"kind":"toolpath","id":4,"name":"TP_MODEL"},{"kind":"procedure","id":17,"name":"FINISH","toolpath":"TP_MODEL_0"}]""");
+                manifest["meimad"] = JsonNode.Parse($$"""{"importId":"client-import-1","caseId":"case-1","caseOperationId":"{{operationId}}","basedOnVersion":"0"}""");
+                manifest["machine"]!["postprocessor"] = post;
+            }, rehash: true);
+
+            using (var none = await client.GetAsync("/api/v1/cases/case-1/operations/case-op-10/cam-source"))
+                await AssertErrorAsync(none, HttpStatusCode.NotFound, "resource_not_found");
+
+            // Made for Operation 10: imported into Operation 20 it is refused.
+            FromClient("case-op-10", "HAAS_NGC_VF3");
+            using (var elsewhere = await ImportAsync(client, Op20, package, 0))
+                await AssertBlockedAsync(elsewhere, "import_context_mismatch");
+
+            // A postprocessor that is not an active Meimad postprocessor, or that no Machine of the Operation's type supports.
+            FromClient("case-op-10", "CIMATRON_UNKNOWN_POST");
+            using (var unknown = await ImportAsync(client, Op10, package, 0))
+                await AssertBlockedAsync(unknown, "postprocessor_not_allowed");
+            await ScalarAsync(application.Services, "UPDATE case_operations SET required_machine_type = 'lathe' WHERE id = 'case-op-10';");
+            FromClient("case-op-10", "HAAS_NGC_VF3");
+            using (var wrongType = await ImportAsync(client, Op10, package, 0))
+                await AssertBlockedAsync(wrongType, "postprocessor_not_allowed");
+            Assert.Equal(0L, await ScalarAsync(application.Services, "SELECT COUNT(*) FROM case_operation_cam_sources;"));
+
+            await ScalarAsync(application.Services, "UPDATE case_operations SET required_machine_type = 'mill' WHERE id = 'case-op-10';");
+            using var imported = await ImportAsync(client, Op10, package, 0);
+            var importId = (await AssertStatusAsync(imported, HttpStatusCode.Created)).GetProperty("import").GetProperty("importId").GetString();
+
+            using var read = await client.GetAsync("/api/v1/cases/case-1/operations/case-op-10/cam-source");
+            var source = await AssertStatusAsync(read, HttpStatusCode.OK);
+            Assert.Equal(@"C:\Cimatron\GOLDEN-PART_NC1.elt", source.GetProperty("documentPath").GetString());
+            Assert.False(source.GetProperty("shared").GetBoolean()); // a local path opens only on the CAM PC
+            Assert.Equal(("PID-7", "NC_Setup", "HAAS_NGC_VF3"),
+                (source.GetProperty("documentId").GetString(), source.GetProperty("setup").GetString(), source.GetProperty("postprocessor").GetString()));
+            Assert.Equal(new[] { "toolpath:4", "procedure:17" },
+                source.GetProperty("operations").EnumerateArray().Select(item => $"{item.GetProperty("kind").GetString()}:{item.GetProperty("id").GetInt32()}"));
+            Assert.Equal(("client-import-1", importId, 1), (source.GetProperty("clientImportId").GetString(),
+                source.GetProperty("simulationPackageImportId").GetString(), source.GetProperty("version").GetInt32()));
+            Assert.Equal(package, source.GetProperty("packagePath").GetString());
+
+            // Another case of the same Operation id is not this Operation's source.
+            using (var otherCase = await client.GetAsync("/api/v1/cases/case-2/operations/case-op-10/cam-source"))
+                await AssertErrorAsync(otherCase, HttpStatusCode.NotFound, "resource_not_found");
+
+            // A re-import replaces the source (new version); the same manifest again changes nothing.
+            GoldenPackages.EditManifest(package, manifest => manifest["source"]!["setup"] = "NC_Setup_2", rehash: true);
+            using var again = await ImportAsync(client, Op10, package, 1, importId);
+            await AssertStatusAsync(again, HttpStatusCode.Created);
+            using var retry = await ImportAsync(client, Op10, package, 2,
+                (string?)await ScalarAsync(application.Services, "SELECT simulation_package_import_id FROM case_operation_cam_sources;"));
+            Assert.Equal("already_imported", (await AssertStatusAsync(retry, HttpStatusCode.OK)).GetProperty("outcome").GetString());
+            Assert.Equal("NC_Setup_2|2", await ScalarAsync(application.Services, "SELECT setup_name || '|' || version FROM case_operation_cam_sources;"));
+        });
+    }
+
+    [Fact]
     public async Task Stale_cam_setup_version_is_refused_with_who_and_when()
     {
         await RunAsync(async (application, client) =>

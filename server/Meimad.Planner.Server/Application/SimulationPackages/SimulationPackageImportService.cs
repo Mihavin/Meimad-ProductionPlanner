@@ -146,6 +146,29 @@ internal sealed class SimulationPackageImportService(
         if (operation is null)
             return await BlockAsync(request, validation, diagnostics, [], null, null, packageCase.CaseId, null, recordBlocked, cancellationToken);
 
+        // A package made by Import from Cimatron names its Case Operation and was posted with a Meimad postprocessor
+        // (specification of 2026-10-13, §10): another Operation, an unknown postprocessor or one no Machine of the
+        // Operation's machine type supports stops the import. The postprocessor is never replaced.
+        if (manifest.Meimad is { } context)
+        {
+            if ((context.CaseOperationId is { } contextOperation && contextOperation != operation.CaseOperationId)
+                || (context.CaseId is { } contextCase && contextCase != packageCase.CaseId))
+            {
+                diagnostics.Add(PackageDiagnostic.Error(ImportContextMismatch,
+                    "The package was made for another Meimad Case Operation; import it from that Operation or export it again.",
+                    ("packageCaseOperationId", context.CaseOperationId), ("caseOperationId", operation.CaseOperationId)));
+            }
+
+            if (!string.IsNullOrWhiteSpace(manifest.Machine?.Postprocessor)
+                && await repository.CheckPostprocessorAsync(manifest.Machine.Postprocessor.Trim(), operation.CaseOperationId, cancellationToken) is { } refusal)
+            {
+                diagnostics.Add(PackageDiagnostic.Error(PostprocessorNotAllowed, refusal, ("postprocessor", manifest.Machine.Postprocessor)));
+            }
+
+            if (diagnostics.Any(item => item.Severity == DiagnosticSeverity.Error))
+                return await BlockAsync(request, validation, diagnostics, [], null, null, packageCase.CaseId, operation.CaseOperationId, recordBlocked, cancellationToken);
+        }
+
         var existing = await repository.FindActiveAsync(operation.CaseOperationId, validation.ManifestSha256!, cancellationToken);
         if (existing is not null)
         {

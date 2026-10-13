@@ -251,7 +251,12 @@ Authentication, authorization roles, and audit requirements for people are not d
   UCS, with a versioned manifest, SHA-256 of every file and the exporter and Cimatron versions. `COMPLETE` is written
   last; a package without it is never read. The package is written next to the Operation's NC programs in the Case
   Working Folder (`Gcode\<Case>\<Operation>\cimatron-export`). In Case → Operations the *Cimatron setup* card's
-  **Import Cimatron package…** imports it; the Server checks the package (approved folders only, relative paths, sizes,
+  **Import from Cimatron** (2026-10-13) does this from the Operation itself: the client runs the exporter installed with
+  it against the active Cimatron document, the user chooses CAM operations of one setup and the postprocessor (only those
+  a Machine of the Operation's machine type supports), the data set goes into a new folder of the Operation's G-code
+  structure with the NC converted to the Meimad format by the Server's formatter, and the package import below registers
+  it and saves the CAM source (file path and CAM operations by Cimatron id) for **Open in Cimatron**, **Open simulation**
+  and re-import; **Import Cimatron package…** imports it; the Server checks the package (approved folders only, relative paths, sizes,
   hashes, readable STL/STEP, an NC header, every NC tool in the tool table, known units, a UCS) and either imports it or
   shows a report of blocking errors and warnings with stable codes. An import links the stock, the fixtures and the
   finished part to the Operation and sets its Work CS from the package (identity at the work offset when the geometry is

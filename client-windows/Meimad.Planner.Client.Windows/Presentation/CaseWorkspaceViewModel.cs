@@ -215,6 +215,24 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     /// <summary>The Cimatron setup (Work CS, fixtures, rest material) of the selected Operation.</summary>
     public OperationCamSetupViewModel CamSetup { get; } = new();
 
+    /// <summary>
+    /// What Import from Cimatron needs for the selected Operation (null without one, or without an editing session): the
+    /// card's package import registers the data set, and the Release G-code form receives the Meimad-format program.
+    /// </summary>
+    internal CimatronImport.CimatronImportContext? CreateCimatronImportContext()
+    {
+        if (apiClient is null || !isEditor || SelectedCase is null || SelectedOperation is null) return null;
+        var plannerCase = SelectedCase;
+        return new CimatronImport.CimatronImportContext(
+            apiClient,
+            plannerCase.CaseId,
+            string.IsNullOrWhiteSpace(Name) ? plannerCase.PartNumber : Name,
+            plannerCase.PartNumber,
+            SelectedOperation,
+            (folder, choices) => CamSetup.ImportPackageAsync(folder, choices),
+            path => GCodeFilePath = path);
+    }
+
     /// <summary>The TV Dashboard picture of the selected Operation (Server schema v118).</summary>
     public OperationThumbnailViewModel TvPicture { get; } = new();
 

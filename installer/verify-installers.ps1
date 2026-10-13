@@ -213,7 +213,9 @@ try {
         'nc-engine\machines\haas-umc-500.json',
         'nc-engine\CNC-PARA.TXT',
         'ClearScriptV8.win-x64.dll',
-        'WebView2Loader.dll')
+        'WebView2Loader.dll',
+        'cimatron-exporter\Meimad.CimatronExporter.exe',
+        'cimatron-exporter\Meimad.CimatronExporter.dll')
     Assert-PayloadFiles -Root $serverTarget -Label "Packaged Server" -RelativeSuffixes @(
         'nc-engine\meimad\bootstrap.js',
         'nc-engine\meimad\meimad-nc-engine.js',

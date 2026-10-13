@@ -14,6 +14,30 @@ namespace Meimad.Planner.Server.Persistence;
 internal sealed record SimulationPackageLink(string RelativePath, string Kind, string Format, string AbsolutePath, string Label);
 
 /// <summary>Everything one import writes, applied in one immediate transaction.</summary>
+/// <summary>
+/// The CAM source of a Case Operation: the Cimatron document and CAM operations of its last Import from Cimatron.
+/// <see cref="Shared"/> is false for a local path, which opens only on <see cref="SourceHost"/>.
+/// </summary>
+internal sealed record OperationCamSource(
+    string CaseOperationId,
+    string Application,
+    string DocumentPath,
+    bool Shared,
+    string? DocumentName,
+    string? DocumentId,
+    string? Setup,
+    IReadOnlyList<CamOperationReference> Operations,
+    string? Postprocessor,
+    string? ClientImportId,
+    string SimulationPackageImportId,
+    string? SourceHost,
+    DateTimeOffset ImportedAt,
+    string? ImportedBy,
+    int Version,
+    string? PackagePath,
+    string? NcFileName,
+    string PackageStatus);
+
 internal sealed record SimulationPackageApplyCommand(
     string ImportId,
     string CaseId,
@@ -107,6 +131,72 @@ internal sealed class SqliteSimulationPackageRepository(SqliteDatabase database)
 
         return result;
     }
+
+    /// <summary>
+    /// Null when <paramref name="postprocessor"/> is an active Meimad postprocessor that a Machine of the Operation's
+    /// required machine type supports (any active postprocessor when the Operation names no machine type); else why not.
+    /// </summary>
+    internal async Task<string?> CheckPostprocessorAsync(string postprocessor, string caseOperationId, CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id FROM postprocessors WHERE name = $name COLLATE NOCASE AND is_active = 1;";
+        command.Parameters.AddWithValue("$name", postprocessor);
+        if (await command.ExecuteScalarAsync(cancellationToken) is not string postprocessorId)
+            return $"The postprocessor '{postprocessor}' is not an active Meimad postprocessor; add it in Setup → Postprocessors with the Cimatron post name.";
+
+        command.Parameters.Clear();
+        command.CommandText = "SELECT required_machine_type FROM case_operations WHERE id = $op;";
+        command.Parameters.AddWithValue("$op", caseOperationId);
+        if (await command.ExecuteScalarAsync(cancellationToken) is not string machineType || string.IsNullOrWhiteSpace(machineType)) return null;
+
+        command.Parameters.Clear();
+        command.CommandText = """
+            SELECT COUNT(*) FROM machine_supported_postprocessors s
+            JOIN machines m ON m.id = s.machine_id
+            LEFT JOIN machine_types t ON t.id = m.machine_type_id
+            WHERE s.postprocessor_id = $post AND m.is_active = 1
+              AND (m.machine_type = $type COLLATE NOCASE OR t.name = $type COLLATE NOCASE);
+            """;
+        command.Parameters.AddWithValue("$post", postprocessorId);
+        command.Parameters.AddWithValue("$type", machineType.Trim());
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) > 0
+            ? null
+            : $"No Machine of the Operation's machine type '{machineType.Trim()}' supports the postprocessor '{postprocessor}'.";
+    }
+
+    /// <summary>The Operation's CAM source (the Cimatron document of its last Import from Cimatron), or null.</summary>
+    internal async Task<OperationCamSource?> ReadCamSourceAsync(string caseId, string caseOperationId, CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, null, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT s.application, s.document_path, s.document_name, s.document_id, s.setup_name, s.operations_json,
+                   s.postprocessor, s.client_import_id, s.simulation_package_import_id, s.source_host, s.imported_at,
+                   s.imported_by, s.version, i.package_path, i.nc_file_name, i.status
+            FROM case_operation_cam_sources s
+            JOIN case_operations o ON o.id = s.case_operation_id
+            JOIN simulation_package_imports i ON i.id = s.simulation_package_import_id
+            WHERE s.case_operation_id = $op AND o.case_id = $case;
+            """;
+        command.Parameters.AddWithValue("$op", caseOperationId);
+        command.Parameters.AddWithValue("$case", caseId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        string? Text(int index) => reader.IsDBNull(index) ? null : reader.GetString(index);
+        var stored = reader.GetString(1);
+        var absolute = paths.ToAbsolute(stored) ?? stored;
+        var operations = JsonSerializer.Deserialize<IReadOnlyList<CamOperationReference>>(reader.GetString(5), ManifestJson.Options) ?? [];
+        return new OperationCamSource(
+            caseOperationId, reader.GetString(0), absolute, IsSharedPath(stored, absolute), Text(2), Text(3), Text(4), operations, Text(6), Text(7),
+            reader.GetString(8), Text(9), DateTimeOffset.Parse(reader.GetString(10), CultureInfo.InvariantCulture), Text(11), reader.GetInt32(12),
+            Text(13) is { } package ? paths.ToAbsolute(package) ?? package : null, Text(14), reader.GetString(15));
+    }
+
+    // A path other workstations can open: stored relative to the network root, or a UNC path.
+    private static bool IsSharedPath(string stored, string absolute) =>
+        !Path.IsPathFullyQualified(stored) || absolute.StartsWith(@"\", StringComparison.Ordinal);
 
     internal async Task<IReadOnlyList<SimulationPackageOperation>> ListOperationsAsync(string caseId, CancellationToken cancellationToken)
     {
@@ -476,6 +566,31 @@ internal sealed class SqliteSimulationPackageRepository(SqliteDatabase database)
                 ("$size", file.SizeBytes), ("$kind", file.StockKind), ("$source", file.SourceOperation), ("$name", file.Name),
                 ("$collision", file.Collision is null ? null : file.Collision.Value ? 1 : 0), ("$selected", file.Selected ? 1 : 0),
                 ("$link", linkIds.GetValueOrDefault(file.RelativePath)));
+        }
+
+        // The CAM source the Operation's data set came from (Import from Cimatron): replaced with each import that names it.
+        if (!string.IsNullOrWhiteSpace(manifest.Source?.DocumentPath))
+        {
+            await ExecuteAsync(connection, transaction, """
+                INSERT INTO case_operation_cam_sources (case_operation_id, application, document_path, document_name, document_id,
+                    setup_name, operations_json, postprocessor, client_import_id, simulation_package_import_id, source_host,
+                    imported_at, imported_by, version)
+                VALUES ($op, 'cimatron', $path, $name, $documentId, $setup, $operations, $post, $clientImport, $import, $host,
+                    $now, $actor, 1)
+                ON CONFLICT (case_operation_id) DO UPDATE SET
+                    application = excluded.application, document_path = excluded.document_path,
+                    document_name = excluded.document_name, document_id = excluded.document_id,
+                    setup_name = excluded.setup_name, operations_json = excluded.operations_json,
+                    postprocessor = excluded.postprocessor, client_import_id = excluded.client_import_id,
+                    simulation_package_import_id = excluded.simulation_package_import_id, source_host = excluded.source_host,
+                    imported_at = excluded.imported_at, imported_by = excluded.imported_by,
+                    version = case_operation_cam_sources.version + 1;
+                """, cancellationToken,
+                ("$op", command.CaseOperationId), ("$path", paths.ToStored(manifest.Source.DocumentPath) ?? manifest.Source.DocumentPath),
+                ("$name", manifest.Source.Project), ("$documentId", manifest.Source.DocumentId), ("$setup", manifest.Source.Setup),
+                ("$operations", JsonSerializer.Serialize(manifest.Source.Operations ?? [], ManifestJson.Options)),
+                ("$post", manifest.Machine?.Postprocessor), ("$clientImport", manifest.Meimad?.ImportId), ("$import", command.ImportId),
+                ("$host", manifest.Source.Host), ("$now", now), ("$actor", command.Actor));
         }
 
         var values = command.WorkCs;

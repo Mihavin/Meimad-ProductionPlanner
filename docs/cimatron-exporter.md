@@ -97,6 +97,25 @@ network folder the Server reads, and the Server refuses packages outside its app
 
 ## Launch without manual steps
 
+## Import from Cimatron in the Meimad client (exporter 0.3.0, 2026-10-13)
+
+The Meimad Windows client installs the exporter below its own folder (`cimatron-exporter\`, published self-contained by
+`installer\build-installers.ps1` and checked by `verify-installers.ps1`) and runs it as a hidden helper process from
+**Import from Cimatron** on a Case Operation (user help; API contract "Import from Cimatron"). The user never installs or
+starts it separately; a PC without Cimatron shows the exporter's answer (`cimatron_not_available`) in the import window.
+
+- `--list-json --result <file>`: the active NC document (name, path, `PID`, unsaved state from `ICimDocument.IsModified`),
+  its setups with toolpaths and procedures by Cimatron id, the UCS names; the answer is a UTF-8 JSON file.
+- `--export-json <request> --result <file>`: exports the CAM operations chosen by id. Whole toolpaths post as their
+  process-manager node, other procedures one by one, all with `PostByUcsByIdVec`; they must belong to one setup, whose
+  stock procedure gives the stock. The request names the document the choice was made in (`document_changed` when
+  another one is active) and requires a saved document (`document_unsaved`). The manifest carries the source document
+  (`documentPath`, `documentId`, `setup`, `operations`) and the Meimad context (`meimad.importId`, `caseId`,
+  `caseOperationId`, `basedOnVersion`).
+- A document found only through the running object table while several Cimatron sessions run is refused
+  (`cimatron_source_ambiguous`); `GetActiveApplication` (the Cimatron window the user works in) is not ambiguous.
+- The export holds the session lock (`Local\Meimad.CimatronExporter.Export`) like the window and the console.
+
 ## One-click export (exporter 0.2.0)
 
 Starting `Meimad.CimatronExporter.exe` with no argument (or `--ui`) opens the **Cimatron → Meimad export** window. It

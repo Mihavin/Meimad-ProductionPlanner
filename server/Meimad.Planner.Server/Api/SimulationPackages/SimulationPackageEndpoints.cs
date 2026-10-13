@@ -109,6 +109,18 @@ internal static class SimulationPackageEndpoints
         var operation = endpoints.MapGroup("/api/v1/cases/{caseId}/operations/{operationId}/simulation-packages");
         operation.MapGet(string.Empty, ListForOperationAsync);
         operation.MapPost(string.Empty, ImportAsync);
+
+        endpoints.MapGet("/api/v1/cases/{caseId}/operations/{operationId}/cam-source", GetCamSourceAsync);
+    }
+
+    /// <summary>The Operation's CAM source (Import from Cimatron): 404 when the Operation was never imported from Cimatron.</summary>
+    private static async Task<IResult> GetCamSourceAsync(string caseId, string operationId, HttpContext context,
+        SqliteSimulationPackageRepository repository, CancellationToken cancellationToken)
+    {
+        var source = await repository.ReadCamSourceAsync(caseId, operationId, cancellationToken);
+        return source is null
+            ? PlanningHttpSupport.Error(StatusCodes.Status404NotFound, "resource_not_found", "The Operation has no CAM source yet.", context)
+            : Results.Ok(source);
     }
 
     private static async Task<IResult> ValidateAsync(

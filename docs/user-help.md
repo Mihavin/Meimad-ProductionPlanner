@@ -203,8 +203,30 @@ can still jog).
 **Machine models, fixtures and rest material.** The *Machine & setup* card in the viewer draws the published Machine
 Designer meshes on their components in the Machine view.
 
-For an Operation machined in Cimatron, open Case → Operations, select the Operation and use the **Cimatron setup** card:
-1. **Import from Cimatron...** links the STL or STEP files exported from Cimatron. Files named `STOCK…` or kept in an `NC\STOCK` folder become rest material, everything else a fixture; **Fixture / rest material** switches a file, **Unlink file** removes the link (the file itself is never changed).
+**Import from Cimatron (the usual way).** Open the NC document in Cimatron and save it. In Meimad open Case → Operations,
+select the Operation and press **Import from Cimatron** on the *Cimatron setup* card. One window shows the CAM file, the
+Meimad Operation and the document's CAM operations grouped by setup:
+- Tick the toolpaths (or single procedures) of **one setup**, check the postprocessor (only the ones a Machine of this
+  Operation's machine type supports are offered) and press **Import**. Progress, the result and any problem appear in the
+  same window.
+- Meimad writes the data set into the Operation's G-code folder
+  (`Gcode\<Case>\<Operation>\<process revision>\<postprocessor>\<local revision>\cimatron-<date-time>`): the NC program in
+  the Meimad format (markers are added only where missing), its subprograms unchanged, and the Cimatron package with
+  tools, stock, fixtures and the Work CS. The Server checks and registers it; the CAM file path and the chosen operations
+  are saved. The Release G-code form takes the program, but nothing is released until you release it.
+- Put the target part and fixtures (Cimatron Multi STL export, file names with `TARGET`/`PART` and
+  `FIXTURE`/`CLAMP`/`VISE`/`JIG`) in a `Meimad geometry` folder beside the NC document: they are found by themselves.
+  Without them the result says *Incomplete for simulation*.
+- An unsaved Cimatron document, operations from two setups, an uncalculated procedure or a postprocessor no Machine of the
+  Operation supports cannot be imported; the window says what to correct. If the Server needs an answer (which Machine
+  the package was posted for, or replacing a hand-typed Work CS), answer in the window and press **Retry registration**.
+- A failed or cancelled import changes nothing in Meimad and removes only the folder it created.
+- Next time, the same CAM operations are ticked again when the same Cimatron file is active. **Open in Cimatron** opens
+  the saved CAM file; **Open simulation** opens the imported program with its stock, fixtures and part. The card shows
+  the source and the date of the last import (hover for the paths).
+
+For an Operation machined in Cimatron, the **Cimatron setup** card also links files and types the Work CS by hand:
+1. **Link Cimatron files...** links the STL or STEP files exported from Cimatron. Files named `STOCK…` or kept in an `NC\STOCK` folder become rest material, everything else a fixture; **Fixture / rest material** switches a file, **Unlink file** removes the link (the file itself is never changed).
 2. Type the Work CS from Cimatron's UCS dialog: the work offset (G54, G54.1 P1, …), the origin in mm and the rotations about X, then Y, then Z, in the coordinates the files were exported in. **Save Work CS**.
 3. Open the Operation's program in the NC viewer: the fixtures and the rest material appear in place around the toolpath. In the *Machine & setup* card, **Use as stock** next to a rest material starts the material removal from it. The rest material is drawn solid and shaded; tick **Rest material see-through** to see the toolpath inside it. While *Material removal* is on, the cut stock is drawn instead. *Import from Cimatron…* in the viewer shows extra files in that window only.
 

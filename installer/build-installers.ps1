@@ -166,6 +166,7 @@ New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
 
 $clientProject = Join-Path $repositoryRoot "client-windows\Meimad.Planner.Client.Windows\Meimad.Planner.Client.Windows.csproj"
 $serverProject = Join-Path $repositoryRoot "server\Meimad.Planner.Server\Meimad.Planner.Server.csproj"
+$cimatronExporterProject = Join-Path $repositoryRoot "tools\Meimad.CimatronExporter\Meimad.CimatronExporter.csproj"
 $clientInstaller = Join-Path $installerRoot "client\Meimad.Planner.Client.Windows.Installer.wixproj"
 $serverInstaller = Join-Path $installerRoot "server\Meimad.Planner.Server.Installer.wixproj"
 $clientPackage = Join-Path $installerRoot "client\Package.wxs"
@@ -238,6 +239,17 @@ Invoke-DotNet -Arguments @(
     "-r", $RuntimeIdentifier,
     "--self-contained", "true",
     "-o", $clientStage
+)
+
+# Import from Cimatron runs the Cimatron exporter as the client's helper process: it is installed,
+# upgraded and removed with the client (cimatron-exporter\ below the client folder), never separately.
+Write-Host "Publishing the Cimatron exporter into the client..."
+Invoke-DotNet -Arguments @(
+    "publish", $cimatronExporterProject,
+    "-c", $Configuration,
+    "-r", $RuntimeIdentifier,
+    "--self-contained", "true",
+    "-o", (Join-Path $clientStage "cimatron-exporter")
 )
 
 Write-Host "Publishing self-contained Windows Server..."

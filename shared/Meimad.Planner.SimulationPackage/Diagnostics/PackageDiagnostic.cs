@@ -123,6 +123,12 @@ public static class PackageDiagnosticCodes
     public const string CaseUnresolved = "case_unresolved";
     public const string OperationUnresolved = "operation_unresolved";
     public const string OperationMismatch = "operation_mismatch";
+
+    /// <summary>A package made for one Meimad Case Operation (manifest <c>meimad</c>) is imported into another.</summary>
+    public const string ImportContextMismatch = "import_context_mismatch";
+
+    /// <summary>The package postprocessor is not an active Meimad postprocessor allowed for the Operation's machine type.</summary>
+    public const string PostprocessorNotAllowed = "postprocessor_not_allowed";
     public const string MachineMappingUnresolved = "machine_mapping_unresolved";
     public const string MachineMappingAmbiguous = "machine_mapping_ambiguous";
     public const string MachineSelectionInvalid = "machine_selection_invalid";

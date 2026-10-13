@@ -74,6 +74,16 @@ The Operation Work CS written by an import is the ordinary `case_operation_cam_s
 The package tables are CAM context, not planning inputs: their triggers advance the all-input and non-planning
 revisions only (the model-file links keep their existing triggers). Backups carry the rows; there are no Server-side
 package files to back up.
+## Case Operation CAM source (schema v119, 2026-10-13)
+
+`case_operation_cam_sources` holds the CAM source of a Case Operation's last Import from Cimatron, one row per Case
+Operation (primary key, cascade with it), written in the same transaction as the simulation package import it describes:
+`application` (`cimatron`), `document_path` (relative to the network folder root when below it, else absolute),
+`document_name`, `document_id` (Cimatron `PID`), `setup_name`, `operations_json` (`[{kind, id, name, toolpath}]` by
+Cimatron id), `postprocessor`, `client_import_id` (the client's import id from the manifest), `simulation_package_import_id`
+(the import row), `source_host` (the CAM PC), `imported_at`, `imported_by`, `version` (+1 per new import). Not a planning
+input: its triggers advance the all-input and non-planning revisions only.
+
 ## Case Operation thumbnails for the TV Dashboard (schema v118, 2026-10-12)
 
 `case_operation_thumbnails` holds at most one picture per Case Operation and source (primary key
@@ -386,6 +396,7 @@ Whether a formal append-only audit log is required is TBD. Hard-delete/archive b
 | Order | `orders` | Required Case; positive quantity. |
 | Case Operation | `case_operations` | Required Case; unique route position/operation number per Case; optional self-referenced predecessor. |
 | Operation CAM Setup | `case_operation_cam_setups` | Schema v113: at most one per Case Operation (primary key), cascade-deleted with it; Work CS origin/rotation in part-model coordinates, source `cimatron`/`manual`, optional work offset and notes, version, `updated_by` and times. |
+| Operation CAM Source | `case_operation_cam_sources` | Schema v119: at most one per Case Operation; the Cimatron document and CAM operations (by Cimatron id) of its last Import from Cimatron, with the import it came from. |
 | Simulation Package Import | `simulation_package_imports`, `simulation_package_import_files` | Schema v117: one row per imported Cimatron package (at most one `imported` row per Operation and manifest SHA-256); files with role, hash and the model-file link created; Machine mapping in `simulation_package_machine_mappings`. |
 | Production Batch | `production_batches` | Required Case; positive planned quantity. |
 | Verified Material Receipt | `verified_material_receipts` | Required Case; positive whole-piece quantity; explicit local verifier and timestamp; source fixed to `LOCAL_VERIFIED`. |

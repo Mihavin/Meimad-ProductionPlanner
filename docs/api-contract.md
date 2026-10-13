@@ -175,7 +175,7 @@ hasBlockingErrors, diagnostics: [{code, severity: error|warning|info, message, c
 
 | Severity | Codes |
 |---|---|
-| Blocking (exporter definition §14) | `package_path_invalid`, `package_root_not_approved`, `package_not_found`, `package_incomplete` (no `COMPLETE`), `manifest_missing`, `manifest_invalid_json`, `manifest_schema_violation` (`context.pointer`, `keyword`), `manifest_contains_measured_offset`, `schema_version_missing`, `schema_version_unsupported`, `units_unknown`, `operation_number_missing`, `procedure_id_missing`, `ucs_missing`, `ucs_type_unknown`, `ucs_transform_incomplete`, `ucs_matrix_invalid`, `ucs_matrix_inconsistent`, `coordinate_mode_conflict`, `file_path_not_relative`, `file_path_traversal`, `file_duplicate_path`, `file_missing`, `file_empty`, `file_too_large`, `package_too_large`, `file_hash_missing`, `file_hash_mismatch`, `nc_missing`, `nc_header_missing`, `tool_table_missing`, `tool_table_unreadable`, `tool_table_mismatch` (`context.missingTools`), `stock_missing`, `stock_kind_unknown`, `geometry_unreadable`, `geometry_format_unsupported`, `fixture_count_exceeded`; import only: `case_unresolved`, `operation_unresolved`, `stock_selection_required`, `stock_selection_invalid`, `machine_mapping_unresolved`, `machine_mapping_ambiguous`, `machine_selection_invalid`, `work_cs_manual_conflict`, `work_offset_invalid` |
+| Blocking (exporter definition §14) | `package_path_invalid`, `package_root_not_approved`, `package_not_found`, `package_incomplete` (no `COMPLETE`), `manifest_missing`, `manifest_invalid_json`, `manifest_schema_violation` (`context.pointer`, `keyword`), `manifest_contains_measured_offset`, `schema_version_missing`, `schema_version_unsupported`, `units_unknown`, `operation_number_missing`, `procedure_id_missing`, `ucs_missing`, `ucs_type_unknown`, `ucs_transform_incomplete`, `ucs_matrix_invalid`, `ucs_matrix_inconsistent`, `coordinate_mode_conflict`, `file_path_not_relative`, `file_path_traversal`, `file_duplicate_path`, `file_missing`, `file_empty`, `file_too_large`, `package_too_large`, `file_hash_missing`, `file_hash_mismatch`, `nc_missing`, `nc_header_missing`, `tool_table_missing`, `tool_table_unreadable`, `tool_table_mismatch` (`context.missingTools`), `stock_missing`, `stock_kind_unknown`, `geometry_unreadable`, `geometry_format_unsupported`, `fixture_count_exceeded`; import only: `case_unresolved`, `operation_unresolved`, `stock_selection_required`, `stock_selection_invalid`, `machine_mapping_unresolved`, `machine_mapping_ambiguous`, `machine_selection_invalid`, `work_cs_manual_conflict`, `work_offset_invalid`, `import_context_mismatch`, `postprocessor_not_allowed` (v119, Import from Cimatron) |
 | Warning | `part_missing`, `part_unreadable`, `fixture_missing`, `holder_dimensions_incomplete`, `stock_fallback_rule`, `stock_multiple_candidates`, `stock_source_operation_missing`, `cimatron_version_untested`, `default_mesh_tolerance`, `units_converted_from_inch`, `nc_units_mismatch`, `toolpath_stock_misaligned`, `machine_missing`, `operation_mismatch`, `work_offset_mismatch` |
 | Info | `tool_table_unused_tools`, `toolpath_alignment_not_checked`, `already_imported` |
 
@@ -201,6 +201,45 @@ mapping is CAM context: it never assigns the Operation to a Machine or changes a
 **Tool table and NC release.** The import records the NC and tool table SHA-256 and the tool numbers. `import.matchingGcodeReleaseId`
 is the Operation's G-code release whose file hash equals the package NC (when the planner released that file), so the
 tool table, the NC and the release are one identity. The import itself never creates an NC release.
+## Import from Cimatron (2026-10-13; schema v119)
+
+Import from Cimatron starts from a Case Operation in the Windows client (specification "Cimatron Exporter Integration
+with Meimad Client" of 2026-10-13). The client runs the Cimatron exporter installed with it (`cimatron-exporter\` below the
+client folder) as a helper process, writes the data set into the Operation's G-code folder and registers it with the
+**package import above**; no new mutation endpoint exists.
+
+**Helper process** (client and exporter only; not a Server API). `Meimad.CimatronExporter.exe --list-json --result <file>`
+writes the active NC document `{ok, error{code,message}, exporterVersion, adapterVersion, cimatronVersion, connectedBy,
+document{name, path, documentId, modified}, setups[{name, stockProcedureId, toolpaths[{id, name, procedures[{id, name,
+ucs, calculated}]}]}], ucsNames}`. `--export-json <request> --result <file>` exports the CAM operations a request chooses
+by Cimatron id (`toolpathIds` whole toolpaths, `procedureIds` single procedures, one setup) into `output`, with
+`expectedDocumentPath`, `requireSavedDocument` and `context{importId, caseId, caseOperationId, basedOnVersion}`, and
+answers `{ok, error, complete, packagePath, exitCode, report, entries[{status, step, code, message}]}`. The exporter refuses
+`cimatron_source_ambiguous` (several Cimatron sessions and the active one unknown), `document_unsaved`,
+`document_changed`, `selection_not_found`, `selection_spans_setups` and `selection_empty`.
+
+**Manifest additions** (optional; older packages stay valid): `source.documentPath`, `source.documentId` (Cimatron
+`PID`), `source.setup`, `source.operations[{kind: toolpath|procedure, id, name, toolpath}]`, and
+`meimad{importId, caseId, caseOperationId, basedOnVersion}`.
+
+**Import checks** for a manifest with `meimad`: `import_context_mismatch` when its `caseId`/`caseOperationId` is not the
+Case Operation of the route; `postprocessor_not_allowed` when `machine.postprocessor` is not an active Meimad postprocessor
+(by name) or, for an Operation with a `requiredMachineType`, no active Machine of that type (`machines.machine_type` or its
+typed machine type name) supports it. Both block (`422 simulation_package_blocked`); the postprocessor is never replaced.
+
+**CAM source.** A successful import whose manifest has `source.documentPath` saves the Operation's CAM source in the same
+transaction (`case_operation_cam_sources`, one row per Case Operation, version + 1 per new import). An idempotent
+`already_imported` changes nothing.
+
+| Method and path | Who | Response |
+|---|---|---|
+| `GET /api/v1/cases/{caseId}/operations/{operationId}/cam-source` | signed in | `200 {caseOperationId, application, documentPath, shared, documentName, documentId, setup, operations[{kind, id, name, toolpath}], postprocessor, clientImportId, simulationPackageImportId, sourceHost, importedAt, importedBy, version, packagePath, ncFileName, packageStatus}`; `404 resource_not_found` when the Operation was never imported from Cimatron (or belongs to another Case). |
+
+`documentPath` is stored relative to the network folder root when it lies below it and returned resolved (UNC);
+`shared: false` marks a local path that opens only on `sourceHost`. The client preselects the stored operations on a
+re-import only when the active document is the same file (and, when both are known, the same `documentId`) and the ids
+still exist; a matching name alone selects nothing.
+
 ## TV Dashboard part pictures and Operation thumbnails (2026-10-12; schema v118)
 
 Owner request 2026-10-12: every TV row shows a picture of the part of its current Operation. Details of the projection

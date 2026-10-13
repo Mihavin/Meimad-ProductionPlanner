@@ -301,6 +301,53 @@ original row; blocks with one T are unchanged. Test: `NcEngineRuntimeTests.Mazak
 their posts write the same form is to be confirmed per control. Still to confirm: the import and NC viewer check, and the layout check on a
 tilted active UCS.
 
+## Import from Cimatron on a Case Operation (2026-10-13, schema v119)
+
+**Recorded decision (owner, 2026-10-13):** "Cimatron Exporter Integration with Meimad Client" — the existing exporter is
+integrated into the client: from the selected Operation, **Import from Cimatron** reads the active Cimatron document, the
+user selects CAM operations in one window, and the linked data set lands in the Operation's G-code folder with the CAM
+source saved for **Open in Cimatron**, **Open simulation** and re-import.
+
+**Implemented (verified by automated tests only):**
+- Exporter 0.3.0: JSON helper process (`--list-json`, `--export-json`), selection by Cimatron id across toolpaths and
+  procedures of one setup, document identity and unsaved check, ambiguous-session refusal, manifest `source` and `meimad`
+  fields (schema extended with optional members). Tests: `CimatronBridgeTests`.
+- Server schema v119 `case_operation_cam_sources`, written in the package import transaction; `GET …/cam-source`;
+  import checks `import_context_mismatch` and `postprocessor_not_allowed`. Test:
+  `SimulationPackageApiTests.Import_from_cimatron_saves_the_cam_source_and_checks_the_operation_and_the_postprocessor`.
+- Client: *Cimatron setup* card actions **Import from Cimatron**, **Open in Cimatron**, **Open simulation** and the source
+  line (name and last import date; paths on hover); the import window (`CimatronImportWindow`, `CimatronImportViewModel`)
+  with the CAM operations by setup, the allowed postprocessors, progress, result, Server questions and retry; the
+  exporter installed with the client. The earlier "Import from Cimatron..." button that links STL/STEP files is renamed
+  **Link Cimatron files...**. Tests: `CimatronImportViewModelTests`, localization catalog (he/ru).
+
+**Choices made within the specification (Proposed; reversible):**
+- *Data set folder.* The next release folder of the postprocessor,
+  `Gcode\<Case>\<Operation>\<process revision>\<postprocessor>\<local revision>\` (`NcProgramFolders.NextReleaseAsync`), with
+  one `cimatron-<yyyyMMdd-HHmmss>` folder per import inside it: imports made before a release share the local revision
+  number, and a separate folder never touches a registered data set or replaces an NC file (AGENTS rule 11).
+- *Meimad format.* The Server formatter (`POST /nc-programs/meimad-format`, idempotent) converts a copy of the main NC,
+  written at the data set root with the subprograms unchanged; the package keeps the posted NC exactly as hashed. An
+  invalid result (for example `production_package_cycle_marker_required`) blocks the import. Consequence: the package's
+  `matchingGcodeReleaseId` (NC hash) does not match a release of the converted program.
+- *Dialect* of the conversion: the single NC dialect of the Machines that support the postprocessor
+  (`NcViewerDialects.Resolve`); several or none stop the import with an explanation.
+- *Postprocessor.* Meimad postprocessors are matched by name to Cimatron posts; only those an active Machine of the
+  Operation's `requiredMachineType` supports are offered and accepted (Server check). No machine is assigned.
+- *Operation data version.* `meimad.basedOnVersion` is the Case Operation version; staleness is refused by the existing
+  `expectedCamSetupVersion`/`expectedCurrentImportId` checks.
+- *Machine context.* When the package import's machine mapping is ambiguous or unresolved, the window offers the
+  candidates and registers again; it is the package's machine context, never an assignment.
+- *Open in Cimatron* opens the saved file through Windows' file association; a local path from another PC is explained,
+  not opened. Navigation to one CAM operation is not implemented (Cimatron API support unconfirmed).
+- *Recovery.* A failed or cancelled export, conversion or blocked registration removes only the folder the import
+  created; a registration that could not reach the Server keeps the prepared data set for **Retry registration**
+  (idempotent by manifest SHA-256), or for **Import Cimatron package...** later.
+
+**Not yet verified:** the window against Cimatron on the CAM PC (§13 acceptance on a workstation with Cimatron), the
+client MSI built with the exporter (`build-installers.ps1` / `verify-installers.ps1` not run in this change), the Server
+and client deployment of schema v119.
+
 **Open decision (Proposed, 2026-10-12): subprograms in a simulation package.** The package manifest has one `files.nc`
 and no subprogram role, while a Mazak post can write a main program plus subprogram files. Until decided, the exporter
 lists the main program as `files.nc` and leaves the subprograms beside it under `nc/`, unlisted, so they are not hashed,

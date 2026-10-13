@@ -1,0 +1,83 @@
+<Window Style="{DynamicResource {x:Type Window}}" x:Class="Meimad.Planner.Client.Windows.Views.CimatronImportWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Import from Cimatron" Width="820" Height="720" MinWidth="620" MinHeight="520"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{DynamicResource CanvasBrush}">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="VisibleWhen"/>
+    </Window.Resources>
+    <DockPanel Margin="16">
+        <StackPanel DockPanel.Dock="Top">
+            <TextBlock Text="{Binding TargetTitle}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
+            <TextBlock Text="{Binding DocumentTitle}" FontWeight="SemiBold" Margin="0,8,0,0" TextWrapping="Wrap"/>
+            <TextBlock Text="{Binding DocumentDetail}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"
+                       ToolTip="The CAM file the operations are read from; Meimad saves this link with the import"/>
+            <Grid Margin="0,10,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="12"/>
+                    <ColumnDefinition Width="200"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="Postprocessor" Foreground="{DynamicResource MutedTextBrush}"/>
+                    <ComboBox ItemsSource="{Binding Postprocessors}" SelectedItem="{Binding SelectedPostprocessor}" DisplayMemberPath="Name"
+                              ToolTip="Meimad postprocessors allowed for this Operation's machine type; the Cimatron post of the same name posts the NC"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="Post relative to UCS" Foreground="{DynamicResource MutedTextBrush}"/>
+                    <ComboBox ItemsSource="{Binding UcsNames}" Text="{Binding Ucs, UpdateSourceTrigger=PropertyChanged}" IsEditable="True"
+                              ToolTip="MODEL places the NC and the geometry in part-model coordinates"/>
+                </StackPanel>
+            </Grid>
+            <TextBlock Text="CAM operations by setup" FontWeight="SemiBold" Margin="0,4,0,2"/>
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+            <TextBlock Text="{Binding SelectionText}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/>
+            <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,6,0,6"/>
+            <StackPanel Orientation="Horizontal" Visibility="{Binding NeedsMachineChoice, Converter={StaticResource VisibleWhen}}" Margin="0,0,0,6">
+                <TextBlock Text="Machine of this package" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox ItemsSource="{Binding MachineCandidates}" SelectedItem="{Binding SelectedMachine}" DisplayMemberPath="Name" MinWidth="220"
+                          ToolTip="Which Machine the package was posted for; the Operation's Machine assignment does not change"/>
+            </StackPanel>
+            <CheckBox Content="Replace the manually entered Work CS with the Cimatron one" IsChecked="{Binding OverwriteManualWorkCs}"
+                      Visibility="{Binding NeedsWorkCsConfirmation, Converter={StaticResource VisibleWhen}}" Margin="0,0,0,6"/>
+            <TextBox Text="{Binding ReportText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                     Height="140" FontFamily="Consolas" AutomationProperties.Name="Import report"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                <Button Content="Refresh" Command="{Binding RefreshCommand}" MinWidth="90" Margin="0,0,8,0"
+                        ToolTip="Read the active Cimatron document again"/>
+                <Button Content="Import" Command="{Binding ImportCommand}" MinWidth="90" Margin="0,0,8,0" IsDefault="True"/>
+                <Button Content="Cancel import" Command="{Binding CancelCommand}" MinWidth="90" Margin="0,0,8,0"/>
+                <Button Content="Retry registration" Command="{Binding RetryRegistrationCommand}" MinWidth="90" Margin="0,0,8,0"
+                        ToolTip="Register the prepared data set again with the Server"/>
+                <Button Content="Open simulation" Click="OpenSimulation_Click" IsEnabled="{Binding CanOpenSimulation}" MinWidth="90" Margin="0,0,8,0"/>
+                <Button Content="Close" Click="Close_Click" MinWidth="90" IsCancel="True"/>
+            </StackPanel>
+        </StackPanel>
+
+        <TreeView ItemsSource="{Binding Setups}" AutomationProperties.Name="CAM operations by setup">
+            <TreeView.ItemContainerStyle>
+                <Style TargetType="TreeViewItem">
+                    <Setter Property="IsExpanded" Value="True"/>
+                </Style>
+            </TreeView.ItemContainerStyle>
+            <TreeView.ItemTemplate>
+                <HierarchicalDataTemplate ItemsSource="{Binding Toolpaths}">
+                    <TextBlock Text="{Binding Label}" FontWeight="SemiBold"/>
+                    <HierarchicalDataTemplate.ItemTemplate>
+                        <HierarchicalDataTemplate ItemsSource="{Binding Procedures}">
+                            <CheckBox Content="{Binding Name}" IsChecked="{Binding IsChecked}" ToolTip="The whole toolpath"/>
+                            <HierarchicalDataTemplate.ItemTemplate>
+                                <DataTemplate>
+                                    <CheckBox Content="{Binding Label}" IsChecked="{Binding IsChecked}"/>
+                                </DataTemplate>
+                            </HierarchicalDataTemplate.ItemTemplate>
+                        </HierarchicalDataTemplate>
+                    </HierarchicalDataTemplate.ItemTemplate>
+                </HierarchicalDataTemplate>
+            </TreeView.ItemTemplate>
+        </TreeView>
+    </DockPanel>
+</Window>

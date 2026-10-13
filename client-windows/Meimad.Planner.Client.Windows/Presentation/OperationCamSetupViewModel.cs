@@ -30,6 +30,7 @@ internal sealed class OperationCamSetupViewModel : INotifyPropertyChanged
     private bool isBusy;
     private string? caseId;
     private string? caseOperationId;
+    private OperationCamSourceResource? camSource;
     private string? entityTag;
     private string statusMessage = string.Empty;
     private string source = "cimatron";
@@ -88,6 +89,36 @@ internal sealed class OperationCamSetupViewModel : INotifyPropertyChanged
 
     /// <summary>One line about the current package.</summary>
     public string PackageSummary { get => packageSummary; private set => SetField(ref packageSummary, value); }
+
+    /// <summary>The CAM source of the Operation's last Import from Cimatron, or null.</summary>
+    public OperationCamSourceResource? CamSource
+    {
+        get => camSource;
+        private set
+        {
+            if (!SetField(ref camSource, value)) return;
+            OnPropertyChanged(nameof(CamSourceSummary));
+            OnPropertyChanged(nameof(CamSourceDetail));
+            OnPropertyChanged(nameof(HasCamSource));
+        }
+    }
+
+    public bool HasCamSource => camSource is not null;
+
+    /// <summary>The source name and the date of the last successful import (specification §4).</summary>
+    public string CamSourceSummary => camSource is null
+        ? "Not imported from Cimatron yet."
+        : string.Create(CultureInfo.InvariantCulture,
+            $"Cimatron source: {camSource.DocumentName ?? Path.GetFileName(camSource.DocumentPath)} · last import {camSource.ImportedAt.ToLocalTime():yyyy-MM-dd HH:mm}");
+
+    /// <summary>Paths and identities on demand (tool tip), not on the card itself.</summary>
+    public string CamSourceDetail => camSource is null
+        ? "Import from Cimatron reads the active Cimatron document and saves its path here."
+        : string.Join(Environment.NewLine,
+            $"CAM file: {camSource.DocumentPath}" + (camSource.Shared ? "" : $" (local path, opens only on {camSource.SourceHost ?? "the CAM PC"})"),
+            $"CAM operations: {string.Join(", ", (camSource.Operations ?? []).Select(item => item.Kind == "toolpath" ? $"toolpath {item.Name} (#{item.Id})" : $"{item.Name} (#{item.Id})"))}",
+            $"Setup: {camSource.Setup ?? "?"} · postprocessor: {camSource.Postprocessor ?? "?"}",
+            $"Imported by {camSource.ImportedBy ?? "?"} from {camSource.SourceHost ?? "?"}; data set: {camSource.PackagePath ?? "?"}");
 
     /// <summary>The last import answer of this session (for "View package report").</summary>
     internal SimulationPackageImportResult? LastPackageResult { get; private set; }
@@ -171,11 +202,17 @@ internal sealed class OperationCamSetupViewModel : INotifyPropertyChanged
         {
             var imports = await apiClient.ListSimulationPackageImportsAsync(caseId, operationId);
             if (caseOperationId == operationId) CurrentPackage = imports.FirstOrDefault(item => item.Status == "imported");
+            var source = await apiClient.GetOperationCamSourceAsync(caseId, operationId);
+            if (caseOperationId == operationId) CamSource = source;
         }
         catch (Exception exception) when (IsExpected(exception))
         {
             // An older Server without packages, or offline: the card works without the package line.
-            if (caseOperationId == operationId) CurrentPackage = null;
+            if (caseOperationId == operationId)
+            {
+                CurrentPackage = null;
+                CamSource = null;
+            }
         }
     }
 
@@ -437,6 +474,7 @@ internal sealed class OperationCamSetupViewModel : INotifyPropertyChanged
         entityTag = null;
         camSetupVersion = 0;
         CurrentPackage = null;
+        CamSource = null;
         Files.Clear();
         SelectedFile = null;
         ResetFields();
