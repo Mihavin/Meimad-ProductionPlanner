@@ -104,6 +104,35 @@ function registry() {
   return registryCache;
 }
 
+// How the viewer's machine lists are shown (owner, 2026-10-13: the list repeated machines): the factory's Machines
+// (their published Machine Designer definitions, numbered) first in the host's order, then the installed definitions;
+// an installed definition a Machine's definition is built on is left out of the lists unless it is the selected or
+// detected machine. Presentation only: every machine stays registered and selectable by id.
+let machineListing = { first: [], hidden: [] };
+
+function arrangeMachines(json) {
+  const value = JSON.parse(json || "{}");
+  machineListing = {
+    first: Array.isArray(value.first) ? value.first.map(String) : [],
+    hidden: Array.isArray(value.hidden) ? value.hidden.map(String) : []
+  };
+  return "true";
+}
+
+function arrangedSummaries(list, keep) {
+  const hidden = new Set(machineListing.hidden);
+  const kept = new Set((keep || []).filter(Boolean).map(String));
+  const rank = (machine) => {
+    const index = machineListing.first.indexOf(machine.id);
+    return index < 0 ? machineListing.first.length : index;
+  };
+  return list
+    .filter((machine) => !hidden.has(machine.id) || kept.has(machine.id))
+    .map((machine, index) => ({ machine, index }))
+    .sort((left, right) => rank(left.machine) - rank(right.machine) || left.index - right.index)
+    .map((entry) => entry.machine);
+}
+
 // Registers the host's in-memory Machine Designer definitions (folders below meimad/). When one is
 // rejected none is registered, so the installed machines keep working; returns the rejections.
 function reloadMachines(json) {
@@ -1154,6 +1183,10 @@ function parsePreview(requestJson) {
   if (model.kind !== "mill" && Array.isArray(model.machineRows)) {
     model.machineRows = [...model.machineRows, ...latheMemoryRows(request, machine, prepared)];
   }
+  if (model.machineSelection && Array.isArray(model.machineSelection.available)) {
+    model.machineSelection.available = arrangedSummaries(model.machineSelection.available,
+      [model.machineSelection.selection, model.machineSelection.id]);
+  }
   lastPacked = transport.stringify(model);
   const definition = model.machineDefinition;
   return JSON.stringify({
@@ -1364,7 +1397,9 @@ function saveToolTable(requestJson) {
 function machines() {
   const translations = new Map([...registry().machines.values()]
     .map((machine) => [machine.id, machine.controlDefinition?.translation || null]));
-  return JSON.stringify(machineSummaries(registry()).map((summary) => ({
+  // Sorted for display, never filtered: the host validates selections against this list.
+  const all = machineSummaries(registry());
+  return JSON.stringify(arrangedSummaries(all, all.map((summary) => summary.id)).map((summary) => ({
     ...summary,
     translation: translations.get(summary.id) || null
   })));
@@ -1397,4 +1432,4 @@ function prepare(requestJson) {
   });
 }
 
-module.exports = { analyze, parsePreview, takePacked, toolTable, toolDefinitionsFromRows, saveToolTable, machines, parseToolTableXml, sanitizeOffsets, prepare, reloadMachines };
+module.exports = { analyze, parsePreview, takePacked, toolTable, toolDefinitionsFromRows, saveToolTable, machines, parseToolTableXml, sanitizeOffsets, prepare, reloadMachines, arrangeMachines };

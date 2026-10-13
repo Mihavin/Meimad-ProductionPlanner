@@ -42,16 +42,32 @@ internal static class NcViewerMachineDefinitions
         {
             return [];
         }
-        var result = new List<NcViewerCompiledMachine>();
-        foreach (var item in published)
+        // The viewer names a factory Machine by its number and name ("14 — Haas UMC-500ss"), so Machines sharing a name
+        // (three NM-510) and the installed definitions they are built on stay apart; listed in Machine number order.
+        IReadOnlyList<PlannerMachine> machines = [];
+        try
         {
-            var compiled = Compile(item.MachineId, item.Published, engineRoot);
+            machines = await api.ListMachinesAsync(cancellationToken);
+        }
+        catch (Exception exception) when (IsTransient(exception))
+        {
+            // Names stay as published.
+        }
+
+        var result = new List<NcViewerCompiledMachine>();
+        foreach (var item in published.OrderBy(item => machines.FirstOrDefault(machine => machine.MachineId == item.MachineId)?.Number ?? "~", StringComparer.Ordinal))
+        {
+            var compiled = Compile(item.MachineId, Labelled(item.Published, machines.FirstOrDefault(machine => machine.MachineId == item.MachineId)), engineRoot);
             if (compiled is null) continue;
             var (models, warnings) = await ModelsAsync(api, item.MachineId, item.Published, cancellationToken);
             result.Add(compiled with { Models = models, Warnings = warnings });
         }
         return result;
     }
+
+    /// <summary>The definition named "&lt;Machine number&gt; — &lt;name&gt;" for the viewer's lists; unchanged without the Machine.</summary>
+    internal static MachineSimulationDefinition Labelled(MachineSimulationDefinition definition, PlannerMachine? machine) =>
+        machine is null ? definition : definition with { Name = $"{machine.Number} — {definition.Name ?? machine.Name}" };
 
     /// <summary>The compiled machine, or null when the definition has no components or its template is not installed here.</summary>
     internal static NcViewerCompiledMachine? Compile(string machineId, MachineSimulationDefinition definition, string? engineRoot = null)

@@ -115,6 +115,26 @@ public sealed class NcEngineRuntime : IDisposable
         }
     }
 
+    /// <summary>
+    /// How the viewer lists machines: <paramref name="first"/> in this order before the others, and
+    /// <paramref name="hidden"/> (installed definitions a Machine's definition is built on) left out of the viewer's lists
+    /// unless selected or detected. <see cref="Machines"/> stays complete for validation, only sorted.
+    /// </summary>
+    public void ArrangeMachines(IReadOnlyList<string> first, IReadOnlyCollection<string> hidden)
+    {
+        ArgumentNullException.ThrowIfNull(first);
+        ArgumentNullException.ThrowIfNull(hidden);
+        lock (gate)
+        {
+            Call("arrangeMachines", JsonSerializer.Serialize(new { first, hidden }));
+            HiddenMachineIds = new HashSet<string>(hidden, StringComparer.Ordinal);
+            Machines = Deserialize<IReadOnlyList<NcEngineMachineSummary>>(Call("machines"));
+        }
+    }
+
+    /// <summary>Installed definitions the viewer leaves out of its lists unless selected (see <see cref="ArrangeMachines"/>).</summary>
+    public IReadOnlySet<string> HiddenMachineIds { get; private set; } = new HashSet<string>(StringComparer.Ordinal);
+
     /// <summary>Folders (besides the engine) that subprogram lookup may read on this call.</summary>
     public void SetReadableFolders(IEnumerable<string?> folders) => fileHost.SetAdditionalRoots(folders);
 

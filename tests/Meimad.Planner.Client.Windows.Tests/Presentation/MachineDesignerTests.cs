@@ -330,6 +330,40 @@ public sealed class MachineDesignerTests : IDisposable
     }
 
     [Fact]
+    public void The_viewer_lists_each_factory_machine_once_numbered_and_first()
+    {
+        // Owner, 2026-10-13: "Haas UMC-500" (installed) and "Haas UMC-500ss" (Machines 14/15, built on it) both showed, and
+        // two Machines named NM-510 could not be told apart.
+        var compiled = NcViewerMachineDefinitions.Compile("machine-14",
+            NcViewerMachineDefinitions.Labelled(Trunnion() with { Name = null }, Machine("machine-14") with { Number = "14", Name = "Haas UMC-500ss" }))!;
+        Assert.Equal("14 — Haas UMC-500ss", JsonNode.Parse(compiled.CompiledJson)!["name"]!.GetValue<string>());
+
+        using var runtime = new NcEngineRuntime();
+        Assert.Empty(runtime.UseMachines([compiled.CompiledJson]));
+        runtime.ArrangeMachines([compiled.CompiledId], [compiled.Template!]);
+
+        // The full list stays (selections are validated against it), the Machine first; the template is only hidden.
+        Assert.Equal(compiled.CompiledId, runtime.Machines[0].Id);
+        Assert.Contains(runtime.Machines, machine => machine.Id == "haas-umc-500");
+        Assert.Contains("haas-umc-500", runtime.HiddenMachineIds);
+
+        const string program = "%\nO1000\nG90 G54 G00 X0 Y0\nT1 M06\nG01 Z-2. F300.\nM30\n%\n";
+        string[] Available(string selection)
+        {
+            var preview = runtime.ParsePreview(new NcEnginePreviewRequest(program, MachineSelection: selection));
+            using var packed = JsonDocument.Parse(preview.Packed);
+            return packed.RootElement.GetProperty("model").GetProperty("machineSelection").GetProperty("available")
+                .EnumerateArray().Select(machine => machine.GetProperty("id").GetString()!).ToArray();
+        }
+
+        var listed = Available(compiled.CompiledId);
+        Assert.Equal(compiled.CompiledId, listed[0]);
+        Assert.DoesNotContain("haas-umc-500", listed);
+        Assert.Contains("haas-vf-3ss", listed);                 // installed definitions no Machine is built on stay
+        Assert.Contains("haas-umc-500", Available("haas-umc-500")); // a selected hidden template is still shown
+    }
+
+    [Fact]
     public void Mesh_scale_multiplies_the_model_but_not_its_offset_in_the_viewer()
     {
         using var engine = new V8ScriptEngine();

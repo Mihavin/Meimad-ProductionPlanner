@@ -386,6 +386,11 @@ internal sealed class NcViewerSession : IDisposable
                 .Select(entry => (entry.Name, Folder: Limit(entry.Value.GetString()).Trim()))
                 .Where(entry => entry.Folder.Length > 0)
                 .ToDictionary(entry => entry.Name, entry => entry.Folder, StringComparer.Ordinal);
+            // A machine the lists leave out has no row on the page: its saved folder stays.
+            foreach (var (id, folder) in settings.ProgramMemory)
+            {
+                if (runtime.HiddenMachineIds.Contains(id) && !memory.TryGetProperty(id, out _)) next.ProgramMemory.TryAdd(id, folder);
+            }
         }
         if (partial.TryGetProperty("backgroundMode", out var backgroundMode) && backgroundMode.ValueKind == JsonValueKind.String)
             next.BackgroundMode = backgroundMode.GetString() == "solid" ? "solid" : "gradient";
@@ -1356,6 +1361,14 @@ internal sealed class NcViewerSession : IDisposable
             registrationWarning = errors.Count == 0
                 ? null
                 : $"The Machine Designer definitions could not be used by the NC engine ({string.Join("; ", errors.Take(3))}); their templates are used.";
+            // The factory's Machines first (numbered, in Machine order); an installed definition a Machine is built on is
+            // left out of the lists, so a machine does not appear twice (owner, 2026-10-13).
+            if (errors.Count == 0)
+            {
+                runtime.ArrangeMachines(
+                    scene.Compiled.Select(machine => machine.CompiledId).ToArray(),
+                    scene.Compiled.Select(machine => machine.Template).OfType<string>().Distinct(StringComparer.Ordinal).ToArray());
+            }
         }
         catch (Exception exception) when (exception is NcEngineException or JsonException)
         {
@@ -1466,7 +1479,9 @@ internal sealed class NcViewerSession : IDisposable
             aiModel = string.Empty,
             aiDebounceMs = 1800,
             keyConfigured = false,
-            machines = runtime.Machines.Select(machine => new
+            machines = runtime.Machines.Where(machine => !runtime.HiddenMachineIds.Contains(machine.Id)
+                    || machine.Id == settings.Machine || machine.Id == activeMachine?.Id || machine.Id == machineOverride)
+                .Select(machine => new
             {
                 id = machine.Id,
                 name = machine.Name,
