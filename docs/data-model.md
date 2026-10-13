@@ -84,6 +84,18 @@ Cimatron id), `postprocessor`, `client_import_id` (the client's import id from t
 (the import row), `source_host` (the CAM PC), `imported_at`, `imported_by`, `version` (+1 per new import). Not a planning
 input: its triggers advance the all-input and non-planning revisions only.
 
+## Case Operation work offsets in the NC viewer (schema v120, 2026-10-13)
+
+`case_operation_viewer_work_offsets` holds the absolute machine coordinates of a Case Operation's work offsets per NC
+viewer machine (owner decision 2026-10-13: one source for where the NC viewer puts the program zero, and with it the
+toolpath and the Cimatron geometry, for every user). Primary key `(case_operation_id, viewer_machine)`, cascade with the
+Case Operation: `viewer_machine` (the engine machine id: a published Machine definition's compiled id or an installed
+machine type, 1–100 characters), `offsets_json` (a JSON object, label → axis letter → mm/deg, validated by the Server:
+`{"G54": {"X": -3.5627, "Z": -450.25}}`), `version` (optimistic concurrency per set), `created_at`, `updated_at`,
+`updated_by`. The Operation's Work CS (`case_operation_cam_setups`) still places the geometry relative to the work
+offset; the measured offsets of v116 (`machine_work_offsets`) stay evidence and are copied here only by a user. Not a
+planning input: its triggers advance the all-input and non-planning revisions only.
+
 ## Case Operation thumbnails for the TV Dashboard (schema v118, 2026-10-12)
 
 `case_operation_thumbnails` holds at most one picture per Case Operation and source (primary key
@@ -396,6 +408,7 @@ Whether a formal append-only audit log is required is TBD. Hard-delete/archive b
 | Order | `orders` | Required Case; positive quantity. |
 | Case Operation | `case_operations` | Required Case; unique route position/operation number per Case; optional self-referenced predecessor. |
 | Operation CAM Setup | `case_operation_cam_setups` | Schema v113: at most one per Case Operation (primary key), cascade-deleted with it; Work CS origin/rotation in part-model coordinates, source `cimatron`/`manual`, optional work offset and notes, version, `updated_by` and times. |
+| Operation Viewer Work Offsets | `case_operation_viewer_work_offsets` | Schema v120: per Case Operation and NC viewer machine; the absolute machine coordinates of its work offsets (label → axis → mm/deg), version, `updated_by` and times. |
 | Operation CAM Source | `case_operation_cam_sources` | Schema v119: at most one per Case Operation; the Cimatron document and CAM operations (by Cimatron id) of its last Import from Cimatron, with the import it came from. |
 | Simulation Package Import | `simulation_package_imports`, `simulation_package_import_files` | Schema v117: one row per imported Cimatron package (at most one `imported` row per Operation and manifest SHA-256); files with role, hash and the model-file link created; Machine mapping in `simulation_package_machine_mappings`. |
 | Production Batch | `production_batches` | Required Case; positive planned quantity. |

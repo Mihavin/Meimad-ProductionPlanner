@@ -4,7 +4,9 @@
 //   - the Machine's STL models (Setup → Machines → NC viewer 3D models) on their kinematic nodes,
 //     so they move with the axes in the Machine view;
 //   - the Operation's Cimatron fixtures and rest material, placed through the Operation's Work CS
-//     into the program's coordinates (meimad-scene-core.js has the math);
+//     into the program's coordinates (meimad-scene-core.js has the math). Opened from a Case Operation,
+//     the Work CS is edited here and saved on the Server, like the Operation's Home offsets: one source
+//     for the toolpath and the geometry, for every user;
 //   - which renderer draws the 3D view (GPU or software).
 // Files imported here with "Import from Cimatron" are shown in this window only; the Operation's
 // Cimatron setup (Case → Operations) keeps them for everyone.
@@ -16,6 +18,11 @@
     card: document.getElementById("meimadSceneCard"),
     renderer: document.getElementById("meimadSceneRenderer"),
     workCs: document.getElementById("meimadSceneWorkCs"),
+    workCsEdit: document.getElementById("meimadSceneWorkCsEdit"),
+    workCsForm: document.getElementById("meimadSceneWorkCsForm"),
+    workCsOffset: document.getElementById("meimadWorkCsOffset"),
+    workCsSave: document.getElementById("meimadWorkCsSave"),
+    workCsCancel: document.getElementById("meimadWorkCsCancel"),
     machine: document.getElementById("meimadSceneMachine"),
     fixtures: document.getElementById("meimadSceneFixtures"),
     rest: document.getElementById("meimadSceneRest"),
@@ -35,7 +42,7 @@
 
   let hooks = null;
   let model = null;
-  let scene = { machineModels: {}, workCs: null, items: [], operationTitle: null };
+  let scene = { machineModels: {}, workCs: null, items: [], operationTitle: null, operationSetup: false };
   const meshes = new Map(); // mesh url -> Promise<Float32Array>
   const loaded = new Map(); // mesh url -> { positions, triangles } | { error }
   let fixtureGroup = null;
@@ -307,9 +314,62 @@
     const workCs = scene.workCs;
     elements.workCs.textContent = workCs
       ? `Work CS (${workCs.source === "manual" ? "entered" : "Cimatron"}): ${core.describeWorkCs(workCs)}`
-      : scene.items.length
-        ? "No Work CS: the files are drawn at their own coordinates. Enter the Cimatron Work CS in Case → Operations → Cimatron setup."
-        : "";
+      : scene.operationSetup
+        ? "No Work CS: the files are drawn at their own coordinates. Use Edit Work CS to enter the Cimatron UCS of this Operation."
+        : scene.items.length
+          ? "No Work CS: the files are drawn at their own coordinates. Enter the Cimatron Work CS in Case → Operations → Cimatron setup."
+          : "";
+    if (elements.workCsEdit) elements.workCsEdit.hidden = !scene.operationSetup || !elements.workCsForm.hidden;
+  }
+
+  // ----- Work CS editor (opened from a Case Operation) ------------------------------------------
+
+  function workCsInputs() {
+    return Array.from(elements.workCsForm.querySelectorAll("input[data-workcs]"));
+  }
+
+  function openWorkCsForm() {
+    const workCs = scene.workCs;
+    elements.workCsOffset.value = (workCs && workCs.workOffset) || "";
+    for (const input of workCsInputs()) {
+      const [group, axis] = input.dataset.workcs.split(".");
+      const value = workCs && workCs[group] ? Number(workCs[group][axis]) : 0;
+      input.value = Number.isFinite(value) ? String(Number(value.toFixed(4))) : "0";
+    }
+    elements.workCsForm.hidden = false;
+    renderWorkCs();
+  }
+
+  function closeWorkCsForm() {
+    elements.workCsForm.hidden = true;
+    renderWorkCs();
+  }
+
+  async function saveWorkCs() {
+    const value = { workOffset: elements.workCsOffset.value.trim() || null, originMm: {}, rotationDeg: {} };
+    for (const input of workCsInputs()) {
+      const [group, axis] = input.dataset.workcs.split(".");
+      const number = input.value.trim() === "" ? 0 : Number(input.value);
+      if (!Number.isFinite(number)) {
+        status(`${input.parentElement.textContent.trim()} must be a number.`, "error");
+        input.focus();
+        return;
+      }
+      value[group][axis] = number;
+    }
+    elements.workCsSave.disabled = true;
+    try {
+      const result = await meimad.scene.saveWorkCs(value);
+      scene.workCs = (result && result.workCs) || scene.workCs;
+      status(result && result.message, result && result.saved ? "success" : "error");
+      if (result && result.saved) closeWorkCsForm();
+      else renderWorkCs();
+      redraw();
+    } catch (error) {
+      status(`The Work CS was not saved: ${message(error)}`, "error");
+    } finally {
+      elements.workCsSave.disabled = false;
+    }
   }
 
   function rendererInfo() {
@@ -338,7 +398,8 @@
         workCs: (result && result.workCs) || null,
         items: (result && result.items) || [],
         operationTitle: result && result.operationTitle,
-        card: (result && result.card) || null
+        card: (result && result.card) || null,
+        operationSetup: Boolean(result && result.operationSetup)
       };
       if (result && result.note) status(result.note, "warning");
     } catch (error) {
@@ -422,6 +483,9 @@
   elements.restSeeThrough?.addEventListener("change", drawFixtures);
   elements.materialRemoval?.addEventListener("change", drawFixtures);
   elements.importButton.addEventListener("click", importCimatron);
+  elements.workCsEdit?.addEventListener("click", openWorkCsForm);
+  elements.workCsCancel?.addEventListener("click", closeWorkCsForm);
+  elements.workCsSave?.addEventListener("click", saveWorkCs);
   if (window.meimadViewer3d) attach(window.meimadViewer3d);
   window.addEventListener("meimad:viewer3d", (event) => attach(event.detail));
   loadScene();

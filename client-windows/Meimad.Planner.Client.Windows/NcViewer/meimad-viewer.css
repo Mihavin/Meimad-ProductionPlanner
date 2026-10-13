@@ -217,6 +217,19 @@ body.meimad-read-only .CodeMirror-cursor {
   margin-top: 2px;
 }
 
+.meimad-workcs-form label {
+  display: block;
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.meimad-workcs-form input[type="number"],
+.meimad-workcs-form input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 2px;
+}
+
 .meimad-stock-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

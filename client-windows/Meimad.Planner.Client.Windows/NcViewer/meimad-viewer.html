@@ -312,6 +312,25 @@
             <h2>Machine &amp; setup</h2>
             <p id="meimadSceneRenderer" class="meimad-note meimad-scene-renderer"></p>
             <p id="meimadSceneWorkCs" class="meimad-note"></p>
+            <div class="meimad-stock-actions">
+              <button id="meimadSceneWorkCsEdit" type="button" hidden title="Change the Operation's Work CS on the Server, for every user">Edit Work CS…</button>
+            </div>
+            <div id="meimadSceneWorkCsForm" class="meimad-workcs-form" hidden>
+              <label>Work offset<input id="meimadWorkCsOffset" type="text" spellcheck="false" placeholder="G54"></label>
+              <div class="meimad-stock-grid">
+                <label>Origin X<input type="number" step="any" data-workcs="originMm.x"></label>
+                <label>Rotation X°<input type="number" step="any" data-workcs="rotationDeg.x"></label>
+                <label>Origin Y<input type="number" step="any" data-workcs="originMm.y"></label>
+                <label>Rotation Y°<input type="number" step="any" data-workcs="rotationDeg.y"></label>
+                <label>Origin Z<input type="number" step="any" data-workcs="originMm.z"></label>
+                <label>Rotation Z°<input type="number" step="any" data-workcs="rotationDeg.z"></label>
+              </div>
+              <p class="meimad-note">The Cimatron UCS of the NC program, in the coordinates the fixtures, rest material and part were exported in (all zero when they were exported in that UCS). Where the work offset is on the machine is set in Home offsets.</p>
+              <div class="meimad-stock-actions">
+                <button id="meimadWorkCsSave" type="button">Save for the Operation</button>
+                <button id="meimadWorkCsCancel" type="button">Cancel</button>
+              </div>
+            </div>
             <label class="check"><input id="meimadSceneMachine" type="checkbox" checked> Machine 3D models (Machine view)</label>
             <label class="check"><input id="meimadSceneFixtures" type="checkbox" checked> Fixtures</label>
             <label class="check"><input id="meimadSceneRest" type="checkbox" checked> Rest material</label>

@@ -280,6 +280,8 @@ internal sealed class NcViewerSession : IDisposable
                 return SceneState();
             case "meimadSceneImport":
                 return await ImportCimatronFilesAsync();
+            case "meimadSceneSaveWorkCs":
+                return await SaveWorkCsAsync(args.Length > 0 ? args[0] : default);
             case "meimadWorkOffsets":
                 return await NcViewerWorkOffsets.LoadAsync(request.WorkOffsets);
             default:
@@ -891,6 +893,21 @@ internal sealed class NcViewerSession : IDisposable
                 return;
             }
             var offsets = message.TryGetProperty("offsets", out var value) ? value.Clone() : default;
+            if (scene.Operation is { } operation)
+            {
+                // Opened from a Case Operation: its work offsets on the Server are the one source, for every user.
+                var single = new JsonObject
+                {
+                    [definition.Id] = offsets.ValueKind == JsonValueKind.Undefined ? null : JsonNode.Parse(offsets.GetRawText())
+                };
+                var sanitized = await WithEngineAsync(engineRuntime =>
+                    engineRuntime.SanitizeWorkOffsets(JsonSerializer.SerializeToElement(single)));
+                var rows = sanitized.TryGetProperty(definition.Id, out var machineRows) ? machineRows.Clone() : default;
+                var (saved, text) = await operation.SaveWorkOffsetsAsync(definition.Id, definition.Name, rows);
+                ScheduleParse();
+                SendStatus(text, saved ? "success" : "error");
+                return;
+            }
             var all = settings.WorkOffsets is { ValueKind: JsonValueKind.Object } existing
                 ? JsonNode.Parse(existing.GetRawText())!.AsObject()
                 : new JsonObject();
@@ -903,7 +920,7 @@ internal sealed class NcViewerSession : IDisposable
             SendStatus($"{definition.Name} home offsets saved on this PC.", "success");
         }
         catch (Exception exception) when (exception is NcEngineException or IOException or UnauthorizedAccessException
-            or JsonException or InvalidOperationException)
+            or JsonException or InvalidOperationException or PlannerApiException or HttpRequestException or TaskCanceledException)
         {
             SendStatus($"Home offsets were not saved: {exception.Message}", "error");
         }
@@ -1047,12 +1064,14 @@ internal sealed class NcViewerSession : IDisposable
         var selection = machineOverride ?? (string.IsNullOrWhiteSpace(settings.Machine) ? NcEngineInfo.AutoMachine : settings.Machine);
         var readable = new List<string?> { directory };
         readable.AddRange(settings.ProgramMemory.Values);
+        var snapshotSettings = settings.Clone();
+        snapshotSettings.WorkOffsets = EffectiveWorkOffsets();
         return new ParseSnapshot(
             text,
             documentName,
             selection,
             selection == NcEngineInfo.AutoMachine ? dialect : null,
-            settings.Clone(),
+            snapshotSettings,
             toolTable,
             toolTableSource,
             directory,
@@ -1180,7 +1199,7 @@ internal sealed class NcViewerSession : IDisposable
         // The Operation's Cimatron rest material, placed through its Work CS when it is loaded.
         candidates.AddRange(SceneFiles()
             .Where(file => file.Kind == "stock" && string.Equals(Path.GetExtension(file.Path), ".stl", StringComparison.OrdinalIgnoreCase))
-            .Select(file => new { name = file.Name, path = file.Path, workCs = PublicWorkCs(scene.WorkCs) }));
+            .Select(file => new { name = file.Name, path = file.Path, workCs = PublicWorkCs(WorkCs) }));
         return new { stock, candidates, canSave = sidecar is not null, savePath = sidecar, nextOperationNumber = nextOperation };
     }
 
@@ -1248,6 +1267,54 @@ internal sealed class NcViewerSession : IDisposable
 
     private IEnumerable<NcViewerSceneFile> SceneFiles() => scene.Files.Concat(importedFiles);
 
+    /// <summary>The Operation's Work CS: as last saved from this window, else as the window opened with it.</summary>
+    private CaseOperationCamSetup? WorkCs => scene.Operation is { } operation ? operation.WorkCs : scene.WorkCs;
+
+    /// <summary>
+    /// The work offsets the engine places the program with: the opened Operation's, from the Server (the one source,
+    /// owner decision 2026-10-13); this PC's Home offsets only for a program that is not an Operation's.
+    /// </summary>
+    private JsonElement? EffectiveWorkOffsets() => scene.Operation is { } operation ? operation.EngineWorkOffsets() : settings.WorkOffsets;
+
+    /// <summary>
+    /// Saves the Operation's Work CS edited in the scene card: the work offset the Cimatron geometry is exported against
+    /// and that coordinate system's origin and rotation in the geometry's coordinates. Nothing is saved outside an Operation.
+    /// </summary>
+    private async Task<object> SaveWorkCsAsync(JsonElement value)
+    {
+        if (scene.Operation is not { } operation)
+            throw new InvalidOperationException("Open the program from a Case Operation to save its Work CS.");
+        if (value.ValueKind != JsonValueKind.Object) throw new InvalidOperationException("Invalid Work CS.");
+        static double Number(JsonElement parent, string name) =>
+            parent.TryGetProperty(name, out var number) && number.ValueKind == JsonValueKind.Number && number.TryGetDouble(out var result)
+                ? result
+                : 0;
+        static PlannerXyz Xyz(JsonElement parent, string name) =>
+            parent.TryGetProperty(name, out var xyz) && xyz.ValueKind == JsonValueKind.Object
+                ? new PlannerXyz(Number(xyz, "x"), Number(xyz, "y"), Number(xyz, "z"))
+                : new PlannerXyz(0, 0, 0);
+        var workOffset = value.TryGetProperty("workOffset", out var label) && label.ValueKind == JsonValueKind.String
+            ? label.GetString()
+            : null;
+        var current = operation.WorkCs;
+        var write = new CaseOperationCamSetupWrite(
+            current?.Source == "cimatron" ? "cimatron" : "manual",
+            string.IsNullOrWhiteSpace(workOffset) ? null : workOffset.Trim(),
+            Xyz(value, "originMm"),
+            Xyz(value, "rotationDeg"),
+            current?.Notes);
+        try
+        {
+            var (saved, message) = await operation.SaveWorkCsAsync(write);
+            SendStatus(message, saved is null ? "error" : "success");
+            return new { saved = saved is not null, message, workCs = PublicWorkCs(operation.WorkCs) };
+        }
+        catch (Exception exception) when (exception is PlannerApiException or HttpRequestException or TaskCanceledException)
+        {
+            return new { saved = false, message = $"The Work CS was not saved: {exception.Message}", workCs = PublicWorkCs(operation.WorkCs) };
+        }
+    }
+
     private static object? PublicWorkCs(CaseOperationCamSetup? workCs) => workCs is null
         ? null
         : new
@@ -1313,7 +1380,9 @@ internal sealed class NcViewerSession : IDisposable
                     machineName = scene.Card.MachineName,
                     picture = scene.Card.PictureDataUrl
                 },
-            workCs = PublicWorkCs(scene.WorkCs),
+            workCs = PublicWorkCs(WorkCs),
+            // Opened from a Case Operation: the Work CS and the work offsets are the Operation's, saved on the Server.
+            operationSetup = scene.Operation is not null,
             items = scene.Files.Select(file => SceneFileItem(file, imported: false))
                 .Concat(importedFiles.Select(file => SceneFileItem(file, imported: true)))
                 .ToArray(),
@@ -1470,7 +1539,7 @@ internal sealed class NcViewerSession : IDisposable
             machineParametersFile = settings.MachineParametersFile,
             toolTableFile = settings.ToolTableFile,
             programMemory = settings.ProgramMemory,
-            workOffsets = settings.WorkOffsets,
+            workOffsets = EffectiveWorkOffsets(),
             backgroundMode = settings.BackgroundMode == "solid" ? "solid" : "gradient",
             backgroundTop = NcViewerSettings.Color(settings.BackgroundTop) ?? NcViewerSettings.DefaultBackgroundTop,
             backgroundBottom = NcViewerSettings.Color(settings.BackgroundBottom) ?? NcViewerSettings.DefaultBackgroundBottom,

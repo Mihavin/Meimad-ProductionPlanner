@@ -17,7 +17,9 @@ internal sealed record NcViewerSceneFile(string Name, string Path, string Kind);
 /// opened Operation's Cimatron Work CS with its fixture and rest-material files.
 /// <paramref name="CompiledMachines"/> are the Machines' published Machine Designer definitions
 /// (schema v114) compiled for the engine; their meshes are in <paramref name="MachineModels"/>
-/// under the compiled machine id.
+/// under the compiled machine id. <paramref name="Operation"/> is the opened Operation's placement kept on the Server
+/// (its work offsets per viewer machine and its Work CS), which the viewer uses and saves instead of this PC's Home
+/// offsets; null when the viewer was not opened from an Operation or the Server cannot give it.
 /// </summary>
 internal sealed record NcViewerSetupScene(
     string? OperationTitle,
@@ -25,7 +27,8 @@ internal sealed record NcViewerSetupScene(
     IReadOnlyList<NcViewerSceneFile> Files,
     IReadOnlyDictionary<string, IReadOnlyList<NcViewerMachineModel>> MachineModels,
     IReadOnlyList<NcViewerCompiledMachine>? CompiledMachines = null,
-    NcViewerOperationCard? Card = null)
+    NcViewerOperationCard? Card = null,
+    NcViewerOperationSetup? Operation = null)
 {
     internal static NcViewerSetupScene Empty { get; } = new(null, null, [], new Dictionary<string, IReadOnlyList<NcViewerMachineModel>>());
 
@@ -71,9 +74,12 @@ internal static class NcViewerScenes
     {
         CaseOperationCamSetup? workCs = null;
         IReadOnlyList<NcViewerSceneFile> files = [];
+        var operation = await NcViewerOperationSetup.LoadAsync(api, caseId, caseOperationId, cancellationToken);
         try
         {
-            workCs = (await api.GetCaseOperationCamSetupAsync(caseId, caseOperationId, cancellationToken))?.Value;
+            workCs = operation is null
+                ? (await api.GetCaseOperationCamSetupAsync(caseId, caseOperationId, cancellationToken))?.Value
+                : operation.WorkCs;
         }
         catch (Exception exception) when (IsTransient(exception))
         {
@@ -89,7 +95,7 @@ internal static class NcViewerScenes
         }
         var compiled = await NcViewerMachineDefinitions.LoadAsync(api, cancellationToken: cancellationToken);
         var card = await CardAsync(api, caseId, caseOperationId, machineId, machines, cancellationToken);
-        return new NcViewerSetupScene(operationTitle, workCs, files, WithCompiledModels(MachineModels(machines, machineId), compiled), compiled, card);
+        return new NcViewerSetupScene(operationTitle, workCs, files, WithCompiledModels(MachineModels(machines, machineId), compiled), compiled, card, operation);
     }
 
     /// <summary>

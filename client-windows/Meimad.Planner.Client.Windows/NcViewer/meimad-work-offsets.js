@@ -8,9 +8,10 @@
  * The measured value is the latest VALID record of the Machine + Case Operation + NC release + offset.
  * The card warns when there is none, when the newest measurement belongs to another NC release, and
  * when a measurement waits for review; a history dialog lists every measurement. "Apply to Home
- * offsets" copies the measured values into the viewer's Home offsets for the viewer machine on this
- * PC (the same table the simulation positions the machine with); it changes neither the Cimatron
- * Work CS nor anything on the Server.
+ * offsets" copies the measured values into the viewer's Home offsets for the viewer machine (the same
+ * table the simulation positions the machine with): the opened Operation's work offsets on the Server
+ * (schema v120), or this PC's Home offsets for a program that is not an Operation's. It never changes
+ * the Cimatron Work CS or the measurement.
  *
  * The first part is pure (no DOM) so the client tests run it in V8; the second part builds the card.
  */
@@ -261,7 +262,7 @@
       return;
     }
     vscode.postMessage({ type: "workOffsetsChanged", machine: home.model.machineDefinition.id, offsets: saved });
-    setStatus(`Measured ${record.workOffset} copied to the Home offsets of ${home.model.machineDefinition.name || home.model.machineDefinition.id} on this PC.`);
+    setStatus(`Measured ${record.workOffset} copied to the Home offsets of ${home.model.machineDefinition.name || home.model.machineDefinition.id}.`);
   }
 
   let statusNode = null;

@@ -186,7 +186,8 @@
       // (meimad-scene.js). Meshes are fetched as binary STL from /__mesh/<token>.
       scene: Object.freeze({
         load: () => invoke("meimadScene"),
-        importCimatron: () => invoke("meimadSceneImport")
+        importCimatron: () => invoke("meimadSceneImport"),
+        saveWorkCs: (workCs) => invoke("meimadSceneSaveWorkCs", workCs)
       }),
       onMode: onChannel("meimad:mode"),
       variables: (payload) => send("meimad:variables", payload),

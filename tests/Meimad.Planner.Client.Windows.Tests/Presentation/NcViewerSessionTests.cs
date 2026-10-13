@@ -715,6 +715,149 @@ public sealed class NcViewerSessionTests : IDisposable
     });
 
     [Fact]
+    public void An_operations_work_offsets_and_work_cs_come_from_the_server_and_are_saved_there() => SingleThread.Run(async () =>
+    {
+        var api = new OperationSetupApi();
+        api.Offsets["haas-umc-500"] = api.Set("haas-umc-500", 1, ("G54", "X", -300));
+        var workCs = new CaseOperationCamSetup("op-10", "cimatron", "G54", new PlannerXyz(0, 0, 0), new PlannerXyz(0, 0, 0), "UCS 1", 2, DateTimeOffset.UnixEpoch);
+        var operation = NcViewerOperationSetup.ForTesting(api, "case-1", "op-10", api.Offsets.Values,
+            new CaseOperationCamSetupResource(workCs, "\"case-operation-cam-setup:op-10:v2\""));
+        var scene = NcViewerSetupScene.Empty with { WorkCs = workCs, Operation = operation };
+        var store = new NcViewerSettingsStore(Path.Combine(folder, "settings.json"));
+        var ui = new FakeUi();
+        using var session = new NcViewerSession(Request(readOnly: true) with { Scene = scene }, ui, store);
+
+        // The engine and the page get the Operation's values from the Server, not this PC's Home offsets.
+        var settings = await ui.InvokeAsync(session, "getSettings");
+        Assert.Equal(-300, settings.GetProperty("workOffsets").GetProperty("haas-umc-500").GetProperty("G54").GetProperty("X").GetDouble());
+        Assert.True((await ui.InvokeAsync(session, "meimadScene")).GetProperty("operationSetup").GetBoolean());
+
+        ui.Send(session, "preview:message", new
+        {
+            type = "workOffsetsChanged",
+            machine = "haas-umc-500",
+            offsets = new Dictionary<string, object> { ["G54"] = new { X = -250.5, Z = -400 }, ["G55"] = new { X = "not a number" } }
+        });
+        Assert.Contains("saved on the Server", await StatusAsync(ui, "Server"), StringComparison.Ordinal);
+        var put = Assert.Single(api.Saves);
+        Assert.Equal(("haas-umc-500", "\"tag:haas-umc-500:v1\""), (put.Machine, put.EntityTag));
+        Assert.Equal(-250.5, put.Offsets["G54"]["X"]);
+        Assert.Equal(-400, put.Offsets["G54"]["Z"]);
+        Assert.False(put.Offsets.ContainsKey("G55"));
+        Assert.Null(store.Load().WorkOffsets);
+        Assert.Equal(-250.5, (await ui.InvokeAsync(session, "getSettings"))
+            .GetProperty("workOffsets").GetProperty("haas-umc-500").GetProperty("G54").GetProperty("X").GetDouble());
+
+        // Someone saved first: nothing is overwritten, the current values are loaded and the user is told who.
+        api.StaleBy = "dana";
+        ui.Send(session, "preview:message", new { type = "workOffsetsChanged", machine = "haas-umc-500", offsets = new { G54 = new { X = 1 } } });
+        var refused = await StatusAsync(ui, "Not saved");
+        Assert.Contains("dana", refused, StringComparison.Ordinal);
+        Assert.Single(api.Saves);
+        api.StaleBy = null;
+
+        // No values left: the Operation's set for that machine is deleted.
+        ui.Send(session, "preview:message", new { type = "workOffsetsChanged", machine = "haas-umc-500", offsets = new { } });
+        Assert.Contains("cleared on the Server", await StatusAsync(ui, "cleared"), StringComparison.Ordinal);
+        Assert.Equal(["haas-umc-500"], api.Deletes);
+
+        // The Work CS is edited in the viewer and saved with its entity tag.
+        var saved = await ui.InvokeAsync(session, "meimadSceneSaveWorkCs", new
+        {
+            workOffset = "G55",
+            originMm = new { x = 1.5, y = 2, z = -3 },
+            rotationDeg = new { x = 0, y = 0, z = 90 }
+        });
+        Assert.True(saved.GetProperty("saved").GetBoolean());
+        Assert.Equal("G55", saved.GetProperty("workCs").GetProperty("workOffset").GetString());
+        var write = Assert.Single(api.WorkCsSaves);
+        Assert.Equal("\"case-operation-cam-setup:op-10:v2\"", write.EntityTag);
+        Assert.Equal(("cimatron", "UCS 1", -3d, 90d), (write.Value.Source, write.Value.Notes, write.Value.OriginMm.Z, write.Value.RotationDeg.Z));
+        Assert.Equal("G55", (await ui.InvokeAsync(session, "meimadScene")).GetProperty("workCs").GetProperty("workOffset").GetString());
+    });
+
+    [Fact]
+    public void Home_offsets_of_a_program_that_is_not_an_operations_stay_on_this_pc() => SingleThread.Run(async () =>
+    {
+        var store = new NcViewerSettingsStore(Path.Combine(folder, "settings.json"));
+        var ui = new FakeUi();
+        using var session = new NcViewerSession(Request(readOnly: false), ui, store);
+        Assert.False((await ui.InvokeAsync(session, "meimadScene")).GetProperty("operationSetup").GetBoolean());
+        ui.Send(session, "preview:message", new { type = "workOffsetsChanged", machine = "haas-umc-500", offsets = new { G54 = new { X = -12 } } });
+        Assert.Contains("on this PC", await StatusAsync(ui, "on this PC"), StringComparison.Ordinal);
+        Assert.Equal(-12, store.Load().WorkOffsets!.Value.GetProperty("haas-umc-500").GetProperty("G54").GetProperty("X").GetDouble());
+        var refused = await ui.InvokeRawAsync(session, "meimadSceneSaveWorkCs", new { workOffset = "G54" });
+        Assert.False(refused.GetProperty("ok").GetBoolean());
+    });
+
+    private static async Task<string> StatusAsync(FakeUi ui, string containing)
+    {
+        while (true)
+        {
+            var message = (await ui.NextEventAsync("app:status")).GetProperty("message").GetString() ?? string.Empty;
+            if (message.Contains(containing, StringComparison.Ordinal)) return message;
+        }
+    }
+
+    private sealed class OperationSetupApi : StubPlannerApiClient, IPlannerApiClient
+    {
+        public Dictionary<string, OperationViewerWorkOffsets> Offsets { get; } = new(StringComparer.Ordinal);
+        public List<(string Machine, IReadOnlyDictionary<string, IReadOnlyDictionary<string, double>> Offsets, string? EntityTag)> Saves { get; } = [];
+        public List<string> Deletes { get; } = [];
+        public List<(CaseOperationCamSetupWrite Value, string? EntityTag)> WorkCsSaves { get; } = [];
+        public string? StaleBy { get; set; }
+
+        public OperationViewerWorkOffsets Set(string machine, int version, params (string Label, string Axis, double Value)[] values) => new(
+            "op-10",
+            machine,
+            values.GroupBy(value => value.Label).ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyDictionary<string, double>)group.ToDictionary(value => value.Axis, value => value.Value)),
+            version,
+            $"\"tag:{machine}:v{version}\"",
+            DateTimeOffset.UnixEpoch,
+            "planner");
+
+        public Task<IReadOnlyList<OperationViewerWorkOffsets>> ListOperationViewerWorkOffsetsAsync(
+            string caseId, string caseOperationId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<OperationViewerWorkOffsets>>(Offsets.Values.ToArray());
+
+        public Task<OperationViewerWorkOffsets> SaveOperationViewerWorkOffsetsAsync(
+            string caseId, string caseOperationId, string viewerMachine,
+            IReadOnlyDictionary<string, IReadOnlyDictionary<string, double>> offsets, string? entityTag,
+            CancellationToken cancellationToken = default)
+        {
+            if (StaleBy is not null)
+                throw new PlannerApiException(System.Net.HttpStatusCode.PreconditionFailed, "resource_version_stale", "changed",
+                    conflict: new PlannerConflict("Operation work offsets", StaleBy, DateTimeOffset.UnixEpoch, "Reload."));
+            Saves.Add((viewerMachine, offsets, entityTag));
+            var version = Offsets.TryGetValue(viewerMachine, out var current) ? current.Version + 1 : 1;
+            var saved = new OperationViewerWorkOffsets("op-10", viewerMachine, offsets, version,
+                $"\"tag:{viewerMachine}:v{version}\"", DateTimeOffset.UnixEpoch, "planner");
+            Offsets[viewerMachine] = saved;
+            return Task.FromResult(saved);
+        }
+
+        public Task DeleteOperationViewerWorkOffsetsAsync(
+            string caseId, string caseOperationId, string viewerMachine, string entityTag, CancellationToken cancellationToken = default)
+        {
+            Deletes.Add(viewerMachine);
+            Offsets.Remove(viewerMachine);
+            return Task.CompletedTask;
+        }
+
+        public Task<CaseOperationCamSetupResource> SaveCaseOperationCamSetupAsync(
+            string caseId, string caseOperationId, CaseOperationCamSetupWrite value, string? entityTag,
+            string clientId, long editGeneration, CancellationToken cancellationToken = default)
+        {
+            WorkCsSaves.Add((value, entityTag));
+            var saved = new CaseOperationCamSetup(caseOperationId, value.Source, value.WorkOffset, value.OriginMm, value.RotationDeg,
+                value.Notes, 3, DateTimeOffset.UnixEpoch);
+            return Task.FromResult(new CaseOperationCamSetupResource(saved, "\"case-operation-cam-setup:op-10:v3\""));
+        }
+    }
+
+    [Fact]
     public void Viewer_without_an_operation_has_an_empty_scene() => SingleThread.Run(async () =>
     {
         var ui = new FakeUi();

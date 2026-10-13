@@ -1,5 +1,26 @@
 # Implementation Plan
 
+## One Work CS source in the NC viewer (2026-10-13, schema v120)
+
+Owner decision 2026-10-13: the Work CS imported from Cimatron and the viewer's Home offsets were two sources that could
+disagree; "Cimatron goes to the viewer and can be edited in the viewer; used for everything — toolpath, geometries".
+The work offsets are absolute machine coordinates (owner answer: "absolute G54 machine coordinates").
+
+- *Server.* Schema v120 `case_operation_viewer_work_offsets` (per Case Operation and NC viewer machine, label → axis →
+  mm/deg, version); `GET/PUT/DELETE /api/v1/cases/{caseId}/operations/{operationId}/viewer-work-offsets[/{viewerMachine}]`
+  with entity tags, `cases.edit`, 412 conflicts with who/when, audit events. Tests:
+  `CaseOperationViewerWorkOffsetApiTests`.
+- *Client.* `NcViewerOperationSetup` loads the Operation's work offsets and Work CS when the viewer opens from an
+  Operation; the engine and the page get only those (this PC's Home offsets apply only without an Operation); the
+  Home offsets card and *Apply to Home offsets* save to the Server; *Edit Work CS…* in the *Machine & setup* card saves
+  the Work CS with its entity tag. A stale save reloads the current values and names who changed them. Tests:
+  `NcViewerSessionTests` (Operation and PC cases), `OperationViewerWorkOffsetsApiClientTests`.
+- *Keyed by viewer machine, not MachineID.* The engine places the program per viewer machine; a published Machine
+  definition has its own compiled id, so a factory Machine gets its own values, while Machines sharing an installed
+  machine type share them. Recorded as a reversible choice (the key is a column; a MachineID could be added).
+- *Not done.* Values saved on a PC before v120 are not copied to Operations (they were per PC and not per Operation);
+  the Cimatron import does not fill the absolute work offsets (the package has no machine coordinates).
+
 ## NC viewer 3D stock simulation, verification and visual layer (2026-10-12; implemented locally)
 
 **Source:** the owner's execution plan and specifications of 2026-10-12 (`docs/meimad-execution-plan.md`,
@@ -134,8 +155,9 @@ keeps it as append-only evidence and the NC viewer shows it next to the Cimatron
   Production Packages or the Offset Loader (that would change immutable package artifacts and the commissioned Haas
   loader). See OD-042.
 - *Haas G110-G129* are stored as `G154 P1`-`P20` (same registers). Inch reports are stored in millimetres.
-- *NC viewer.* "Apply to Home offsets" writes this PC's Home offsets of the viewer machine (what the simulation uses for
-  the machine frame); the Cimatron Work CS and the Server are never changed.
+- *NC viewer.* "Apply to Home offsets" writes the Home offsets of the viewer machine (what the simulation uses for
+  the machine frame): since v120 the Operation's on the Server when opened from an Operation, else this PC's; the
+  Cimatron Work CS and the measurement are never changed.
 
 **Open decisions:**
 - **OD-042 (Proposed) - Report from the Offset Loader.** Whether the generated Offset Loader (or every package) should
