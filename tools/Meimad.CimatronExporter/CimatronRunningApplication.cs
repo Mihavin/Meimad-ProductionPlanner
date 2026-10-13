@@ -34,6 +34,13 @@ internal static class CimatronRunningApplication
         }
     }
 
+    /// <summary>How many Cimatron processes run for this user (several make a running-object-table pick ambiguous).</summary>
+    internal static int CimatronProcessCount() =>
+        System.Diagnostics.Process.GetProcesses().Count(process =>
+        {
+            using (process) return process.ProcessName.StartsWith("cimatron", StringComparison.OrdinalIgnoreCase);
+        });
+
     internal static bool CimatronRunning() =>
         System.Diagnostics.Process.GetProcesses().Any(process =>
         {

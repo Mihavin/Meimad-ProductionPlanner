@@ -36,7 +36,11 @@ internal sealed record CimatronCapabilities(
     }
 }
 
-internal sealed record CimatronDocumentInfo(string Name, string? FilePath, string? PartNumber);
+/// <summary>
+/// The active NC document: its name, path, Cimatron identity (<c>PID</c>) and whether it has unsaved changes
+/// (<c>IsModified</c>; null when Cimatron does not say).
+/// </summary>
+internal sealed record CimatronDocumentInfo(string Name, string? FilePath, string? PartNumber, string? DocumentId = null, bool? Modified = null);
 
 /// <summary>
 /// The coordinate frame a stock export is written in: the NC procedure UCS (mode A, Cimatron <c>cmNcProcUcs</c>) or

@@ -30,6 +30,18 @@ internal sealed class CimatronComApi : ICimatronApi
     /// <summary>How the last <see cref="Connect"/> reached Cimatron (null: the registered ProgID).</summary>
     internal static string? ConnectedThrough { get; private set; }
 
+    /// <summary>
+    /// How the document was found: the AppAccess member (GetActiveApplication: the Cimatron window the user works in) or
+    /// "running object table" (the first Cimatron Windows lists).
+    /// </summary>
+    internal static string? ConnectedBy { get; private set; }
+
+    /// <summary>
+    /// True when the document came from the running object table while several Cimatron processes run: which one is the
+    /// user's is not known, so no export is made from it (Meimad import specification §5).
+    /// </summary>
+    internal static bool SourceAmbiguous { get; private set; }
+
     /// <summary>The vtable binder over Cimatron's interop assemblies (null: IDispatch only).</summary>
     internal static CimatronBinder? Binder { get; private set; }
 
@@ -42,6 +54,12 @@ internal sealed class CimatronComApi : ICimatronApi
     /// <summary>The late-bound member names, in one place so a field test can adjust them.</summary>
     internal static class Members
     {
+        /// <summary>ICimDocument.PID: Cimatron's identity of the document.</summary>
+        internal static readonly string[] DocumentId = ["PID", "GetPID"];
+
+        /// <summary>ICimDocument.IsModified(out bool): unsaved changes.</summary>
+        internal const string IsModified = "IsModified";
+
         internal static readonly string[] GetApplication = ["GetActiveApplication", "GetApplication"];
         internal const string GetActiveDoc = "GetActiveDoc";
         internal const string Model = "Model";
@@ -156,6 +174,8 @@ internal sealed class CimatronComApi : ICimatronApi
         // GetActiveApplication first: at Meimad (2026-10-12) GetApplication reached a Cimatron instance with no open
         // document while the user's Cimatron had one. The first instance with an active document wins.
         ConnectTrace.Clear();
+        ConnectedBy = null;
+        SourceAmbiguous = false;
         object? application = null;
         object? document = null;
         CimatronApiException? accessFailure = null;
@@ -193,6 +213,7 @@ internal sealed class CimatronComApi : ICimatronApi
             if (candidateDocument is null) continue;
             application = candidate;
             document = candidateDocument;
+            ConnectedBy = member;
             break;
         }
 
@@ -208,6 +229,8 @@ internal sealed class CimatronComApi : ICimatronApi
 
             ConnectedThrough = $"{ConnectedThrough ?? "the registered " + name}; application object from the running object table";
             document = ActiveDocument(application, "running object table");
+            ConnectedBy = "running object table";
+            SourceAmbiguous = document is not null && OperatingSystem.IsWindows() && CimatronRunningApplication.CimatronProcessCount() > 1;
         }
 
         if (document is null) TraceOpenDocuments(application);
@@ -411,7 +434,11 @@ internal sealed class CimatronComApi : ICimatronApi
             throw new CimatronApiException("cimatron_no_nc_document", "No document is open in Cimatron.");
         if (Find(Members.PostByUcs) is null && Find(Members.PostToAll) is null)
             throw new CimatronApiException("cimatron_no_nc_document", "The active Cimatron document is not an NC document (no post-processing methods).");
-        return new CimatronDocumentInfo(TryGetString(document, Members.Name) ?? "NC document", TryGetString(document, Members.Path), null);
+        if (SourceAmbiguous)
+            throw new CimatronApiException("cimatron_source_ambiguous",
+                "Several Cimatron sessions are open and the active one could not be asked: click the Cimatron window with the NC document, or close the other Cimatron sessions, then retry.");
+        return new CimatronDocumentInfo(TryGetString(document, Members.Name) ?? "NC document", TryGetString(document, Members.Path), null,
+            TryGetString(document, Members.DocumentId), DocumentModified(document));
     }
 
     public IReadOnlyList<CimatronProcedure> GetProcedures()
@@ -817,6 +844,21 @@ internal sealed class CimatronComApi : ICimatronApi
             return collection.GetType().InvokeMember("Item", BindingFlags.InvokeMethod | BindingFlags.GetProperty, null, collection, [index], CultureInfo.InvariantCulture);
         }
         catch (Exception exception) when (exception is COMException or TargetInvocationException or MissingMethodException or ArgumentException or InvalidCastException)
+        {
+            return null;
+        }
+    }
+
+    // ICimDocument.IsModified(out IsModified): true while the document has unsaved changes; null when it cannot be asked.
+    private static bool? DocumentModified(object document)
+    {
+        if (!HasMember(document, Members.IsModified)) return null;
+        try
+        {
+            var (result, outputs) = Invoke(document, Members.IsModified);
+            return outputs.OfType<bool>().Cast<bool?>().FirstOrDefault() ?? result as bool?;
+        }
+        catch (CimatronApiException)
         {
             return null;
         }

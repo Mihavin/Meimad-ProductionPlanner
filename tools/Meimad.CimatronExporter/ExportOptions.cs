@@ -26,6 +26,24 @@ internal sealed record ExportOptions
 
     /// <summary>The Cimatron toolpath to export (one package per toolpath); required when the document has several.</summary>
     public string? Toolpath { get; init; }
+
+    /// <summary>
+    /// CAM operations chosen by Cimatron id (Meimad client import): whole toolpaths and single procedures. They must
+    /// belong to one setup; the NC is posted for exactly these nodes.
+    /// </summary>
+    public IReadOnlyList<int>? ToolpathIds { get; init; }
+    public IReadOnlyList<int>? ProcedureIds { get; init; }
+
+    /// <summary>The document the selection was made in; another active document stops the export (document_changed).</summary>
+    public string? ExpectedDocumentPath { get; init; }
+
+    /// <summary>Stop when the Cimatron document has unsaved changes (the package must match the saved CAM file).</summary>
+    public bool RequireSavedDocument { get; init; }
+
+    /// <summary>The Meimad import the package is made for (manifest <c>meimad</c>).</summary>
+    public Meimad.Planner.SimulationPackage.Manifest.MeimadImportContext? ImportContext { get; init; }
+
+    public bool HasIdSelection => ToolpathIds is { Count: > 0 } || ProcedureIds is { Count: > 0 };
     public string? PartNumber { get; init; }
     public string? PartName { get; init; }
     public string? MachineExternalId { get; init; }
@@ -95,6 +113,10 @@ internal sealed record ExportOptions
           (no argument) or --ui      open the one-click export window (toolbar button, desktop shortcut);
                                      presets: --toolpath, --post, --ucs, --operation, --case-folder,
                                      --case-name; --auto exports at once when every field is known
+          --list-json --result <f>   for the Meimad client: the active NC document's setups, toolpaths and
+                                     procedures as JSON in <f>
+          --export-json <req> --result <f>  for the Meimad client: export the CAM operations chosen in the
+                                     JSON request <req>; the JSON answer goes to <f>
           --from-post                for the Cimatron post-processor hook: starts the window detached and
                                      returns at once; ignored while an export or the window is running
           --probe                    list the Cimatron API members this PC exposes and exit; without
@@ -143,6 +165,10 @@ internal sealed record ExportOptions
                     "--operation-name" => options with { OperationName = Value() },
                     "--procedure" => options with { ProcedureId = Int(Value()) },
                     "--toolpath" => options with { Toolpath = Value() },
+                    "--toolpath-ids" => options with { ToolpathIds = IdList(Value()) },
+                    "--procedure-ids" => options with { ProcedureIds = IdList(Value()) },
+                    "--expected-document" => options with { ExpectedDocumentPath = Value() },
+                    "--require-saved" => options with { RequireSavedDocument = true },
                     "--part-number" => options with { PartNumber = Value() },
                     "--part-name" => options with { PartName = Value() },
                     "--machine-id" => options with { MachineExternalId = Value() },
@@ -177,6 +203,9 @@ internal sealed record ExportOptions
             return (null, "--package-name must be a plain folder name.");
         return (options, null);
     }
+
+    private static IReadOnlyList<int> IdList(string text) =>
+        text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Int).Distinct().ToArray();
 
     private static int Int(string value) =>
         int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) && number >= 0

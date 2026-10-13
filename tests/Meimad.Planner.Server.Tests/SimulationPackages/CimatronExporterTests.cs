@@ -502,7 +502,10 @@ internal sealed class FakeCimatronApi : ICimatronApi
         GeometryInUcs: GeometryInUcs, ToolList: true, PostSelected: SupportsPostSelected);
 
     public CimatronDocumentInfo GetActiveNcDocument() =>
-        HasDocument ? new("GOLDEN-PART.elt", DocumentPath, null) : throw new CimatronApiException("cimatron_no_nc_document", "No document is open.");
+        HasDocument ? new("GOLDEN-PART.elt", DocumentPath, null, DocumentId, Modified) : throw new CimatronApiException("cimatron_no_nc_document", "No document is open.");
+
+    public string? DocumentId { get; init; } = "PID-GOLDEN";
+    public bool? Modified { get; init; } = false;
 
     public IReadOnlyList<CimatronProcedure> GetProcedures() => Procedures;
 

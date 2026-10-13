@@ -13,6 +13,9 @@ public sealed record SimulationPackageManifest
     public string? PackageId { get; init; }
     public ExporterInfo? Exporter { get; init; }
     public SourceInfo? Source { get; init; }
+
+    /// <summary>The Meimad import this package was made for (Case, Operation, the data version it was based on).</summary>
+    public MeimadImportContext? Meimad { get; init; }
     public PartInfo? Part { get; init; }
     public OperationInfo? Operation { get; init; }
     public MachineInfo? Machine { get; init; }
@@ -68,6 +71,37 @@ public sealed record SourceInfo
     public string? ExportedAtUtc { get; init; }
     public string? Host { get; init; }
     public string? User { get; init; }
+
+    /// <summary>The CAM document's file path as Cimatron reports it.</summary>
+    public string? DocumentPath { get; init; }
+
+    /// <summary>Cimatron's document identity (ICimDocument.PID), when it reports one.</summary>
+    public string? DocumentId { get; init; }
+
+    /// <summary>The Cimatron setup the selected CAM operations belong to.</summary>
+    public string? Setup { get; init; }
+
+    /// <summary>The CAM operations the package was made from, by Cimatron id (names are labels only).</summary>
+    public IReadOnlyList<CamOperationReference>? Operations { get; init; }
+}
+
+/// <summary>One selected CAM operation: a whole toolpath, or one procedure of a toolpath.</summary>
+public sealed record CamOperationReference
+{
+    /// <summary><c>toolpath</c> or <c>procedure</c>.</summary>
+    public string Kind { get; init; } = "procedure";
+    public int Id { get; init; }
+    public string? Name { get; init; }
+    public string? Toolpath { get; init; }
+}
+
+/// <summary>The Meimad side of an import started from a Case Operation.</summary>
+public sealed record MeimadImportContext
+{
+    public string? ImportId { get; init; }
+    public string? CaseId { get; init; }
+    public string? CaseOperationId { get; init; }
+    public string? BasedOnVersion { get; init; }
 }
 
 public sealed record PartInfo

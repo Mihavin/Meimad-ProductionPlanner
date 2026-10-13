@@ -10,6 +10,10 @@ return exitCode;
 
 static int Run(string[] args)
 {
+    // --list-json / --export-json: the Meimad client's helper process (Import from Cimatron on a Case Operation).
+    if (ClientBridge.Handles(args))
+        return ClientBridge.Run(args, () => CimatronComApi.Connect(Environment.GetEnvironmentVariable("MEIMAD_CIMATRON_PROGID")));
+
     // No argument, --ui or --from-post: the one-click exporter window (toolbar button, shortcut, post-processor hook).
     if (LauncherPlan.ParseStart(args) is { } start) return LauncherHost.Run(start);
 

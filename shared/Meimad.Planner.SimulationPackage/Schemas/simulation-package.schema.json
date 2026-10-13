@@ -32,7 +32,35 @@
         "ncFileName": { "type": "string", "maxLength": 255 },
         "exportedAtUtc": { "type": "string", "maxLength": 40 },
         "host": { "type": "string", "maxLength": 128 },
-        "user": { "type": "string", "maxLength": 128 }
+        "user": { "type": "string", "maxLength": 128 },
+        "documentPath": { "type": "string", "maxLength": 1024 },
+        "documentId": { "type": "string", "maxLength": 128 },
+        "setup": { "type": "string", "maxLength": 200 },
+        "operations": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "id"],
+            "properties": {
+              "kind": { "type": "string", "enum": ["toolpath", "procedure"] },
+              "id": { "type": "integer", "minimum": 0 },
+              "name": { "type": "string", "maxLength": 200 },
+              "toolpath": { "type": "string", "maxLength": 200 }
+            }
+          }
+        }
+      }
+    },
+    "meimad": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "importId": { "type": "string", "maxLength": 64 },
+        "caseId": { "type": "string", "maxLength": 64 },
+        "caseOperationId": { "type": "string", "maxLength": 64 },
+        "basedOnVersion": { "type": "string", "maxLength": 64 }
       }
     },
     "part": {

@@ -85,8 +85,14 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
                     NcFileName = Path.GetFileName(nc.Path),
                     ExportedAtUtc = clock.GetUtcNow().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
                     Host = Environment.MachineName,
-                    User = Environment.UserName
+                    User = Environment.UserName,
+                    DocumentPath = state.Document.FilePath,
+                    DocumentId = state.Document.DocumentId,
+                    Setup = state.Selection?.SetupName ?? state.Toolpath?.SetupName,
+                    Operations = state.Selection?.Operations
+                        ?? (state.Toolpath is { } single ? [new CamOperationReference { Kind = "toolpath", Id = single.Id, Name = single.Name }] : null)
                 },
+                Meimad = options.ImportContext,
                 Part = options.PartNumber is null && options.PartName is null && state.Document.PartNumber is null
                     ? null
                     : new PartInfo { Number = options.PartNumber ?? state.Document.PartNumber, Name = options.PartName },
@@ -167,7 +173,7 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
     /// coordinates = mode B). The stock export uses the same frame as the fixtures and the part.
     /// </summary>
     private sealed record ExportState(CimatronDocumentInfo Document, IReadOnlyList<CimatronProcedure> Procedures, string? StockFile,
-        bool StockFileDiscovered, bool GeometryInProcedureUcs, CimatronToolpath? Toolpath = null)
+        bool StockFileDiscovered, bool GeometryInProcedureUcs, CimatronToolpath? Toolpath = null, CamSelection? Selection = null)
     {
         public CimatronUcsFrame Frame => GeometryInProcedureUcs ? CimatronUcsFrame.Procedure : CimatronUcsFrame.Model;
     }
@@ -191,12 +197,36 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
             return null;
         }
 
+        if (options.ExpectedDocumentPath is not null
+            && !string.Equals(Path.GetFullPath(options.ExpectedDocumentPath), document.FilePath is null ? null : Path.GetFullPath(document.FilePath), StringComparison.OrdinalIgnoreCase))
+        {
+            log.Error("state", "document_changed",
+                $"The active Cimatron document is now '{document.FilePath ?? document.Name}', not '{options.ExpectedDocumentPath}' the operations were chosen in; activate that document or choose again.");
+            return null;
+        }
+
+        if (options.RequireSavedDocument && document.Modified == true)
+        {
+            log.Error("state", "document_unsaved", $"'{document.Name}' has unsaved changes in Cimatron: save it there, then import again.");
+            return null;
+        }
+
         var procedures = api.GetProcedures();
 
         // One package is one toolpath (one machine program): choose it when the document has several.
         var toolpaths = api.GetToolpaths();
         CimatronToolpath? toolpath = null;
-        if (options.Toolpath is not null)
+        CamSelection? selection = null;
+        if (options.HasIdSelection)
+        {
+            selection = CamSelection.From(options, toolpaths, procedures, log);
+            if (selection is null) return null;
+            procedures = selection.Procedures;
+            toolpath = selection.StockToolpath;
+            if (!api.Capabilities.PostSelected)
+                log.Error("state", "post_selection_unavailable", "This Cimatron cannot post selected operations (no PostByUcsByIdVec).");
+        }
+        else if (options.Toolpath is not null)
         {
             toolpath = toolpaths.FirstOrDefault(item => string.Equals(item.Name, options.Toolpath, StringComparison.OrdinalIgnoreCase));
             if (toolpath is null)
@@ -290,7 +320,7 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         if (log.HasErrors) return null;
         var inUcs = GeometryInProcedureUcs(options);
         log.Ok("state", $"Active NC document '{document.Name}'{(toolpath is null ? "" : $", toolpath '{toolpath.Name}'")}, {procedures.Count} procedure(s), UCS '{options.Ucs}', geometry in {(inUcs ? "the procedure UCS (mode A)" : "part-model coordinates (mode B)")}.");
-        return new ExportState(document, procedures, stockFile, stockDiscovered, inUcs, toolpath);
+        return new ExportState(document, procedures, stockFile, stockDiscovered, inUcs, toolpath, selection);
     }
 
     private static string DescribeToolpaths(IReadOnlyList<CimatronToolpath> toolpaths) =>
@@ -315,7 +345,20 @@ internal sealed class PackageExporter(ICimatronApi api, TimeProvider clock)
         IReadOnlyList<string> files;
         try
         {
-            if (options.Toolpath is not null && state.Toolpath is { } toolpath)
+            if (state.Selection is { } chosen)
+            {
+                // PostByUcsByIdVec with the chosen nodes; if Cimatron writes nothing for toolpath nodes, with their procedures.
+                var name = NcOutputName(chosen.Name);
+                files = api.PostSelected(options.Post!, folder, chosen.NodeIds, options.Ucs!, name);
+                var procedureNodes = state.Procedures.Select(item => item.Id).ToArray();
+                if (!files.Any(path => PackagePaths.IsUnder(path, folder) && File.Exists(path)) && !procedureNodes.SequenceEqual(chosen.NodeIds))
+                {
+                    log.Warning("nc", "post_by_procedures",
+                        $"Posting nodes {string.Join(", ", chosen.NodeIds)} wrote nothing; posted their {procedureNodes.Length} procedure(s) instead.");
+                    files = api.PostSelected(options.Post!, folder, procedureNodes, options.Ucs!, name);
+                }
+            }
+            else if (options.Toolpath is not null && state.Toolpath is { } toolpath)
             {
                 // PostByUcsByIdVec with the toolpath node; if Cimatron writes nothing for it, with its procedures.
                 var name = NcOutputName(toolpath.Name);
