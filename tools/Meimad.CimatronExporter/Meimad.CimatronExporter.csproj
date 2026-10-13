@@ -14,7 +14,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>Meimad.CimatronExporter</RootNamespace>
     <AssemblyName>Meimad.CimatronExporter</AssemblyName>
-    <Version>0.3.0</Version>
+    <Version>0.3.1</Version>
     <IsPackable>false</IsPackable>
     <!-- The one-click exporter window (started with no argument, ui or from-post) is Windows Forms. -->
     <UseWindowsForms>true</UseWindowsForms>

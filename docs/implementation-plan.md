@@ -344,9 +344,12 @@ source saved for **Open in Cimatron**, **Open simulation** and re-import.
   created; a registration that could not reach the Server keeps the prepared data set for **Retry registration**
   (idempotent by manifest SHA-256), or for **Import Cimatron package...** later.
 
-**Not yet verified:** the window against Cimatron on the CAM PC (§13 acceptance on a workstation with Cimatron), the
-client MSI built with the exporter (`build-installers.ps1` / `verify-installers.ps1` not run in this change), the Server
-and client deployment of schema v119.
+**First runs on the CAM PC (2026-10-13, release 0.1.211):** the window read the document and exported. Two findings:
+the Meimad postprocessor `Haas_UMC-500ss_5axTTCB_RTCP-Plus` did not exist in Cimatron under that name (Cimatron:
+`Haas_UMC_5axTTCB_RTCP-Plus`; renamed in Setup), and with the right name Cimatron's post-processor hung three times while
+writing into the package folder on the share. Exporter 0.3.1 (adapter `cimatron-com-7`) lets Cimatron write into a short
+local folder and copies the result into the package. The three abandoned staging folders were removed from the share.
+Still to confirm: a completed import from the CAM PC with 0.3.1.
 
 **Open decision (Proposed, 2026-10-12): subprograms in a simulation package.** The package manifest has one `files.nc`
 and no subprogram role, while a Mazak post can write a main program plus subprogram files. Until decided, the exporter

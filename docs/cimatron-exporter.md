@@ -115,6 +115,15 @@ starts it separately; a PC without Cimatron shows the exporter's answer (`cimatr
 - A document found only through the running object table while several Cimatron sessions run is refused
   (`cimatron_source_ambiguous`); `GetActiveApplication` (the Cimatron window the user works in) is not ambiguous.
 - The export holds the session lock (`Local\Meimad.CimatronExporter.Export`) like the window and the console.
+- Cimatron writes every file into a short local folder (`%TEMP%\MCX\<8 characters>`; adapter `cimatron-com-7`, exporter
+  0.3.1) and the exporter copies the result into the package, keeping subfolders and leaving out the post-processor's
+  `TEMP_POST` working files. On 2026-10-13 three client imports posted the Haas UMC toolpath straight into the package
+  folder on the share (`\\192.168.0.240\data\customers files\…\.staging\…\nc`, about 200 characters with spaces):
+  Cimatron's post-processor wrote `TEMP_POST\fort.28` (10.7 MB) and an empty `fort.31`, then hung and Cimatron froze.
+  Every earlier post that worked went to a short local folder, as Cimatron's own post dialog does.
+- Meimad postprocessor names must equal the Cimatron post names: Cimatron answers "The NC Post file is not valid" for a
+  name it does not have (2026-10-13: Meimad `Haas_UMC-500ss_5axTTCB_RTCP-Plus` against Cimatron
+  `Haas_UMC_5axTTCB_RTCP-Plus`; the Meimad postprocessor was renamed).
 
 ## One-click export (exporter 0.2.0)
 

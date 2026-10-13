@@ -24,7 +24,7 @@ namespace Meimad.CimatronExporter;
 /// </summary>
 internal sealed class CimatronComApi : ICimatronApi
 {
-    internal const string Version = "cimatron-com-6";
+    internal const string Version = "cimatron-com-7";
     internal const string AppAccessProgId = "CimAppAccess.AppAccess";
 
     /// <summary>How the last <see cref="Connect"/> reached Cimatron (null: the registered ProgID).</summary>
@@ -506,11 +506,14 @@ internal sealed class CimatronComApi : ICimatronApi
         return result;
     }
 
+    // Every post goes to a short local folder first (CimatronWorkFolder): Cimatron's post-processor hung writing into the
+    // long package folder on the share.
     public IReadOnlyList<string> PostByUcs(string postName, string outputFolder, bool startHome, string ucsName)
     {
-        var before = Snapshot(outputFolder);
-        var (_, outputs) = Invoke(Require(Members.PostByUcs), Members.PostByUcs, postName, outputFolder, startHome, ucsName);
-        return Created(outputFolder, before, outputs);
+        using var work = CimatronWorkFolder.Create();
+        var before = Snapshot(work.Path);
+        var (_, outputs) = Invoke(Require(Members.PostByUcs), Members.PostByUcs, postName, work.Path, startHome, ucsName);
+        return work.CopyTo(Created(work.Path, before, outputs), outputFolder);
     }
 
     /// <summary>
@@ -519,31 +522,47 @@ internal sealed class CimatronComApi : ICimatronApi
     /// </summary>
     public IReadOnlyList<string> PostSelected(string postName, string outputFolder, IReadOnlyList<int> nodeIds, string ucsName, string outputName)
     {
-        var before = Snapshot(outputFolder);
-        var (result, outputs) = Invoke(Require(Members.PostSelected), Members.PostSelected, postName, outputFolder, nodeIds.ToArray(), ucsName, outputName);
-        var created = Created(outputFolder, before, outputs);
+        using var work = CimatronWorkFolder.Create();
+        var before = Snapshot(work.Path);
+        var (result, outputs) = Invoke(Require(Members.PostSelected), Members.PostSelected, postName, work.Path, nodeIds.ToArray(), ucsName, outputName);
+        var created = Created(work.Path, before, outputs);
         if (created.Length == 0 && (outputs.OfType<bool>().Cast<bool?>().LastOrDefault() ?? result as bool?) == false)
             throw new CimatronApiException("cimatron_call_failed", $"PostByUcsByIdVec answered false for nodes {string.Join(", ", nodeIds)}.");
-        return created;
+        return work.CopyTo(created, outputFolder);
     }
 
     public IReadOnlyList<CimatronToolpath> GetToolpaths() => ProcessManager()?.Toolpaths ?? [];
 
     public IReadOnlyList<string> PostToAll(string postName, string outputFolder, bool startHome)
     {
-        var before = Snapshot(outputFolder);
-        var (_, outputs) = Invoke(Require(Members.PostToAll), Members.PostToAll, postName, outputFolder, startHome);
-        return Created(outputFolder, before, outputs);
+        using var work = CimatronWorkFolder.Create();
+        var before = Snapshot(work.Path);
+        var (_, outputs) = Invoke(Require(Members.PostToAll), Members.PostToAll, postName, work.Path, startHome);
+        return work.CopyTo(Created(work.Path, before, outputs), outputFolder);
     }
 
-    public void ExportCuttersAndHolders(string cuttersCsv, string holdersCsv, string materialsCsv) =>
-        Call(Require(Members.CuttersCsv), Members.CuttersCsv, Array.Empty<object>(), cuttersCsv, holdersCsv, materialsCsv);
+    public void ExportCuttersAndHolders(string cuttersCsv, string holdersCsv, string materialsCsv)
+    {
+        using var work = CimatronWorkFolder.Create();
+        Call(Require(Members.CuttersCsv), Members.CuttersCsv, Array.Empty<object>(),
+            Path.Combine(work.Path, "cutters.csv"), Path.Combine(work.Path, "holders.csv"), Path.Combine(work.Path, "materials.csv"));
+        work.CopyFile("cutters.csv", cuttersCsv);
+        work.CopyFile("holders.csv", holdersCsv);
+        work.CopyFile("materials.csv", materialsCsv);
+    }
 
     /// <summary>
     /// <c>NcExportJobsData(iOutputPath, out oNumberOfJobs)</c> takes an output path; whether Cimatron writes one file at that
     /// path or files into that folder is settled by <see cref="JobsExportFiles.Normalize"/> afterwards.
     /// </summary>
     public void ExportJobsData(string xmlPath)
+    {
+        using var work = CimatronWorkFolder.Create();
+        ExportJobsDataInto(Path.Combine(work.Path, Path.GetFileName(xmlPath)));
+        work.CopyAllTo(Path.GetDirectoryName(xmlPath)!);
+    }
+
+    private void ExportJobsDataInto(string xmlPath)
     {
         var exportFolder = Path.Combine(Path.GetDirectoryName(xmlPath)!, "jobs-export");
         Directory.CreateDirectory(exportFolder);
@@ -562,17 +581,23 @@ internal sealed class CimatronComApi : ICimatronApi
     public void ExportRemainingStock(int procedureId, CimatronUcsFrame frame, string stlPath)
     {
         var ucsType = frame == CimatronUcsFrame.Procedure ? Members.ProcedureUcsType : Members.ModelUcsType;
-        var (result, outputs) = Invoke(Require(Members.RemainingStock), Members.RemainingStock, procedureId, ucsType, stlPath);
+        using var work = CimatronWorkFolder.Create();
+        var local = Path.Combine(work.Path, "stock.stl");
+        var (result, outputs) = Invoke(Require(Members.RemainingStock), Members.RemainingStock, procedureId, ucsType, local);
         var created = outputs.OfType<bool>().Cast<bool?>().FirstOrDefault() ?? result as bool?;
-        if (created == false && !File.Exists(stlPath))
+        if (created == false && !File.Exists(local))
             throw new CimatronApiException("cimatron_call_failed", $"Cimatron wrote no remaining stock for procedure {procedureId} (ExportProceduresRemainingStock answered false).");
+        work.CopyFile("stock.stl", stlPath);
     }
 
     public void ExportInitialStock(CimatronUcsFrame frame, string stlPath)
     {
         var owner = FindAny(Members.InitialStock)
             ?? throw new CimatronApiException("capability_unavailable", "This Cimatron exposes no initial-stock export.");
-        Call(owner.Target, owner.Name, frame == CimatronUcsFrame.Procedure ? Members.ProcedureUcsType : Members.ModelUcsType, stlPath);
+        using var work = CimatronWorkFolder.Create();
+        Call(owner.Target, owner.Name, frame == CimatronUcsFrame.Procedure ? Members.ProcedureUcsType : Members.ModelUcsType,
+            Path.Combine(work.Path, "stock.stl"));
+        work.CopyFile("stock.stl", stlPath);
     }
 
     public IReadOnlyList<CimatronGeometryFile> ExportPartGeometry(string ucsName, string folder)

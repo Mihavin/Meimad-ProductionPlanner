@@ -12,6 +12,41 @@ namespace Meimad.Planner.Server.Tests.SimulationPackages;
 public sealed class CimatronAccessorTests
 {
     [Fact]
+    public void Cimatron_writes_into_a_short_local_folder_and_the_result_is_copied_where_the_package_wants_it()
+    {
+        var root = Directory.CreateTempSubdirectory("meimad-work-").FullName;
+        try
+        {
+            var target = Path.Combine(root, "share with spaces", ".staging", "nc");
+            string path;
+            using (var work = CimatronWorkFolder.Create(root))
+            {
+                path = work.Path;
+                Assert.True(Path.GetFileName(path).Length == 8);
+                var program = Path.Combine(work.Path, "DOC.DIR", "Haas_UMC", "O6000.NC");
+                var fort = Path.Combine(work.Path, CimatronWorkFolder.PostWorkingFolder, "fort.28");
+                Directory.CreateDirectory(Path.GetDirectoryName(program)!);
+                Directory.CreateDirectory(Path.GetDirectoryName(fort)!);
+                File.WriteAllText(program, "O6000");
+                File.WriteAllText(fort, "DAT");
+                var outside = Path.Combine(root, "elsewhere.nc");
+
+                var copied = work.CopyTo([program, fort, outside], target);
+
+                Assert.Equal([Path.Combine(target, "DOC.DIR", "Haas_UMC", "O6000.NC"), outside], copied);
+                Assert.Equal("O6000", File.ReadAllText(copied[0]));
+                Assert.False(Directory.Exists(Path.Combine(target, CimatronWorkFolder.PostWorkingFolder)));
+            }
+
+            Assert.False(Directory.Exists(path));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
     public async Task Cimatron_cutters_and_holders_csv_give_sizes_by_magazine_number()
     {
         var folder = Directory.CreateTempSubdirectory("meimad-tool-csv-").FullName;
