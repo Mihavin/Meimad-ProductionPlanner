@@ -8,7 +8,8 @@
 //   haas-lathe          Haas lathe (Classic/NGC): one-block G71/G72/G73/G74/G75/G76 cycles and the
 //                       one-block G90/G92/G94 turning, threading and facing cycles.
 //   mazak-tilt-a-as-b   Mazak Variaxis: the A tilt axis is presented to the interpreter as B, the
-//                       axis its tilted-plane / tool-centre-point solver moves.
+//                       axis its tilted-plane / tool-centre-point solver moves; "T1 M6 T28" mounts T1 and
+//                       prepares T28 (split into "T1 M6" and "T28").
 //
 // Okuma OSP is a different language, not a FANUC dialect (G71 is a thread cycle there, G85 a LAP
 // roughing cycle): its programs are never translated here. meimad-okuma.js executes them.
@@ -90,6 +91,28 @@ function identity(text) {
   return { lines, map: lines.map((_, index) => ({ line: index + 1 })), notes: [] };
 }
 
+// ----- Mazak: "T1 M6 T28" mounts T1 and prepares T28 ---------------------------------------------
+
+// On a Mazak (owner, 2026-10-13) the T before M6 goes to the spindle and a T after M6 is the next tool, prepared for the
+// following change. The vendored mill interpreter keeps the last T of a block as the tool M06 mounts, so such a block is
+// split: the original block without the T after M6, then that T alone (the interpreter's pending tool). Comments and
+// macro variables (T#1) are left alone. Returns null when the block has no T on both sides of M6.
+function splitToolPreselect(line) {
+  const text = String(line);
+  const comment = [];
+  for (const match of text.matchAll(/\([^)]*\)?|;.*$/g)) comment.push([match.index, match.index + match[0].length]);
+  const outside = (index) => !comment.some(([start, end]) => index >= start && index < end);
+  const change = [...text.matchAll(/(?<![A-Z#])M0*6(?![\d.])/gi)].find((match) => outside(match.index));
+  if (!change) return null;
+  const tools = [...text.matchAll(/(?<![A-Z#])T\s*(\d+)(?![\d.])/gi)].filter((match) => outside(match.index));
+  const before = tools.filter((match) => match.index < change.index);
+  const after = tools.filter((match) => match.index > change.index);
+  if (before.length === 0 || after.length === 0) return null;
+  let mounted = text;
+  for (const match of [...after].reverse()) mounted = mounted.slice(0, match.index) + mounted.slice(match.index + match[0].length);
+  return { mounted: mounted.replace(/[ \t]+$/, ""), prepared: `T${Number(after.at(-1)[1])}` };
+}
+
 // ----- Mazak Variaxis: A tilt programmed as A, interpreted as B --------------------------------
 
 function mazakTiltAsB(text) {
@@ -102,6 +125,14 @@ function mazakTiltAsB(text) {
       translated = line.replace(/\([^)]*\)|(?<![A-Z#])A(?=\s*[-+.\d[#])/gi, (match) =>
         match.startsWith("(") ? match : match.replace(/A/i, "B"));
       out.note("The A tilt axis is interpreted as B (the interpreter's tilt axis); rotary values are shown as B.");
+    }
+    const preselect = splitToolPreselect(translated);
+    if (preselect) {
+      // Both output lines map to the original block, so the viewer highlights the row the user wrote.
+      out.push(preselect.mounted, index + 1);
+      out.push(preselect.prepared, index + 1);
+      out.note("Mazak \"T… M6 T…\": the T before M6 goes to the spindle, the T after M6 is prepared for the next change.");
+      return;
     }
     out.push(translated, index + 1);
   });
@@ -243,4 +274,4 @@ function translate(text, machine) {
   }
 }
 
-module.exports = { translate, identity, stripComments, readWords };
+module.exports = { translate, identity, stripComments, readWords, splitToolPreselect };

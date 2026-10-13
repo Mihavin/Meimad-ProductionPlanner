@@ -157,6 +157,22 @@ public sealed class NcEngineRuntimeTests : IDisposable
     }
 
     [Fact]
+    public void Mazak_mounts_the_tool_before_m6_and_prepares_the_tool_after_it()
+    {
+        // Owner, 2026-10-13: on a Mazak "T1 M6 T28" puts T1 in the spindle and prepares T28 for the next change. Read as
+        // one block, the interpreter would mount T28 at once and the later "T28 M6" would change nothing (one change).
+        const string program = "%\nO6000\nG21 G17 G90 G94\nT1 M6 T28\nG54 G0 X0 Y0 A0 C0\nG43 Z100. H1\nG1 Z10. F500.\n"
+            + "G0 Z100.\nT28 M6\nG43 Z100. H28\nG1 Z10. F500.\nG0 Z100.\nM30\n%\n";
+
+        var mazak = runtime.Analyze(new NcEngineAnalysisRequest(program, "MAZAK_MATRIX_EIA", "mazak-variaxis-i-500"));
+
+        Assert.Equal("mazak-tilt-a-as-b", mazak.Translation);
+        Assert.Equal(2, mazak.ToolChangeCount);
+        Assert.Contains(mazak.Warnings, warning => warning.Contains("the T after M6 is prepared", StringComparison.Ordinal));
+        Assert.Empty(mazak.Errors);
+    }
+
+    [Fact]
     public void Dialect_picks_a_meimad_machine_when_the_program_names_none()
     {
         const string lathe = "G50 S2000\nG96 S150 M03\nT0101\nG99\nG0 X50. Z2.\nG1 Z-20. F0.2\nM30\n";

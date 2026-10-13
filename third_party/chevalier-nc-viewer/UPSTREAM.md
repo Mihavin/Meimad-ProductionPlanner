@@ -21,7 +21,7 @@ upstream placeholder returns. Meimad-specific behavior lives outside this folder
   calls (analysis, preview parse, tool table, NC-dialect interpreter choice).
 - `shared/Meimad.Planner.NcEngine/Scripts/meimad-dialects.js` — translations for controls of the
   FANUC G-code family the interpreters do not read natively (Haas lathe one-block cycles, Mazak
-  Variaxis A tilt as B), with a line map back to the original program.
+  Variaxis A tilt as B, Mazak `T1 M6 T28` tool preselect), with a line map back to the original program.
 - `shared/Meimad.Planner.NcEngine/Scripts/meimad-okuma.js` — the Okuma OSP-P200L lathe executor.
   OSP is not a FANUC dialect and is never translated to FANUC cycles: the executor runs the
   program with OSP rules and expands LAP (G85-G88), thread (G31-G33, G71/G72) and grooving

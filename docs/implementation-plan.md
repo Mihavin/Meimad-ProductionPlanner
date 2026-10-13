@@ -288,9 +288,17 @@ relaunched detached; `--auto`), which fills every field from the active document
 `<Case working folder>\Gcode\<Case name>\<Operation>\cimatron-export`, finds the target/fixture STL in `Meimad geometry`
 beside the NC document, and holds a session lock while exporting so the exporter's own post cannot start another export.
 Not yet seen on the CAM PC: the window against Cimatron, the Cimatron 2026.0 toolbar dialog, and the GPP2 command that
-starts an external program. **Open item:** the NC engine has no Mazak Variaxis i-500 profile (only
-Haas UMC-500 with its O09013 rule, Doosan DVF-5000, Chevalier), so the viewer cannot place these tilted sections until one
-is added with the machine's A/C senses. Still to confirm: the import and NC viewer check, and the layout check on a
+starts an external program. **Open item (corrected 2026-10-13):** the NC engine does have a Meimad Mazak Variaxis i-500
+profile (`shared/Meimad.Planner.NcEngine/Definitions`; the earlier note looked only at the vendored machines), with its
+rotary centre and senses still `verified: false`. To place these tilted sections the viewer needs the Mazak's own O9013 in
+its program-memory folder and the measured rotary centre and senses.
+
+**Mazak tool preselect (owner, 2026-10-13).** On a Mazak, `T1 M6 T28` puts T1 in the spindle and prepares T28 for the
+next change. The vendored mill interpreter keeps the last T of a block for M06, so it mounted T28 at once. The Mazak
+translation (`meimad-dialects.js`, `mazak-tilt-a-as-b`) now splits such a block into `T1 M6` and `T28`, both mapped to the
+original row; blocks with one T are unchanged. Test: `NcEngineRuntimeTests.Mazak_mounts_the_tool_before_m6_and_prepares_the_tool_after_it`
+(two tool changes; unsplit, the interpreter counts one). FANUC mills without a translation still read the last T; whether
+their posts write the same form is to be confirmed per control. Still to confirm: the import and NC viewer check, and the layout check on a
 tilted active UCS.
 
 **Open decision (Proposed, 2026-10-12): subprograms in a simulation package.** The package manifest has one `files.nc`

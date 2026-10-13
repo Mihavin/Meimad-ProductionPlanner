@@ -244,8 +244,11 @@ turned-table frame: as written only 34% of the tilted cutting points lie within 
 with q = Rz(C)·Rx(A)·p (part zero = `MODEL` origin) 99.9% do (97.7% within 2 mm; the sign of C is not decided by this
 symmetric stock). The flat face-milling passes lie on the stock top (Z 113.5) with the usual over-travel. The work offset is G57 (124 blocks, no other); exporter 0.1.8 takes the
 Work CS work offset from the NC when `--work-offset` is not given (before, the manifest said G54). So the stock,
-the `MODEL` frame and the NC agree, but the NC viewer needs a Mazak Variaxis i-500 A/C trunnion profile with the O9013
-orbit-home rule (as the Haas UMC-500 profile has) to draw the tilted sections in place.
+the `MODEL` frame and the NC agree. The NC engine has a Meimad Mazak Variaxis i-500 profile
+(`shared/Meimad.Planner.NcEngine/Definitions`, A/C trunnion, rotary centre and senses still `verified: false`), but O9013
+is a program on the Mazak: the viewer can follow `G65 P9013` only with the machine's O9013 in the Mazak's program-memory
+folder (as the Haas UMC-500 does with its O09013), and the rotary centre and senses must be measured before the tilted
+sections are drawn in place. The program's `T1 M6 T28` blocks mount T1 and prepare T28 (Mazak translation, 2026-10-13).
 
 ### Earlier run on the CAM PC (after the eighth probe and the first export attempt)
 
