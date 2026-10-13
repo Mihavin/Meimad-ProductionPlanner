@@ -139,6 +139,35 @@
   }
 
   /**
+   * Work coordinates (relative to the program's first work offset, the model frame) to the drawing frame the engine
+   * draws the toolpath in. The engine stores each toolpath point as the inverse of (workpiece mount at zero rotary
+   * axes · frame offset) applied to the machine position, so on a Machine Designer definition whose table mount is not
+   * at the machine origin the toolpath is not drawn in plain work coordinates; geometry measured from the work offset
+   * (Cimatron stock, fixtures, part, the simulation stock) must go through the same conversion to sit on it.
+   * `partMatrix` is that 4x4 row-major matrix at zero joints (meimad-axes-core.js partMatrix), `frame` the model frame.
+   * Returns { matrix: 3x3 row-major, offset } with q = matrix · d + offset, or null when it is the identity or unknown.
+   */
+  function workToDrawing(partMatrix, frame) {
+    if (!Array.isArray(partMatrix) || partMatrix.length < 12 || !frame) return null;
+    const m = partMatrix.map(number);
+    const f = vector(frame);
+    const matrix = [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]];
+    const v = { x: f.x - m[3], y: f.y - m[7], z: f.z - m[11] };
+    const offset = {
+      x: matrix[0] * v.x + matrix[1] * v.y + matrix[2] * v.z,
+      y: matrix[3] * v.x + matrix[4] * v.y + matrix[5] * v.z,
+      z: matrix[6] * v.x + matrix[7] * v.y + matrix[8] * v.z
+    };
+    return isIdentityPlacement(matrix, offset, 1) ? null : { matrix, offset };
+  }
+
+  /** Positions in work coordinates placed into the drawing frame (workToDrawing); a copy when there is no placement. */
+  function placeInDrawing(positions, placement) {
+    if (!placement) return Float32Array.from(positions);
+    return transformPositions(positions, placement.matrix, { x: 0, y: 0, z: 0 }, 1, placement.offset);
+  }
+
+  /**
    * Whether an imported Cimatron file is rest material ("stock") or a fixture: Cimatron writes
    * stock exports as STOCK_OP1.stl or into an NC\STOCK folder; everything else is a fixture.
    */
@@ -186,6 +215,8 @@
     modelToDrawing,
     placeOnNode,
     modelPointToWork,
+    workToDrawing,
+    placeInDrawing,
     offsetShift,
     guessKind,
     bounds,

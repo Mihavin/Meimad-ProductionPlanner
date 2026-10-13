@@ -209,6 +209,45 @@ public sealed class NcViewerAxesAndSceneCoreTests : IDisposable
         Assert.Equal(["stock", "stock", "fixture", "stock"], result.GetProperty("kinds").EnumerateArray().Select(value => value.GetString()!));
     }
 
+    [Fact]
+    public void Geometry_measured_from_the_work_offset_is_placed_in_the_frame_the_engine_draws_the_toolpath_in()
+    {
+        // A table mounted away from the machine origin (Machine Designer definition, Haas UMC #15 on 2026-10-13):
+        // the engine stores a toolpath point as inverse(mount · frame) applied to the machine position G54 + p.
+        var result = Run("""
+            const model = (mount) => ({
+              kind: "mill",
+              frame: { x: -256, y: -203, z: -457, label: "G54" },
+              view: { unitScale: 1 },
+              machineDefinition: { kinematics: { nodes: [
+                { id: "base" },
+                { id: "head", parent: "base", type: "fixed", toolMount: true },
+                { id: "table", parent: "base", type: "fixed", origin: mount, workpieceMount: true }
+              ] } }
+            });
+            const mounted = model([254, 203, 1016]);
+            const rows = A.partMatrix(mounted, K, null);
+            const placement = S.workToDrawing(rows, mounted.frame);
+            const p = { x: -114.85, y: -2.5, z: 140 };
+            const engine = K.transformPoint(K.invertRigid(rows), { x: -256 + p.x, y: -203 + p.y, z: -457 + p.z });
+            const placed = Array.from(S.placeInDrawing([p.x, p.y, p.z], placement));
+            const plain = model([0, 0, 0]);
+            return {
+              engine, placed, offset: placement.offset,
+              identity: S.workToDrawing(A.partMatrix(plain, K, null), plain.frame),
+              copy: Array.from(S.placeInDrawing([1, 2, 3], null)),
+              missing: S.workToDrawing(undefined, mounted.frame)
+            };
+            """);
+        AssertPoint(result.GetProperty("offset"), -254, -203, -1016);
+        var engine = result.GetProperty("engine");
+        AssertArray(result.GetProperty("placed"), engine.GetProperty("x").GetDouble(), engine.GetProperty("y").GetDouble(), engine.GetProperty("z").GetDouble());
+        AssertArray(result.GetProperty("placed"), -368.85, -205.5, -876);
+        Assert.Equal(JsonValueKind.Null, result.GetProperty("identity").ValueKind);
+        AssertArray(result.GetProperty("copy"), 1, 2, 3);
+        Assert.Equal(JsonValueKind.Null, result.GetProperty("missing").ValueKind);
+    }
+
     [Theory]
     [InlineData(@"J:\DPD\30P\NC\STOCK_OP1.stl", "stock")]
     [InlineData(@"J:\DPD\1199\NC\STOCK\FIN_GAS_1.stl", "stock")]

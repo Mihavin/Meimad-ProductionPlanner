@@ -249,6 +249,21 @@
     return { x: axis("X"), y: axis("Y"), z: axis("Z") };
   }
 
+  // The stock is measured from a work offset, the toolpath is drawn in the engine's frame (the machine's workpiece
+  // mount and the program's first work offset, meimad-scene-core.js workToDrawing): the shift between the two, plus
+  // offsetShift, puts the stock on the toolpath. A rotation of the mount at zero rotary axes is not applied to the stock.
+  function drawingShift() {
+    const shift = offsetShift();
+    if (!model || model.kind === "lathe" || !model.frame || !window.MeimadScene?.workToDrawing) return shift;
+    const rows = window.MeimadAxes?.partMatrix && window.CncKinematics
+      ? window.MeimadAxes.partMatrix(model, window.CncKinematics, null)
+      : null;
+    const placement = window.MeimadScene.workToDrawing(rows, model.frame);
+    return placement
+      ? { x: shift.x + placement.offset.x, y: shift.y + placement.offset.y, z: shift.z + placement.offset.z }
+      : shift;
+  }
+
   // Says what the stock is measured from, so a stock placed on an offset without values is not mistaken
   // for one placed on the real fixture.
   function describeReference() {
@@ -297,8 +312,8 @@
       return;
     }
     const margin = Math.max(1, (bounds.maxX - bounds.minX) * 0.05);
-    // The toolpath is in the program zero; the fields are measured from the chosen offset.
-    const shift = offsetShift();
+    // The toolpath is in the engine's drawing frame; the fields are measured from the chosen offset.
+    const shift = drawingShift();
     for (const [low, high, axis] of [["minX", "maxX", "x"], ["minY", "maxY", "y"], ["minZ", "maxZ", "z"]]) {
       if (Number.isFinite(bounds[low])) bounds[low] -= shift[axis];
       if (Number.isFinite(bounds[high])) bounds[high] -= shift[axis];
@@ -506,7 +521,7 @@
   }
 
   function stockForWorker() {
-    const shift = offsetShift();
+    const shift = drawingShift();
     if (model.kind === "lathe") {
       const cylinder = definition.cylinder || {};
       return { od: cylinder.diameter, id: cylinder.innerDiameter || 0, length: cylinder.length, frontZ: cylinder.frontZ ?? 0 };
@@ -1323,9 +1338,33 @@
     }
   }
 
+  // The cut stock is in the engine's drawing frame; the export is measured from the program zero (the first work
+  // offset), as the next Operation's stock STL is, so the shift of the machine's workpiece mount comes off.
+  function workCoordinatesStl(buffer) {
+    const mount = { x: 0, y: 0, z: 0 };
+    const total = drawingShift();
+    const work = offsetShift();
+    mount.x = total.x - work.x;
+    mount.y = total.y - work.y;
+    mount.z = total.z - work.z;
+    if (!mount.x && !mount.y && !mount.z) return buffer;
+    const view = new DataView(buffer);
+    const count = buffer.byteLength >= 84 ? view.getUint32(80, true) : 0;
+    for (let triangle = 0; triangle < count; triangle += 1) {
+      for (let vertex = 0; vertex < 3; vertex += 1) {
+        const at = 84 + triangle * 50 + 12 + vertex * 12;
+        if (at + 12 > buffer.byteLength) return buffer;
+        view.setFloat32(at, view.getFloat32(at, true) - mount.x, true);
+        view.setFloat32(at + 4, view.getFloat32(at + 4, true) - mount.y, true);
+        view.setFloat32(at + 8, view.getFloat32(at + 8, true) - mount.z, true);
+      }
+    }
+    return buffer;
+  }
+
   async function exportMachined(toNextOperation) {
     try {
-      const stl = await exportStl();
+      const stl = workCoordinatesStl(await exportStl());
       const bytes = new Uint8Array(stl);
       let binary = "";
       for (let index = 0; index < bytes.length; index += 0x8000) {

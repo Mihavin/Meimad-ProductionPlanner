@@ -20,6 +20,14 @@ The work offsets are absolute machine coordinates (owner answer: "absolute G54 m
   machine type share them. Recorded as a reversible choice (the key is a column; a MachineID could be added).
 - *Not done.* Values saved on a PC before v120 are not copied to Operations (they were per PC and not per Operation);
   the Cimatron import does not fill the absolute work offsets (the package has no machine coordinates).
+- *Geometry on the toolpath (0.1.215, owner report 2026-10-13).* The engine stores toolpath points as
+  inverse(workpiece mount at zero rotary axes · first work offset) of the machine position, so on a published Machine
+  Designer definition whose table mount is away from the machine origin (Haas UMC #15) the Cimatron stock, fixtures
+  and part, drawn in plain work coordinates, sat off the toolpath by the mount, whatever G54 was. They now go through
+  the same conversion (`meimad-scene-core.js` `workToDrawing`), as do the simulation stock (box, cylinder, STL, *Use
+  as stock*) and *From toolpath*; *Export machined stock* takes the mount off again so the file stays in work
+  coordinates. A rotation of the mount at zero rotary axes is applied to drawn geometry but not to the simulation
+  stock (translation only). Test: `NcViewerAxesAndSceneCoreTests` (matches the engine's own conversion).
 
 ## NC viewer 3D stock simulation, verification and visual layer (2026-10-12; implemented locally)
 

@@ -200,6 +200,20 @@
 
   // ----- fixtures and rest material -----------------------------------------------------------
 
+  // Work coordinates to the frame the engine draws the toolpath in (the machine's workpiece mount and the program's
+  // first work offset; meimad-scene-core.js workToDrawing). Null on a lathe or without machine kinematics.
+  function drawingPlacement() {
+    if (!model || model.kind === "lathe" || !model.frame) return null;
+    const axes = window.MeimadAxes;
+    const kinematics = window.CncKinematics;
+    const rows = axes && kinematics && axes.partMatrix ? axes.partMatrix(model, kinematics, null) : null;
+    return core.workToDrawing(rows, model.frame);
+  }
+
+  function placeItem(positions, workCs, shift, placement) {
+    return core.placeInDrawing(core.modelToDrawing(positions, workCs, { scale: scaleOf(), shift }), placement);
+  }
+
   function removeFixtures() {
     if (fixtureGroup && hooks) {
       hooks.contentRoot.remove(fixtureGroup);
@@ -234,11 +248,12 @@
     const requested = model;
     const workCs = scene.workCs;
     const shift = core.offsetShift(model, workCs && workCs.workOffset);
+    const placement = drawingPlacement();
     for (const item of wanted) {
       try {
         const positions = await fetchMesh(item.meshUrl);
         if (model !== requested || fixtureGroup !== group) return;
-        const placed = core.modelToDrawing(positions, workCs, { scale: scaleOf(), shift });
+        const placed = placeItem(positions, workCs, shift, placement);
         group.add(item.kind === "stock"
           ? meshObject(placed, REST_COLOR, elements.restSeeThrough && elements.restSeeThrough.checked ? 0.4 : 1)
           : isPart(item) ? meshObject(placed, PART_COLOR, 0.4) : meshObject(placed, FIXTURE_COLOR, 0.9));
@@ -443,12 +458,13 @@
     const wanted = new Set(kinds || ["fixture", "part", "finished-part"]);
     const workCs = scene.workCs;
     const shift = core.offsetShift(model, workCs && workCs.workOffset);
+    const placement = drawingPlacement();
     const result = [];
     for (const item of scene.items) {
       if (!wanted.has(item.kind) || !item.meshUrl) continue;
       try {
         const positions = await fetchMesh(item.meshUrl);
-        result.push({ kind: isPart(item) ? "part" : item.kind, name: item.name || kindLabel(item.kind), path: item.path, positions: core.modelToDrawing(positions, workCs, { scale: scaleOf(), shift }) });
+        result.push({ kind: isPart(item) ? "part" : item.kind, name: item.name || kindLabel(item.kind), path: item.path, positions: placeItem(positions, workCs, shift, placement) });
       } catch (error) {
         status(`${item.name} could not be loaded: ${message(error)}`, "error");
       }
