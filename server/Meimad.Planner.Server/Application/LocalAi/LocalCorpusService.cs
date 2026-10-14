@@ -369,6 +369,8 @@ internal sealed class LocalCorpusService(SqliteDatabase database, TimeProvider c
         "DMIS" => " (CMM inspection program; nominal values and tolerances as programmed, confirm against the current drawing)",
         "RTF" => " (RTF document)",
         "STEP" => " (STEP 3D model metadata; no dimensions)",
+        "CIMATRON" => " (Cimatron file: document attributes or export package; no toolpaths or geometry)",
+        "MHT" => " (web archive page, for example a Cimatron tool sheet)",
         _ => "",
     };
 

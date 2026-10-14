@@ -141,6 +141,155 @@ public sealed class LocalCorpusFormatTests
         }
     }
 
+    [Fact]
+    public async Task Cimatron_documents_tool_sheets_and_export_packages_are_indexed_as_labelled_text()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var root = Path.Combine(Path.GetTempPath(), "MeimadCorpus", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        try
+        {
+            await File.WriteAllBytesAsync(Path.Combine(root, "30P-NC1.elt"), Elt());
+            File.Copy(Path.Combine(root, "30P-NC1.elt"), Path.Combine(root, "30P-NC1.elt.bac")); // Cimatron backup: not indexed
+            await File.WriteAllBytesAsync(Path.Combine(root, "old.elt"), [0x01, 0x02, 0x03, 0x04]); // not a document container
+            var package = Path.Combine(root, "cimatron-export");
+            Directory.CreateDirectory(Path.Combine(package, "tools"));
+            Directory.CreateDirectory(Path.Combine(package, "metadata"));
+            await File.WriteAllTextAsync(Path.Combine(package, "tools", "TP_MODEL.TOOLS.mht"), Mht(), Encoding.ASCII);
+            await File.WriteAllTextAsync(Path.Combine(package, "tools", "tool-table.json"), """
+                {"schemaVersion":1,"units":"mm","tools":[{"number":29,"toolIdentifier":"T29","name":"MERASEK_16","type":"flat","diameterMm":16,
+                 "fluteLengthMm":20,"gaugeLengthMm":52,"holder":{"name":"HOLDER-50_NEW"}}]}
+                """);
+            await File.WriteAllTextAsync(Path.Combine(package, "metadata", "jobs.xml"), """
+                <?xml version="1.0" encoding="UTF-16"?>
+                <JobManager><Job Name="" ID="1"><JobParamters><Parameter MachineTime="00:01:11"/></JobParamters>
+                <Post Name="FANUC_4X"><RefernceUcs Name="MODEL"/><DateAndTime Value="13-07-2017 14:34:15"/>
+                <GCodeFiles><File Name="C:\WWD\nc1.DIR\FANUC_4X\TP_MODEL_0.CNC"/></GCodeFiles></Post></Job></JobManager>
+                """, Encoding.Unicode);
+            await File.WriteAllTextAsync(Path.Combine(package, "manifest.json"), """
+                {"schemaVersion":1,"part":{"number":"30P450172200-002","name":"FITTING"},
+                 "source":{"application":"Cimatron","project":"30P-NC1","documentPath":"J:\\DPD\\30P\\30P-NC1.elt","setup":"M_MODE",
+                   "ncFileName":"6000.EIA","exportedAtUtc":"2026-10-12T14:27:33Z","host":"OLEG-PC","user":"oleg",
+                   "operations":[{"kind":"toolpath","id":4,"name":"TP_MODEL","toolpath":"TP_MODEL"}]},
+                 "exporter":{"version":"0.3.1","cimatronVersion":"2026,0301"},
+                 "operation":{"number":"010","name":"TP_MODEL","procedureName":"2.5 Axes-Profile Open Contour_5"},
+                 "machine":{"postprocessor":"Mazak_5x_Variaxis_i-500_TTCA_RTCP"},
+                 "coordinateSystem":{"name":"MODEL","workOffset":"G54","originMm":{"x":0,"y":0,"z":0},"rotationDeg":{"x":0,"y":0,"z":90}},
+                 "files":{"stock":[{"kind":"initial","path":"geometry/stock.stl"}],"fixtures":[{"path":"geometry/vise.stl"}],
+                   "toolTable":{"path":"tools/tool-table.json"},"jobsXml":{"path":"metadata/jobs.xml"},"traversal":{"path":"../../secret.json"}}}
+                """);
+            // Another folder's manifest.json is not a Cimatron package and stays unsupported.
+            await File.WriteAllTextAsync(Path.Combine(root, "manifest.json"), """{"name":"other"}""");
+
+            var service = fixture.App.Services.GetRequiredService<LocalCorpusService>();
+            var settings = await service.UpdateAsync(new(0, [root]), "admin", default);
+            var result = await service.IndexAsync(settings.Version, default);
+            Assert.Equal(3, result.IndexedFiles);
+
+            var document = await ContentAsync(fixture, "30P-NC1.elt");
+            foreach (var expected in new[]
+            {
+                "Cimatron document (native .elt)", "File name: 30P-NC1.elt", "Document type: NC (CAM program file)", "Units: mm",
+                "Part size: 400.0 X 231.0 X 316.0 mm", "Created: 02-Jul-17 2:17:47 PM by DIMITRY on DIMITRY-PC (Cimatron build 13,0400)",
+                "Last modified: 9/16/2026 12:23:55 PM by oleg on OLEG-PC", "Imported from: J:\\DPD\\30P\\30P-001.STP (STEP)",
+                "NC setups: 3 (M_MODE, OP20 & side, unnamed)", "Toolpath blocks: 2",
+            })
+                Assert.Contains(expected, document, StringComparison.Ordinal);
+            var match = Assert.Single(await service.SearchAsync("DIMITRY-PC", default));
+            Assert.Equal(("30P-NC1.elt", "CIMATRON"), (match.Title, match.Extraction));
+            Assert.Contains("Cimatron file", match.MatchReason, StringComparison.Ordinal);
+
+            var sheet = await ContentAsync(fixture, "cimatron-export/tools/TP_MODEL.TOOLS.mht");
+            Assert.Contains("T29 | MERASEK_16 | 16. | HOLDER-50_NEW", sheet, StringComparison.Ordinal);
+            Assert.Contains("רשימת כלים", sheet, StringComparison.Ordinal);
+            Assert.Contains("Number מספר | Name | Dia | Holder", sheet, StringComparison.Ordinal);
+            Assert.DoesNotContain("Shuki", sheet, StringComparison.Ordinal);
+            Assert.DoesNotContain("font-family", sheet, StringComparison.Ordinal);
+            Assert.Equal("MHT", Assert.Single(await service.SearchAsync("HOLDER-50_NEW", default), hit => hit.Extraction == "MHT").Extraction);
+
+            var summary = await ContentAsync(fixture, "cimatron-export/manifest.json");
+            foreach (var expected in new[]
+            {
+                "Cimatron export package", "Part: 30P450172200-002 FITTING", "Cimatron file: J:\\DPD\\30P\\30P-NC1.elt", "Setup: M_MODE",
+                "Exported: 2026-10-12T14:27:33Z by oleg on OLEG-PC", "Postprocessor: Mazak_5x_Variaxis_i-500_TTCA_RTCP",
+                "Work CS: MODEL G54 origin X0 Y0 Z0 rotation X0 Y0 Z90", "- CAM operation: toolpath TP_MODEL (toolpath TP_MODEL)",
+                "Stock file: geometry/stock.stl (initial)", "Fixture file: geometry/vise.stl",
+                "- T29 | MERASEK_16 | flat | diameter 16 mm | flute 20 mm | gauge 52 mm | holder HOLDER-50_NEW",
+                "- FANUC_4X | UCS MODEL | 13-07-2017 14:34:15 | machine time 00:01:11 | TP_MODEL_0.CNC",
+            })
+                Assert.Contains(expected, summary, StringComparison.Ordinal);
+            Assert.Equal("CIMATRON", Assert.Single(await service.SearchAsync("Variaxis", default)).Extraction);
+            // Each Cimatron text is cached by file hash like PDF text.
+            Assert.Equal(3L, await fixture.ScalarAsync("SELECT COUNT(*) FROM local_ai_extraction_cache WHERE extraction IN ('CIMATRON','MHT')"));
+        }
+        finally
+        {
+            Assert.StartsWith(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "MeimadCorpus")) + Path.DirectorySeparatorChar, Path.GetFullPath(root));
+            Directory.Delete(root, true);
+        }
+    }
+
+    private static byte[] Elt()
+    {
+        // .exl as Cimatron writes it: one XML document, the document's attribute list first, then a list per data block.
+        static string List(params (string Id, string Value)[] values) =>
+            "<Cim:Attr_list>" +
+            string.Concat(values.Select(value => $"<Cim:Attr Id=\"{value.Id}\" Type=\"string\" User=\"System\" Access=\"r\">{value.Value}</Cim:Attr>")) +
+            "<Cim:Attr Id=\"GRID_SIZE\" Type=\"int\" User=\"DS\" Access=\"no\"></Cim:Attr></Cim:Attr_list>";
+        using var buffer = new MemoryStream();
+        using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            void Entry(string name, byte[] bytes)
+            {
+                using var stream = zip.CreateEntry(name, CompressionLevel.NoCompression).Open();
+                stream.Write(bytes);
+            }
+            Entry(".exl", Encoding.UTF8.GetBytes("<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<Cim:Doc xmlns:Cim=\"CimDdlShema.xml\">" +
+                List(("CN_UNITS_OF_MEASURE", "mm"), ("ELITE_DOC_TYPE", "NC"), ("Cim_E_CREATED_BY", "DIMITRY"), ("Cim_E_CREATED_FROM", "DIMITRY-PC"),
+                    ("Cim_E_CREATION_DATE", "02-Jul-17 2:17:47 PM"), ("Cim_E_CREATED_IN_PASS", "13,0400"),
+                    ("DI::ORIG_FILENAME", @"J:\DPD\30P\30P-001.STP"), ("DI::ORIG_FILEFORMAT", "STEP"),
+                    ("TMPL::Visible_Part_Size", "400.0 X 231.0 X 316.0"), ("Cim_E_MODIFIED_BY", "oleg"), ("Cim_E_MODIFIED_FROM", "OLEG-PC"),
+                    ("Cim_E_MODIFICATION_DATE", "9/16/2026 12:23:55 PM")) +
+                "<Cim:DB_list><Cim:DB_BINARY Id=\"ProgramDataBlock\" SubType=\"ProgramDataBlock\">" + List(("DATABLOCK_DATA_VERSION", "2")) + "</Cim:DB_BINARY>" +
+                List(("ELITE_DOC_TYPE", "NC-Setup"), ("CN_TITLE", "M_MODE")) +
+                List(("ELITE_DOC_TYPE", "NC-Setup"), ("CN_TITLE", "OP20 &amp; side")) +
+                List(("ELITE_DOC_TYPE", "NC-Setup")) +
+                List(("MotNumber", "83"), ("EndPoint", "114.85 52.5 140.")) +
+                List(("MotNumber", "134")) + "</Cim:DB_list></Cim:Doc>"));
+            Entry(".sab", [0x41, 0x43, 0x49, 0x53, 0x00, 0xFF]); // binary geometry: never read as text
+        }
+        return buffer.ToArray();
+    }
+
+    private static string Mht()
+    {
+        // Word "Single File Web Page" as Cimatron writes its tool sheet: quoted-printable, Hebrew as character references.
+        var html = """
+            <html xmlns:o="urn:schemas-microsoft-com:office:office"><head><meta charset="us-ascii"><title>Shuki</title>
+            <style>p { font-family: Arial }</style><xml><o:DocumentProperties><o:Author>Shuki</o:Author></o:DocumentProperties></xml></head>
+            <body><!--[if gte mso 9]><xml><w:WordDocument>Shuki</w:WordDocument></xml><![endif]-->
+            <p>&#1512;&#1513;&#1497;&#1502;&#1514; &#1499;&#1500;&#1497;&#1501;</p>
+            <table><tr><td><p>Number</p><p>&#1502;&#1505;&#1508;&#1512;</p></td><td>Name</td><td>Dia</td><td>Holder</td></tr>
+            <tr><td><p class=MsoNormal>T29</p></td><td><p>MERASEK_16</p></td><td>16.</td><td>HOLDER-50_NEW</td></tr></table></body></html>
+            """;
+        var encoded = new StringBuilder();
+        foreach (var line in html.Split('\n'))
+        {
+            var quoted = line.TrimEnd('\r').Replace("=", "=3D", StringComparison.Ordinal);
+            while (quoted.Length > 70)
+            {
+                var cut = 70;
+                while (quoted[cut - 1] == '=' || quoted[cut - 2] == '=') cut--;
+                encoded.Append(quoted[..cut]).Append("=\r\n");
+                quoted = quoted[cut..];
+            }
+            encoded.Append(quoted).Append("\r\n");
+        }
+        return "MIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=\"----=_NextPart_01DB\"\r\n\r\nThis document is a Single File Web Page.\r\n\r\n" +
+               "------=_NextPart_01DB\r\nContent-Location: file:///C:/T/Template_Tools.htm\r\nContent-Transfer-Encoding: quoted-printable\r\n" +
+               "Content-Type: text/html; charset=\"us-ascii\"\r\n\r\n" + encoded +
+               "\r\n------=_NextPart_01DB\r\nContent-Type: image/png\r\nContent-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n\r\n------=_NextPart_01DB--\r\n";
+    }
+
     private static string RepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

@@ -37,7 +37,7 @@ internal sealed class LocalAiChatTools(SqliteDatabase database, LocalCorpusServi
             """{"type":"object","properties":{"from":{"type":"string","description":"First day, yyyy-MM-dd"},"to":{"type":"string","description":"Last day (inclusive), yyyy-MM-dd"},"partNumber":{"type":"string","description":"Optional part number"}},"required":["from","to"]}"""),
         Tool("material_orders", "Search ERP (Kitaron) material purchase-order lines by material, description, supplier or purchase-order number, or those linked to a part's work orders. Shows ordered/received quantities and delivery dates; ERP lines carry no receipt date.",
             """{"type":"object","properties":{"query":{"type":"string","description":"Material number, alloy/description words, supplier or PO number"},"partNumber":{"type":"string","description":"Optional part number whose work orders use the material"},"openOnly":{"type":"boolean","description":"Only lines not yet closed"}}}"""),
-        Tool("search_documents", "Search the approved documents (drawings, parts lists, specifications, notes; PDFs included, scanned pages by OCR; Excel and CSV spreadsheets; STEP 3D model names, assembly structure and properties, without dimensions; CMM inspection programs (DMIS) and reports with nominal sizes and tolerances of inspected features) by keywords. Give a part number to search that part's documents. Returns excerpts with document names.",
+        Tool("search_documents", "Search the approved documents (drawings, parts lists, specifications, notes; PDFs included, scanned pages by OCR; Excel and CSV spreadsheets; STEP 3D model names, assembly structure and properties, without dimensions; CMM inspection programs (DMIS) and reports with nominal sizes and tolerances of inspected features; Cimatron CAM files with their document attributes, export packages and tool sheets) by keywords. Give a part number to search that part's documents. Returns excerpts with document names.",
             """{"type":"object","properties":{"query":{"type":"string","description":"Keywords such as: hole tolerance, surface roughness, material"},"partNumber":{"type":"string","description":"Optional part number to limit the search"}},"required":["query"]}"""),
     ];
 
@@ -135,7 +135,7 @@ internal sealed class LocalAiChatTools(SqliteDatabase database, LocalCorpusServi
                         sources.Add(new("DOCUMENT", title, matches.First(match => match.Title == title).DocumentId));
                     return Serialize(new
                     {
-                        note = matches.Count == 0 ? "No approved document matched. The document may not be in an approved folder, may be a CAD format other than STEP, or the index may need a rebuild." : null,
+                        note = matches.Count == 0 ? "No approved document matched. The document may not be in an approved folder, may be a CAD format other than STEP and Cimatron, or the index may need a rebuild." : null,
                         results = matches.Select(match => new
                         {
                             document = match.Title,
@@ -145,7 +145,9 @@ internal sealed class LocalAiChatTools(SqliteDatabase database, LocalCorpusServi
                                 "CSV" => "CSV spreadsheet", "XLSX" or "XLS" => "Excel workbook (values as last saved; formulas not recalculated)",
                                 "DMIS" => "CMM inspection program (DMIS): nominal sizes and tolerances as programmed for inspection; confirm against the current drawing",
                                 "RTF" => "RTF document (for example a CMM inspection report of a past measurement)",
-                                "STEP" => "STEP 3D model metadata (names, assembly, properties; no dimensions)", _ => "text file",
+                                "STEP" => "STEP 3D model metadata (names, assembly, properties; no dimensions)",
+                                "CIMATRON" => "Cimatron CAM file: document attributes (type, author, dates, source file, setups) or an export package (operation, postprocessor, tools); toolpaths and geometry are not included",
+                                "MHT" => "Web archive page (for example a Cimatron tool sheet listing the program's tools)", _ => "text file",
                             },
                             excerpt = match.Excerpt,
                         }),

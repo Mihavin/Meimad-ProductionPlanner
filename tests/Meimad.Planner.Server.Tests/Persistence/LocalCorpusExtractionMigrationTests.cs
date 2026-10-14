@@ -53,6 +53,47 @@ public sealed class LocalCorpusExtractionMigrationTests
         await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(v112, "UPDATE local_ai_extraction_cache SET extraction='TEXT';"));
     }
 
+    [Fact]
+    public async Task Version_121_keeps_indexed_documents_and_triggers_and_admits_cimatron_and_web_archive_extraction()
+    {
+        await using var fixture = TemporaryDatabase.CreateUnmigrated();
+        var migrator = new DatabaseMigrator(fixture.Database, NullLogger<DatabaseMigrator>.Instance);
+        await migrator.MigrateAsync(120);
+        var hash = new string('b', 64);
+        await using (var v120 = await fixture.Database.OpenConnectionAsync())
+        {
+            await ExecuteAsync(v120, $"""
+                INSERT INTO local_ai_documents(id,root_id,relative_path,content_hash,content,indexed_at,configuration_version,search_text,extraction)
+                VALUES('doc-1','root-1','report.rtf','{hash}','CMM REPORT','2026-10-14T08:00:00Z',4,'CMM REPORT','RTF');
+                INSERT INTO local_ai_documents_staging(job_id,id,root_id,relative_path,content_hash,content,indexed_at,configuration_version,search_text,extraction)
+                VALUES('job-1','doc-1','root-1','report.rtf','{hash}','CMM REPORT','2026-10-14T08:00:00Z',4,'CMM REPORT','RTF');
+                INSERT INTO local_ai_extraction_cache(content_hash,extraction,content,extracted_at) VALUES('{hash}','RTF','CMM REPORT','2026-10-14T08:00:00Z');
+                """);
+            await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(v120, "UPDATE local_ai_documents SET extraction='CIMATRON';"));
+        }
+        SqliteConnection.ClearAllPools();
+
+        await migrator.MigrateAsync();
+
+        await using var v121 = await fixture.Database.OpenConnectionAsync();
+        Assert.Equal("RTF|CMM REPORT|4", await ScalarAsync(v121,
+            "SELECT extraction||'|'||content||'|'||configuration_version FROM local_ai_documents WHERE id='doc-1';"));
+        Assert.Equal(1L, await ScalarAsync(v121, "SELECT COUNT(*) FROM local_ai_documents_staging WHERE job_id='job-1';"));
+        Assert.Equal(1L, await ScalarAsync(v121,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='ix_local_ai_documents_staging_job';"));
+        Assert.Equal(0L, await ScalarAsync(v121, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%_v121';"));
+
+        var before = (long)(await ScalarAsync(v121, "SELECT non_planning_revision FROM projection_revision WHERE id=1;"))!;
+        foreach (var kind in new[] { "CIMATRON", "MHT", "RTF", "PDF_TEXT" })
+        {
+            await ExecuteAsync(v121, $"UPDATE local_ai_documents SET extraction='{kind}' WHERE id='doc-1'; UPDATE local_ai_documents_staging SET extraction='{kind}' WHERE id='doc-1';");
+            await ExecuteAsync(v121, $"UPDATE local_ai_extraction_cache SET extraction='{kind}';");
+        }
+        Assert.True((long)(await ScalarAsync(v121, "SELECT non_planning_revision FROM projection_revision WHERE id=1;"))! >= before + 8);
+        await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(v121, "UPDATE local_ai_documents SET extraction='ELT';"));
+        await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(v121, "UPDATE local_ai_extraction_cache SET extraction='CSV';"));
+    }
+
     private static async Task ExecuteAsync(SqliteConnection connection, string sql)
     {
         await using var command = connection.CreateCommand();

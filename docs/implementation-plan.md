@@ -1,5 +1,22 @@
 # Implementation Plan
 
+## Cimatron files in the AI document index (2026-10-14, schema v121)
+
+Owner request 2026-10-14 ("AI - add indexing for Cimatron files"). Survey of the share (read-only, one part folder):
+native `.elt` files are ZIP containers; their `.exl` entry is XML attributes (document, then one list per setup and per
+toolpath), while procedures, tools and geometry are binary blocks. Tool sheets are Word web archives (`.mht`), and the
+Meimad exporter packages carry `manifest.json`, `tools/tool-table.json` and `metadata/jobs.xml` (post runs).
+
+- *Server.* `CorpusCimatronReader`; extraction kinds `CIMATRON` and `MHT` (schema v121 rebuilds the three corpus tables
+  as v112 did); AI source labels. Tests: `LocalCorpusFormatTests` (synthetic `.elt`, `.mht`, package; a non-container
+  `.elt` and `.elt.bac` are skipped), `LocalCorpusExtractionMigrationTests` (v121). A temporary probe read real files on
+  the share (NC and part `.elt`, the tool sheet, a package) and was deleted.
+- *Not indexed.* Procedure names, tool lists and geometry inside `.elt` (binary Cimatron data; reading them needs
+  Cimatron's API on a CAM PC), `.pas` files, `.elt.bac` backups.
+- *Existing indexes* pick the files up at the next rebuild (Integrations → Approved documents).
+- *Build.* Microsoft.Data.SqlClient 7.0.2 brings System.Security.Cryptography.Pkcs 9.0.13, which NuGet audit now
+  reports (GHSA-2fmv-rv2c-59x7, GHSA-846f-f764-76mx) and the build treats as an error; the Server pins 10.0.13.
+
 ## One Work CS source in the NC viewer (2026-10-13, schema v120)
 
 Owner decision 2026-10-13: the Work CS imported from Cimatron and the viewer's Home offsets were two sources that could

@@ -15,7 +15,8 @@ internal interface IPageTextRecognizer
 }
 
 /// <summary>
-/// Extracted document text. <c>Extraction</c> is TEXT, CSV, PDF_TEXT, PDF_OCR, PDF_MIXED, XLSX, XLS, STEP, DMIS or RTF.
+/// Extracted document text. <c>Extraction</c> is TEXT, CSV, PDF_TEXT, PDF_OCR, PDF_MIXED, XLSX, XLS, STEP, DMIS, RTF,
+/// CIMATRON or MHT.
 /// </summary>
 internal sealed record CorpusFileContent(string Hash, string Text, long Bytes, string Extraction, int OcrPages);
 
@@ -23,8 +24,10 @@ internal sealed record CorpusFileContent(string Hash, string Text, long Bytes, s
 /// Reads approved corpus files: text/Markdown, CSV and DMIS inspection programs (.dmi) as UTF-8 or
 /// byte-order-marked UTF-16 text; PDF drawings, parts lists and specifications page by page, with OCR for a
 /// page whose text layer has too little text; Excel workbooks (.xlsx/.xlsm/.xls) sheet by sheet; STEP models
-/// (.stp/.step) as their header, product, assembly, unit and property records; and RTF documents such as CMM
-/// reports as plain text (owner decisions 2026-10-09/10). The hash of a PDF, workbook, STEP or RTF file is the
+/// (.stp/.step) as their header, product, assembly, unit and property records; RTF documents such as CMM
+/// reports as plain text (owner decisions 2026-10-09/10); and Cimatron files — native documents (.elt) as their
+/// document attributes, tool sheets and other web archives (.mht/.mhtml) as page text, and Meimad exporter packages
+/// (cimatron-export\manifest.json) as their summary (owner request 2026-10-14; CorpusCimatronReader). The hash of a PDF, workbook, STEP or RTF file is the
 /// SHA-256 of its bytes, so stored extracted text stays valid exactly while the file is unchanged and never has
 /// to be extracted (or recognized) again to be verified.
 /// </summary>
@@ -36,7 +39,7 @@ internal sealed class CorpusDocumentReader(IPageTextRecognizer recognizer)
     /// <summary>A page with fewer letters/digits than this in its text layer is treated as an image.</summary>
     internal const int MinimumPageCharacters = 40;
 
-    private enum Format { Text, Csv, Dmis, Pdf, Workbook, LegacyWorkbook, Step, Rtf }
+    private enum Format { Text, Csv, Dmis, Pdf, Workbook, LegacyWorkbook, Step, Rtf, Cimatron, Mht, CimatronPackage }
 
     internal bool OcrAvailable => recognizer.Available;
 
@@ -47,7 +50,7 @@ internal sealed class CorpusDocumentReader(IPageTextRecognizer recognizer)
 
     private static bool IsText(Format format) => format is Format.Text or Format.Csv or Format.Dmis;
 
-    private static Format? FormatOf(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    private static Format? FormatOf(string path) => CorpusCimatronReader.IsPackageManifest(path) ? Format.CimatronPackage : Path.GetExtension(path).ToLowerInvariant() switch
     {
         ".txt" or ".md" => Format.Text,
         ".csv" => Format.Csv,
@@ -57,6 +60,8 @@ internal sealed class CorpusDocumentReader(IPageTextRecognizer recognizer)
         ".xls" => Format.LegacyWorkbook,
         ".stp" or ".step" => Format.Step,
         ".rtf" => Format.Rtf,
+        ".elt" => Format.Cimatron,
+        ".mht" or ".mhtml" => Format.Mht,
         _ => null,
     };
 
@@ -79,6 +84,25 @@ internal sealed class CorpusDocumentReader(IPageTextRecognizer recognizer)
             return new(text.Hash, text.Text, text.Bytes, format switch { Format.Csv => "CSV", Format.Dmis => "DMIS", _ => "TEXT" }, 0);
         }
         var length = new FileInfo(path).Length;
+        if (format == Format.Cimatron)
+        {
+            if (length > CorpusCimatronReader.MaxEltBytes) throw new InvalidDataException("Cimatron file exceeds the indexing size limit.");
+            var eltHash = await HashAsync(path, token);
+            if (cached is not null && await cached(eltHash) is { } earlierElt) return new(eltHash, earlierElt.Text, length, earlierElt.Extraction, 0);
+            var elt = await Task.Run(() => CorpusCimatronReader.ReadElt(path, MaxTextCharacters, token), token);
+            return new(eltHash, elt, length, "CIMATRON", 0);
+        }
+        if (format is Format.Mht or Format.CimatronPackage)
+        {
+            if (length > (format == Format.Mht ? CorpusCimatronReader.MaxMhtBytes : CorpusCimatronReader.MaxPackageBytes))
+                throw new InvalidDataException("Document exceeds the indexing size limit.");
+            var webBytes = await File.ReadAllBytesAsync(path, token);
+            var webHash = Convert.ToHexStringLower(SHA256.HashData(webBytes));
+            if (cached is not null && await cached(webHash) is { } earlierWeb) return new(webHash, earlierWeb.Text, webBytes.LongLength, earlierWeb.Extraction, 0);
+            return format == Format.Mht
+                ? new(webHash, CorpusCimatronReader.ReadMht(webBytes, MaxTextCharacters, token), webBytes.LongLength, "MHT", 0)
+                : new(webHash, CorpusCimatronReader.ReadPackage(path, webBytes, MaxTextCharacters, token), webBytes.LongLength, "CIMATRON", 0);
+        }
         if (format == Format.Step)
         {
             if (length > CorpusStepReader.MaxStepBytes) throw new InvalidDataException("STEP file exceeds the indexing size limit.");
