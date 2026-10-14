@@ -287,6 +287,25 @@ public partial class MainWindow : Window
         viewModel.Dispose();
     }
 
+    private async void OpenNcViewer_Click(object sender, RoutedEventArgs e)
+    {
+        var button = sender as System.Windows.Controls.Button;
+        if (button is not null) button.IsEnabled = false;
+        try
+        {
+            NcViewerWindow.Open(await Presentation.NcViewer.NcViewerRequests.StandaloneAsync(viewModel.AiClient));
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.IO.IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, $"The NC viewer could not be opened: {exception.Message}", "NC viewer",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            if (button is not null) button.IsEnabled = true;
+        }
+    }
+
     private void AskAi_Click(object sender, RoutedEventArgs e)
     {
         if (askAiWindow is not null)

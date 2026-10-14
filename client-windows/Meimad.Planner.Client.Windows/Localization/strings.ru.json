@@ -4976,6 +4976,8 @@
   "Unload the model after seconds": "Выгружать модель через секунд",
   "Model memory budget (MB)": "Бюджет памяти модели (МБ)",
   "Model memory budget in MB": "Бюджет памяти модели в МБ",
+  "NC viewer": "Просмотр УП",
+  "Open the NC viewer and editor for any NC file, without a Case Operation": "Открыть просмотр и редактор УП для любого файла, без операции кейса",
   "Ask AI": "Спросить ИИ",
   "Ask the local AI about the current selection, parts, NC programs, material or documents": "Задать вопрос локальному ИИ о текущем выборе, деталях, программах ЧПУ, материале или документах",
   "Ask about my current selection": "Спросить о моём текущем выборе",

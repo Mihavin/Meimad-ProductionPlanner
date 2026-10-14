@@ -790,6 +790,35 @@ public sealed class NcViewerSessionTests : IDisposable
         Assert.False(refused.GetProperty("ok").GetBoolean());
     });
 
+    [Fact]
+    public async Task The_standalone_viewer_is_an_editable_local_program_with_the_factory_machines_when_connected()
+    {
+        var offline = await NcViewerRequests.StandaloneAsync(null);
+        Assert.False(offline.ReadOnly);
+        Assert.Equal(NcViewerOpenRequest.BlankProgram.Replace("\n", "\r\n"), offline.Document.Text.Replace("\r\n", "\n").Replace("\n", "\r\n"));
+        Assert.Null(offline.FormatService);
+        Assert.Null(offline.Scene);
+        Assert.Null(offline.ReleaseToServer);
+        Assert.Null(offline.ProgramFolders);
+
+        var connected = await NcViewerRequests.StandaloneAsync(new StandaloneApi());
+        Assert.NotNull(connected.FormatService);
+        Assert.NotNull(connected.ValidateService);
+        Assert.NotNull(connected.Scene);
+        Assert.Null(connected.Scene!.Operation);
+        Assert.Null(connected.ReleaseToServer);
+        Assert.Null(connected.UseForRelease);
+    }
+
+    private sealed class StandaloneApi : StubPlannerApiClient, IPlannerApiClient
+    {
+        public Task<IReadOnlyList<PlannerMachine>> ListMachinesAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<PlannerMachine>>([]);
+
+        public Task<IReadOnlyList<PublishedMachineSimulation>> ListPublishedMachineSimulationsAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<PublishedMachineSimulation>>([]);
+    }
+
     private static async Task<string> StatusAsync(FakeUi ui, string containing)
     {
         while (true)

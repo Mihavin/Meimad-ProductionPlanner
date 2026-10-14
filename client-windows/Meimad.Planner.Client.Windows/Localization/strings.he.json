@@ -4976,6 +4976,8 @@
   "Unload the model after seconds": "פריקת המודל אחרי שניות",
   "Model memory budget (MB)": "תקציב זיכרון למודל (MB)",
   "Model memory budget in MB": "תקציב זיכרון למודל ב-MB",
+  "NC viewer": "מציג NC",
+  "Open the NC viewer and editor for any NC file, without a Case Operation": "פתח את מציג ועורך ה-NC לכל קובץ NC, ללא פעולת תיק",
   "Ask AI": "שאל את הבינה המלאכותית",
   "Ask the local AI about the current selection, parts, NC programs, material or documents": "שאל את הבינה המלאכותית המקומית על הבחירה הנוכחית, חלקים, תוכניות NC, חומר או מסמכים",
   "Ask about my current selection": "שאל על הבחירה הנוכחית שלי",

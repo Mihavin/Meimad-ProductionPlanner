@@ -149,6 +149,36 @@ internal static class NcViewerRequests
         }
     }
 
+    /// <summary>
+    /// An empty, editable program not tied to a Case Operation (main window "NC viewer" button): Open/Save work on local
+    /// files, Home offsets stay on this PC, and with the Server connected the factory Machines' published Machine Designer
+    /// definitions and 3D models are listed, and "Apply Meimad Planner Format" and the template check are available.
+    /// Nothing is released from here.
+    /// </summary>
+    internal static async Task<NcViewerOpenRequest> StandaloneAsync(IPlannerApiClient? api, CancellationToken cancellationToken = default)
+    {
+        NcViewerSetupScene? scene = null;
+        if (api is not null)
+        {
+            var machines = await MachinesAsync(api, cancellationToken);
+            var compiled = await NcViewerMachineDefinitions.LoadAsync(api, cancellationToken: cancellationToken);
+            scene = NcViewerSetupScene.Empty with
+            {
+                MachineModels = NcViewerScenes.WithCompiledModels(NcViewerScenes.MachineModels(machines, null), compiled),
+                CompiledMachines = compiled
+            };
+        }
+        return new NcViewerOpenRequest(
+            "NC viewer",
+            "Untitled.NC",
+            NcViewerOpenRequest.NewDocument(NcViewerOpenRequest.BlankProgram),
+            ReadOnly: false,
+            SourceDescription: "Local NC program (not linked to a Case Operation)",
+            FormatService: api is null ? null : FormatService(api),
+            ValidateService: api is null ? null : (text, token) => api.ValidateNcTemplateAsync(text, token),
+            Scene: scene);
+    }
+
     /// <summary>The Server's stateless "Apply Meimad Planner Format".</summary>
     internal static Func<string, string, CancellationToken, Task<NcTemplateFormatResult>> FormatService(IPlannerApiClient api) =>
         (text, dialect, token) => api.FormatNcTemplateAsync(text, dialect, token);
