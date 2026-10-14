@@ -611,35 +611,37 @@
                                     BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" DataContext="{Binding CamSetup}"
                                     AutomationProperties.Name="Cimatron setup of the selected Operation">
                                 <StackPanel>
-                                    <DockPanel Margin="0,0,0,6">
-                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                            <Button Content="Import Cimatron package..." Click="ImportCimatronPackage_Click" IsEnabled="{Binding CanEdit}"
-                                                    ToolTip="Import a package written by the Meimad Cimatron exporter: NC, tool table, stock, fixtures, finished part and Work CS, checked by the Server" />
-                                            <Button Content="Package report" Click="CimatronPackageReport_Click"
-                                                    ToolTip="Show the report of the last Cimatron package import" />
-                                            <Button Content="Link Cimatron files..." Click="ImportCimatronFiles_Click" IsEnabled="{Binding CanEdit}"
-                                                    ToolTip="Link STL or STEP files exported from Cimatron: STOCK files become rest material, the rest fixtures" />
-                                            <Button Content="Add fixture..." Click="AddCimatronFixture_Click" IsEnabled="{Binding CanEdit}" />
-                                            <Button Content="Add rest material..." Click="AddCimatronRestMaterial_Click" IsEnabled="{Binding CanEdit}" Margin="0" />
-                                        </StackPanel>
-                                        <StackPanel>
-                                            <TextBlock Text="Cimatron setup of the selected Operation" FontSize="17" FontWeight="Bold"/>
-                                            <TextBlock Text="{Binding SavedSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/>
-                                            <TextBlock Text="{Binding PackageSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/>
-                                        </StackPanel>
-                                    </DockPanel>
-                                    <DockPanel Margin="0,0,0,8">
-                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                            <Button Content="Import from Cimatron" Click="ImportFromCimatron_Click" IsEnabled="{Binding CanEdit}"
-                                                    ToolTip="Read the active Cimatron document, choose its CAM operations, and import NC (Meimad format), tools, stock, fixtures and Work CS into this Operation's G-code folder" />
-                                            <Button Content="Open in Cimatron" Click="OpenInCimatron_Click" IsEnabled="{Binding HasCamSource}"
-                                                    ToolTip="Open the CAM file this Operation was imported from" />
-                                            <Button Content="Open simulation" Click="OpenCimatronSimulation_Click" IsEnabled="{Binding HasCamSource}" Margin="0"
-                                                    ToolTip="Open the imported NC program with its stock, fixtures and part in the NC viewer" />
-                                        </StackPanel>
-                                        <TextBlock Text="{Binding CamSourceSummary}" ToolTip="{Binding CamSourceDetail}" VerticalAlignment="Center"
+                                    <!-- Text first, then the buttons in a wrapping row: a narrow window moves buttons to the next
+                                         line instead of squeezing the text into a column and stretching the buttons. -->
+                                    <StackPanel Margin="0,0,0,6">
+                                        <TextBlock Text="Cimatron setup of the selected Operation" FontSize="17" FontWeight="Bold"/>
+                                        <TextBlock Text="{Binding SavedSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding PackageSummary}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding CamSourceSummary}" ToolTip="{Binding CamSourceDetail}"
                                                    Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"/>
-                                    </DockPanel>
+                                    </StackPanel>
+                                    <WrapPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                        <WrapPanel.Resources>
+                                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                <Setter Property="VerticalAlignment" Value="Top"/>
+                                                <Setter Property="Margin" Value="0,0,8,6"/>
+                                            </Style>
+                                        </WrapPanel.Resources>
+                                        <Button Content="Import from Cimatron" Click="ImportFromCimatron_Click" IsEnabled="{Binding CanEdit}"
+                                                ToolTip="Read the active Cimatron document, choose its CAM operations, and import NC (Meimad format), tools, stock, fixtures and Work CS into this Operation's G-code folder" />
+                                        <Button Content="Open in Cimatron" Click="OpenInCimatron_Click" IsEnabled="{Binding HasCamSource}"
+                                                ToolTip="Open the CAM file this Operation was imported from" />
+                                        <Button Content="Open simulation" Click="OpenCimatronSimulation_Click" IsEnabled="{Binding HasCamSource}"
+                                                ToolTip="Open the imported NC program with its stock, fixtures and part in the NC viewer" />
+                                        <Button Content="Import Cimatron package..." Click="ImportCimatronPackage_Click" IsEnabled="{Binding CanEdit}"
+                                                ToolTip="Import a package written by the Meimad Cimatron exporter: NC, tool table, stock, fixtures, finished part and Work CS, checked by the Server" />
+                                        <Button Content="Package report" Click="CimatronPackageReport_Click"
+                                                ToolTip="Show the report of the last Cimatron package import" />
+                                        <Button Content="Link Cimatron files..." Click="ImportCimatronFiles_Click" IsEnabled="{Binding CanEdit}"
+                                                ToolTip="Link STL or STEP files exported from Cimatron: STOCK files become rest material, the rest fixtures" />
+                                        <Button Content="Add fixture..." Click="AddCimatronFixture_Click" IsEnabled="{Binding CanEdit}" />
+                                        <Button Content="Add rest material..." Click="AddCimatronRestMaterial_Click" IsEnabled="{Binding CanEdit}" />
+                                    </WrapPanel>
                                     <TextBlock Text="Work CS: the Cimatron UCS of this Operation's NC procedures, in the part-model coordinates the fixture and rest-material files were exported in. Copy the origin and rotations from Cimatron's UCS dialog. Rotations are applied about X, then Y, then Z (degrees). The NC viewer places the files through this Work CS."
                                                Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                     <UniformGrid Columns="4" IsEnabled="{Binding CanEdit}">
