@@ -411,6 +411,100 @@ public sealed class MachineDesignerTests : IDisposable
         return directory?.FullName ?? throw new InvalidOperationException("Repository root not found.");
     }
 
+    [Fact]
+    public async Task Copy_from_machine_takes_the_other_draft_with_its_meshes_copied_keeps_the_name_and_clears_calibration()
+    {
+        var mesh = new byte[84];
+        mesh[0] = 7;
+        var sourceAsset = new string('a', 32);
+        var lostAsset = new string('c', 32);
+        var source = Trunnion() with
+        {
+            MachineId = "machine-14",
+            Name = "Haas UMC-500 #14",
+            Nodes = Trunnion().Nodes.Select(node => node.Id == "c-table"
+                ? node with { Models = [new MachineModel { AssetId = sourceAsset, Name = "table" }, new MachineModel { AssetId = lostAsset, Name = "gone" }] }
+                : node).ToArray()
+        };
+        var target = new MachineSimulationDefinition { MachineId = "machine-10", Name = "VF-3SS", Nodes = [new MachineNode { Id = "base" }] };
+        var api = new CopyApi(target, source, sourceAsset, mesh);
+        var host = new FakeHost();
+        var viewModel = new MachineDesignerViewModel(api, "client-1", Machine(), canEdit: true, host);
+        await viewModel.LoadAsync();
+
+        Assert.Equal(["14 — Haas UMC-500"], viewModel.SourceMachines.Select(machine => machine.Label));
+        Assert.False(viewModel.CopyFromMachineCommand.CanExecute(null));
+        viewModel.SelectedSourceMachine = viewModel.SourceMachines[0];
+        host.Answer = false;
+        await viewModel.CopyFromMachineAsync();
+        Assert.Single(viewModel.Nodes);
+
+        host.Answer = true;
+        await viewModel.CopyFromMachineAsync();
+        var built = viewModel.BuildDefinition(out _);
+        Assert.Equal("VF-3SS", built.Name);
+        Assert.Equal(source.Nodes.Select(node => node.Id), built.Nodes.Select(node => node.Id));
+        Assert.Equal("c-table", built.Mounts.Workpiece?.Node);
+        Assert.Equal(30, built.Magazine.UsablePositions);
+        Assert.False(built.Calibration?.ZeroVerified ?? false);
+        var copied = Assert.Single(built.Nodes.Single(node => node.Id == "c-table").Models);
+        Assert.Equal(api.UploadedAssetId, copied.AssetId);
+        Assert.Equal(("machine-10", "table.stl"), (api.UploadedTo, api.UploadedName));
+        Assert.Equal(mesh, api.UploadedBytes);
+        Assert.True(viewModel.IsDirty);
+        Assert.Contains("1 meshes could not be copied", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Null(api.SavedDraft);
+    }
+
+    private sealed class CopyApi(MachineSimulationDefinition target, MachineSimulationDefinition source, string sourceAsset, byte[] mesh)
+        : StubPlannerApiClient, IPlannerApiClient
+    {
+        internal string UploadedAssetId { get; } = new string('b', 32);
+        internal string? UploadedTo { get; private set; }
+        internal string? UploadedName { get; private set; }
+        internal byte[]? UploadedBytes { get; private set; }
+        internal MachineSimulationDefinition? SavedDraft { get; private set; }
+
+        public Task<IReadOnlyList<PlannerMachine>> ListMachinesAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<PlannerMachine>>([Machine(), Machine("machine-14") with { Number = "14", Name = "Haas UMC-500" }]);
+
+        Task<MachineSimulationResource> IPlannerApiClient.GetMachineSimulationAsync(string machineId, CancellationToken cancellationToken)
+        {
+            var definition = machineId == "machine-14" ? source : target;
+            return Task.FromResult(new MachineSimulationResource(
+                new MachineSimulationRecordDto(machineId, definition, 1, null, 0, null, null,
+                    DateTimeOffset.UnixEpoch, "planner", true, []),
+                $"\"machine-simulation:{machineId}:v1\""));
+        }
+
+        Task<MachineSimulationResource> IPlannerApiClient.SaveMachineSimulationDraftAsync(
+            string machineId, MachineSimulationDefinition value, string entityTag, string clientId, CancellationToken cancellationToken)
+        {
+            SavedDraft = value;
+            throw new NotSupportedException();
+        }
+
+        Task<IReadOnlyList<MachineSimulationAssetDto>> IPlannerApiClient.ListMachineSimulationAssetsAsync(string machineId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<MachineSimulationAssetDto>>(machineId == "machine-14"
+                ? [new MachineSimulationAssetDto(sourceAsset, "table.stl", "model/stl", mesh.Length,
+                    Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(mesh)), DateTimeOffset.UnixEpoch, "planner")]
+                : [new MachineSimulationAssetDto(UploadedAssetId, "table.stl", "model/stl", mesh.Length,
+                    Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(mesh)), DateTimeOffset.UnixEpoch, "planner")]);
+
+        Task<byte[]> IPlannerApiClient.DownloadMachineSimulationAssetAsync(string machineId, string assetId, CancellationToken cancellationToken) =>
+            Task.FromResult(mesh);
+
+        async Task<MachineSimulationAssetDto> IPlannerApiClient.UploadMachineSimulationAssetAsync(
+            string machineId, string fileName, Stream content, string clientId, CancellationToken cancellationToken)
+        {
+            using var copy = new MemoryStream();
+            await content.CopyToAsync(copy, cancellationToken);
+            (UploadedTo, UploadedName, UploadedBytes) = (machineId, fileName, copy.ToArray());
+            return new MachineSimulationAssetDto(UploadedAssetId, fileName, "model/stl", copy.Length,
+                Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(copy.ToArray())), DateTimeOffset.UnixEpoch, "planner");
+        }
+    }
+
     private sealed class FakeHost : IMachineDesignerHost
     {
         internal bool Answer { get; set; } = true;

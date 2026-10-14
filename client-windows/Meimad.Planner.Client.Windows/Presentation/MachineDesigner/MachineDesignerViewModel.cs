@@ -151,7 +151,7 @@ internal sealed partial class MachineDesignerViewModel : DesignerObservable
         private set
         {
             if (!Set(ref isBusy, value)) return;
-            foreach (var command in new[] { ReloadCommand, SaveCommand, ValidateCommand, PublishCommand, ImportMeshCommand, ImportLegacyMeshCommand })
+            foreach (var command in new[] { ReloadCommand, SaveCommand, ValidateCommand, PublishCommand, ImportMeshCommand, ImportLegacyMeshCommand, CopyFromMachineCommand })
                 command.RaiseCanExecuteChanged();
         }
     }
@@ -243,6 +243,7 @@ internal sealed partial class MachineDesignerViewModel : DesignerObservable
         {
             var resource = await api.GetMachineSimulationAsync(Machine.MachineId);
             Apply(resource);
+            if (CanEdit && SourceMachines.Count == 0) await LoadSourceMachinesAsync();
             StatusText = CanEdit
                 ? "Edit the machine at all axes zero, save the draft, then publish it."
                 : "Read-only: your account may not change setup data. You can still jog the axes.";

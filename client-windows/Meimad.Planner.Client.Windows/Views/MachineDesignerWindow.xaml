@@ -134,6 +134,13 @@
                                 ToolTip="Replace the components with those of the installed machine; check every position on the real machine afterwards" />
                         <TextBlock Text="The NC engine interprets programs with this machine's controller; the components below replace its kinematics."
                                    Style="{StaticResource Hint}" />
+                        <TextBlock Text="Copy from Machine" Style="{StaticResource FieldLabel}" />
+                        <ComboBox ItemsSource="{Binding SourceMachines}" SelectedItem="{Binding SelectedSourceMachine}"
+                                  AutomationProperties.Name="Machine to copy the definition from" />
+                        <Button Content="Copy from this Machine…" Command="{Binding CopyFromMachineCommand}" HorizontalAlignment="Left" Margin="0,6,0,0"
+                                ToolTip="Replace the components, mounts, meshes, magazine and timing with the draft of the chosen Machine; the meshes are copied to this Machine" />
+                        <TextBlock Text="Starts from another Machine's draft with its meshes. The name stays and the calibration is cleared: check every position on this machine before you publish."
+                                   Style="{StaticResource Hint}" />
                         <TextBlock Text="Interpreted axis names (physical=programmed)" Style="{StaticResource FieldLabel}" />
                         <TextBox Text="{Binding InterpreterAxes, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
                         <TextBlock Text="Example: A=B for a Mazak whose physical A axis is programmed as B. The readout always shows the physical name."

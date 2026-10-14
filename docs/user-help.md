@@ -193,7 +193,9 @@ the tool magazine, the timing values and the 3D models are changed only here; th
 4. **General** sets the NC viewer machine (controller and cycles) and the axis names the controller uses (A=B on the
    Mazak). It also sets the tool and workpiece mounts, and whether the zero, the rotary lines and the mounts were
    checked on the machine. **Start from this installed machine…** fills in the components of a bundled machine as a
-   starting point.
+   starting point. **Copy from this Machine…** (choose the Machine under *Copy from Machine*) starts from another factory
+   Machine's draft instead: components, joints, mounts, axis names, magazine, timing and its meshes, which are copied to
+   this Machine. The name stays and the calibration ticks are cleared; nothing is saved until you save the draft.
 5. **Timing & Tool Magazine** holds capacity, usable tool positions, tool-change time, rapid rate and time factor.
    Leave unknown values empty.
 6. Move the jog sliders, or type a value, to check that every part moves the right way; **Zero all** returns to the
