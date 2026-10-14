@@ -224,6 +224,8 @@ public static class ServerApplication
         builder.Services.AddSingleton<CaseOperationCamSetupService>();
         builder.Services.AddSingleton<ICaseOperationViewerWorkOffsetRepository, SqliteCaseOperationViewerWorkOffsetRepository>();
         builder.Services.AddSingleton<CaseOperationViewerWorkOffsetService>();
+        builder.Services.AddSingleton<IWorkOrderTargetTimeRepository, SqliteWorkOrderTargetTimeRepository>();
+        builder.Services.AddSingleton<WorkOrderTargetTimeService>();
         builder.Services.AddSingleton(simulationPackageOptions);
         builder.Services.AddSingleton<SqliteSimulationPackageRepository>();
         builder.Services.AddSingleton<SimulationPackageImportService>();
@@ -531,6 +533,7 @@ public static class ServerApplication
         application.MapCaseModelFileEndpoints();
         application.MapCaseOperationCamSetupEndpoints();
         application.MapCaseOperationViewerWorkOffsetEndpoints();
+        application.MapWorkOrderTargetTimeEndpoints();
         application.MapSimulationPackageEndpoints();
         application.MapCasePictureEndpoints();
         application.MapCaseOperationThumbnailEndpoints();

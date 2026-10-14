@@ -81,6 +81,11 @@ internal static partial class MachineValidator
             "toolChangeTimeSeconds",
             allowZero: true,
             issues);
+        if (values.HourlyRateNis is { } hourlyRate && (!double.IsFinite(hourlyRate) || hourlyRate < 0 || hourlyRate > ResourceHourlyRates.MaximumNis))
+            issues.Add(new MachineValidationIssue(
+                "hourlyRateNis",
+                "out_of_range",
+                $"hourlyRateNis must be a number from 0 to {ResourceHourlyRates.MaximumNis:0} NIS, or null for the default {ResourceHourlyRates.MachineDefaultNis:0} NIS."));
         var machineTimeFactor = values.MachineTimeFactor ?? 1.0;
         ValidatePositiveFinite(
             machineTimeFactor,
@@ -128,7 +133,8 @@ internal static partial class MachineValidator
             ncDialect,
             ncViewerMachine,
             toolDiameterOffsetKind,
-            ncViewerModels);
+            ncViewerModels,
+            values.HourlyRateNis);
     }
 
     private static IReadOnlyList<string> NormalizeIdentifiers(

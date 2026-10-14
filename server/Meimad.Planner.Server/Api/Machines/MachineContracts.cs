@@ -27,7 +27,8 @@ internal sealed record CreateMachineRequest(
     string? NcDialect = null,
     string? NcViewerMachine = null,
     string? ToolDiameterOffsetKind = null,
-    IReadOnlyList<MachineNcViewerModelRequest?>? NcViewerModels = null)
+    IReadOnlyList<MachineNcViewerModelRequest?>? NcViewerModels = null,
+    double? HourlyRateNis = null)
 {
     internal CreateMachineCommand ToCommand() => new(
         Number,
@@ -50,7 +51,8 @@ internal sealed record CreateMachineRequest(
         NcDialect,
         NcViewerMachine,
         ToolDiameterOffsetKind,
-        NcViewerModels?.Select(model => model?.ToInput()).ToArray());
+        NcViewerModels?.Select(model => model?.ToInput()).ToArray(),
+        HourlyRateNis);
 }
 
 /// <summary>One STL mesh of the Machine in the NC viewer (schema v113).</summary>
@@ -104,7 +106,8 @@ internal sealed class PatchMachineRequest
             reader.String("ncDialect"),
             reader.String("ncViewerMachine"),
             reader.String("toolDiameterOffsetKind"),
-            reader.NcViewerModels("ncViewerModels"));
+            reader.NcViewerModels("ncViewerModels"),
+            reader.Double("hourlyRateNis"));
         reader.ThrowIfInvalid();
         return command;
     }
@@ -118,7 +121,7 @@ internal sealed class PatchMachineRequest
             "machineTypeId", "respectMasterCalendar", "executionMode",
             "supportedPostprocessorIds", "usableToolPositions",
             "rapidRateMillimetersPerMinute", "toolChangeTimeSeconds", "machineTimeFactor",
-            "ncDialect", "ncViewerMachine", "toolDiameterOffsetKind", "ncViewerModels"
+            "ncDialect", "ncViewerMachine", "toolDiameterOffsetKind", "ncViewerModels", "hourlyRateNis"
         ];
 
         private readonly IReadOnlyDictionary<string, JsonElement> fields;
@@ -326,7 +329,9 @@ internal sealed record MachineResponse(
     string NcDialect,
     string? NcViewerMachine,
     string ToolDiameterOffsetKind,
-    IReadOnlyList<MachineNcViewerModel> NcViewerModels)
+    IReadOnlyList<MachineNcViewerModel> NcViewerModels,
+    double? HourlyRateNis,
+    double EffectiveHourlyRateNis)
 {
     internal static MachineResponse FromDomain(Machine machine) => new(
         machine.MachineId,
@@ -355,7 +360,9 @@ internal sealed record MachineResponse(
         machine.NcDialect,
         machine.NcViewerMachine,
         machine.ToolDiameterOffsetKind,
-        machine.NcViewerModels ?? []);
+        machine.NcViewerModels ?? [],
+        machine.HourlyRateNis,
+        machine.HourlyRateNis ?? ResourceHourlyRates.MachineDefaultNis);
 }
 
 internal sealed record MachineListResponse(IReadOnlyList<MachineResponse> Items, string? NextCursor);

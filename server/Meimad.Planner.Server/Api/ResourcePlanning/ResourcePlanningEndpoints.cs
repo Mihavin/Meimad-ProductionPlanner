@@ -18,7 +18,7 @@ internal static class ResourcePlanningEndpoints
         root.MapPut("/employees/{employeeId}/skills", SetEmployeeSkillsAsync);
         root.MapGet("/workstation-types", async (ResourceMasterDataService s, CancellationToken t) => Results.Ok(await s.ListWorkstationTypesAsync(t)));
         root.MapPost("/workstation-types", CreateTypeAsync);
-        root.MapPatch("/workstation-types/{id}",(string id,WorkstationTypeUpdateRequest r,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>Mutate(c,a=>s.UpdateWorkstationTypeAsync(id,r.Name,r.Description,r.PropertySchemaJson,r.IsActive,r.ExpectedVersion,a,t)));
+        root.MapPatch("/workstation-types/{id}",(string id,WorkstationTypeUpdateRequest r,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>Mutate(c,a=>s.UpdateWorkstationTypeAsync(id,r.Name,r.Description,r.PropertySchemaJson,r.IsActive,r.ExpectedVersion,a,t,r.HourlyRateNis)));
         root.MapDelete("/workstation-types/{id}",(string id,int version,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>Mutate(c,async a=>{await s.DeleteWorkstationTypeAsync(id,version,a,t);return new{id};}));
         root.MapGet("/workstations", async (ResourceMasterDataService s, CancellationToken t) => Results.Ok(await s.ListWorkstationsAsync(t)));
         root.MapPost("/workstations", CreateWorkstationAsync);
@@ -46,7 +46,7 @@ internal static class ResourcePlanningEndpoints
     private static async Task<IResult> CreateSkillAsync(SkillRequest r, HttpContext c, ResourceMasterDataService s, CancellationToken t) =>
         await Mutate(c, a => s.CreateSkillAsync(r.Name, r.Description, a, t));
     private static async Task<IResult> CreateTypeAsync(WorkstationTypeRequest r, HttpContext c, ResourceMasterDataService s, CancellationToken t) =>
-        await Mutate(c, a => s.CreateWorkstationTypeAsync(r.Name, r.Description, r.PropertySchemaJson, a, t));
+        await Mutate(c, a => s.CreateWorkstationTypeAsync(r.Name, r.Description, r.PropertySchemaJson, a, t, r.HourlyRateNis));
     private static async Task<IResult> CreateWorkstationAsync(WorkstationRequest r, HttpContext c, ResourceMasterDataService s, CancellationToken t) =>
         await Mutate(c, a => s.CreateWorkstationAsync(r.Name, r.WorkstationTypeId, r.WorkingCalendarId, r.Capacity, r.Capabilities, r.PropertiesJson, a, t));
     private static async Task<IResult> CreateExternalAsync(ExternalResourceRequest r, HttpContext c, ResourceMasterDataService s, CancellationToken t) =>
@@ -72,8 +72,8 @@ internal static class ResourcePlanningEndpoints
 internal sealed record SkillRequest(string? Name,string? Description);
 internal sealed record SkillUpdateRequest(string? Name,string? Description,bool IsActive,int ExpectedVersion);
 internal sealed record EmployeeSkillsRequest(IReadOnlyList<string?>? SkillIds);
-internal sealed record WorkstationTypeRequest(string? Name,string? Description,string? PropertySchemaJson);
-internal sealed record WorkstationTypeUpdateRequest(string? Name,string? Description,string? PropertySchemaJson,bool IsActive,int ExpectedVersion);
+internal sealed record WorkstationTypeRequest(string? Name,string? Description,string? PropertySchemaJson,double? HourlyRateNis=null);
+internal sealed record WorkstationTypeUpdateRequest(string? Name,string? Description,string? PropertySchemaJson,bool IsActive,int ExpectedVersion,double? HourlyRateNis=null);
 internal sealed record WorkstationRequest(string? Name,string? WorkstationTypeId,string? WorkingCalendarId,int Capacity,IReadOnlyList<string?>? Capabilities,string? PropertiesJson);
 internal sealed record WorkstationUpdateRequest(string? Name,string? WorkstationTypeId,string? WorkingCalendarId,int Capacity,IReadOnlyList<string?>? Capabilities,string? PropertiesJson,bool IsActive,int ExpectedVersion);
 internal sealed record ExternalResourceRequest(string? Name,string? SupplierName,int PromisedLeadTimeMinutes,int SafetyBufferMinutes,string? LeadTimeSemantics,string? WorkingCalendarId,string? PropertiesJson);

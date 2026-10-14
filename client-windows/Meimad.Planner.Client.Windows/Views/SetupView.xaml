@@ -314,6 +314,7 @@
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Execution mode" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding MachineExecutionModes}" SelectedItem="{Binding MachineExecutionMode}"/></StackPanel>
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="NC dialect (control family for generated NC)" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding MachineNcDialects}" SelectedItem="{Binding MachineNcDialect}"/></StackPanel>
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Cutter offsets on the control (D values)" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding MachineToolDiameterOffsetKinds}" SelectedItem="{Binding MachineToolDiameterOffsetKind}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}" ToolTip="Work-hour price used for Work Order target times. Leave empty for the default 240 NIS."><TextBlock Text="Hourly price (NIS)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineHourlyRate}" AutomationProperties.HelpText="Empty: default 240 NIS"/></StackPanel>
                                 </UniformGrid>
                                 <StackPanel Style="{StaticResource SetupField}">
                                     <TextBlock Text="Supported postprocessors" Style="{StaticResource SetupFieldLabel}"/>
@@ -831,7 +832,7 @@
                             <Grid Margin="8"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
                                 <Border Grid.Column="0" Style="{StaticResource SetupSection}">
                                     <DataGrid ItemsSource="{Binding WorkstationTypes}" SelectedItem="{Binding SelectedWorkstationType}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
-                                        <DataGrid.Columns><DataGridTextColumn Header="Type" Binding="{Binding Name}" Width="*"/><DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="2*"/><DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="65"/></DataGrid.Columns>
+                                        <DataGrid.Columns><DataGridTextColumn Header="Type" Binding="{Binding Name}" Width="*"/><DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="2*"/><DataGridTextColumn Header="Hourly price (NIS)" Binding="{Binding HourlyRateText}" Width="110"/><DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="65"/></DataGrid.Columns>
                                     </DataGrid>
                                 </Border>
                                 <Border Grid.Column="2" Style="{StaticResource SetupSection}">
@@ -840,6 +841,7 @@
                                         <TextBlock Text="Examples such as Tool Room, CMM, assembly, or deburring are configuration—not fixed application types." Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Type name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationTypeName}"/></StackPanel>
                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Description" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationTypeDescription}" AcceptsReturn="True" MinHeight="55"/></StackPanel>
+                                        <StackPanel Style="{StaticResource SetupField}" ToolTip="Work-hour price used for Work Order target times. Leave empty for the default 100 NIS."><TextBlock Text="Hourly price (NIS)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationTypeHourlyRate}" AutomationProperties.HelpText="Empty: default 100 NIS"/></StackPanel>
                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Property schema (JSON object)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationTypeSchema}" AcceptsReturn="True" MinHeight="90" FontFamily="Consolas"/></StackPanel>
                                         <CheckBox Content="Active" IsChecked="{Binding WorkstationTypeIsActive}" Margin="0,0,0,8"/>
                                         <WrapPanel><Button Content="Save Workstation Type" Command="{Binding AddWorkstationTypeCommand}"/><Button Content="Delete" Click="DeleteWorkstationType_Click" Margin="6,0,0,0"/></WrapPanel>

@@ -78,6 +78,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string machineExecutionMode = "MANUAL";
     private string machineNcDialect = "HAAS_NGC";
     private string machineToolDiameterOffsetKind = "RADIUS";
+    private string machineHourlyRate = string.Empty;
     private string haasHost = string.Empty;
     private string haasMacAddress = string.Empty;
     private CncAdapterDefinition? selectedCncAdapter;
@@ -603,6 +604,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     /// <summary>Whether the control keeps cutter (D) offsets as radius or diameter values; the Offset Loader writes measured values accordingly.</summary>
     public string MachineToolDiameterOffsetKind { get => machineToolDiameterOffsetKind; set => SetField(ref machineToolDiameterOffsetKind, value); }
     public IReadOnlyList<string> MachineToolDiameterOffsetKinds { get; } = ["RADIUS", "DIAMETER"];
+    /// <summary>Work-hour price in NIS for Work Order target times; empty uses the default 240 NIS.</summary>
+    public string MachineHourlyRate { get => machineHourlyRate; set => SetField(ref machineHourlyRate, value); }
     public string MachineFormHeading => editingMachineId is null ? "New machine" : "Edit machine";
     public ObservableCollection<CncAdapterDefinition> CncAdapters { get; } = [];
     private CncAdapterDefinition? SelectedCncAdapter
@@ -1288,6 +1291,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineExecutionMode = "MANUAL";
         MachineNcDialect = "HAAS_NGC";
         MachineToolDiameterOffsetKind = "RADIUS";
+        MachineHourlyRate = string.Empty;
         ResetHaasForm();
         OnPropertyChanged(nameof(MachineSimulationSummary));
         RebuildMachinePostprocessors([]);
@@ -1305,6 +1309,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             || (SelectedMachineTypeForMachine is null && string.IsNullOrWhiteSpace(MachineProcessType)))
         {
             StatusMessage = "Machine number, name, and type are required.";
+            return;
+        }
+        if (!TryParseHourlyRate(MachineHourlyRate, out _))
+        {
+            StatusMessage = "Hourly price must be a number from 0 to 100000 NIS, or empty for the default 240 NIS.";
             return;
         }
 
@@ -2655,6 +2664,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineExecutionMode = value.ExecutionMode;
         MachineNcDialect = value.NcDialect;
         MachineToolDiameterOffsetKind = value.ToolDiameterOffsetKind;
+        MachineHourlyRate = value.HourlyRateNis?.ToString("0.##", CultureInfo.CurrentCulture) ?? string.Empty;
         OnPropertyChanged(nameof(MachineSimulationSummary));
         RebuildMachinePostprocessors(value.SupportedPostprocessorIds ?? []);
         ResetHaasForm();
@@ -2870,7 +2880,24 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             current?.MachineTimeFactor ?? 1.0,
             MachineNcDialect,
             current?.NcViewerMachine,
-            MachineToolDiameterOffsetKind);
+            MachineToolDiameterOffsetKind,
+            HourlyRateNis: TryParseHourlyRate(MachineHourlyRate, out var hourlyRate) ? hourlyRate : null);
+    }
+
+    /// <summary>An hourly price typed in NIS: empty is null (the default); otherwise 0 to 100000.</summary>
+    internal static bool TryParseHourlyRate(string? text, out double? value)
+    {
+        value = null;
+        if (string.IsNullOrWhiteSpace(text)) return true;
+        var trimmed = text.Trim();
+        if ((double.TryParse(trimmed, NumberStyles.Float, CultureInfo.CurrentCulture, out var parsed)
+             || double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed))
+            && double.IsFinite(parsed) && parsed is >= 0 and <= 100000)
+        {
+            value = parsed;
+            return true;
+        }
+        return false;
     }
 
     private IReadOnlyList<string> SelectedWorkdays()

@@ -266,6 +266,15 @@ Authentication, authorization roles, and audit requirements for people are not d
   Machine mapping (configured Cimatron machine id, exact postprocessor, Setup mapping table, matching name) is CAM
   context only and never assigns or reorders Machine work. A manually typed Work CS is replaced only after the planner
   confirms.
+- **Work Order target time (schema v122, owner request 2026-10-14).** Each Machine and each Workstation Type has a
+  work-hour price in NIS (Setup; empty means the default, 240 NIS for a Machine and 100 NIS for a station type). On a
+  Work Order the planner enters the price of one part (suggested from its Orders) and the material cost of the whole
+  Work Order; the Server calculates the margin (price × quantity − material) and, for each resource of the route on its
+  own (the assigned Machine, or the required Machine type at the default, and each station type), the target hours the
+  margin buys at that resource's price, the same in minutes per part, and the planned hours next to it with a textual
+  check (within target, over target, no margin). Calculate shows the result without saving; Save stores the inputs and the
+  result on the Work Order for every user (versioned; a stale save is refused with who changed it). Target times are not a
+  planning input and never change assignments, backlog order or the Timeline.
 - **One Work CS source in the NC viewer (schema v120, owner decision 2026-10-13).** Opened from a Case Operation, the
   viewer places the program with the Operation's data on the Server only: the **Home offsets** (G54 … as absolute machine
   coordinates of the viewer machine, per Operation and viewer machine) put the program zero on the machine, and the

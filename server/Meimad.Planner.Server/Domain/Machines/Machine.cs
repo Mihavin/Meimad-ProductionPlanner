@@ -30,7 +30,8 @@ internal sealed record Machine(
     string NcDialect = MachineNcDialects.HaasNgc,
     string? NcViewerMachine = null,
     string ToolDiameterOffsetKind = ToolDiameterOffsetKinds.Radius,
-    IReadOnlyList<MachineNcViewerModel>? NcViewerModels = null);
+    IReadOnlyList<MachineNcViewerModel>? NcViewerModels = null,
+    double? HourlyRateNis = null);
 
 internal sealed record MachineValues(
     string? Number,
@@ -52,7 +53,8 @@ internal sealed record MachineValues(
     string? NcDialect = null,
     string? NcViewerMachine = null,
     string? ToolDiameterOffsetKind = null,
-    IReadOnlyList<MachineNcViewerModelInput?>? NcViewerModels = null);
+    IReadOnlyList<MachineNcViewerModelInput?>? NcViewerModels = null,
+    double? HourlyRateNis = null);
 
 internal sealed record ValidatedMachineValues(
     string Number,
@@ -74,7 +76,19 @@ internal sealed record ValidatedMachineValues(
     string NcDialect = MachineNcDialects.HaasNgc,
     string? NcViewerMachine = null,
     string ToolDiameterOffsetKind = ToolDiameterOffsetKinds.Radius,
-    IReadOnlyList<MachineNcViewerModel>? NcViewerModels = null);
+    IReadOnlyList<MachineNcViewerModel>? NcViewerModels = null,
+    double? HourlyRateNis = null);
+
+/// <summary>
+/// The work-hour price of a resource for Work Order target times (owner request 2026-10-14), in NIS. A Machine or a
+/// Workstation Type without its own price uses the default: 240 NIS for a Machine, 100 NIS for a station.
+/// </summary>
+internal static class ResourceHourlyRates
+{
+    internal const double MachineDefaultNis = 240;
+    internal const double WorkstationDefaultNis = 100;
+    internal const double MaximumNis = 100000;
+}
 
 internal static class MachineExecutionModes
 {

@@ -195,7 +195,10 @@ internal sealed record PlannerMachine(
     string NcDialect = "HAAS_NGC",
     string? NcViewerMachine = null,
     string ToolDiameterOffsetKind = "RADIUS",
-    IReadOnlyList<NcViewerMachineModel>? NcViewerModels = null)
+    IReadOnlyList<NcViewerMachineModel>? NcViewerModels = null,
+    // Work-hour price for Work Order target times (schema v122); null uses the default (240 NIS).
+    double? HourlyRateNis = null,
+    double EffectiveHourlyRateNis = 240)
 {
     public string DisplayName => $"{Number} — {Name}";
 }
@@ -641,7 +644,9 @@ internal sealed record MachineCreate(
     string? NcViewerMachine = null,
     string ToolDiameterOffsetKind = "RADIUS",
     // Null leaves the Machine's NC viewer 3D models unchanged on update.
-    IReadOnlyList<NcViewerMachineModel>? NcViewerModels = null);
+    IReadOnlyList<NcViewerMachineModel>? NcViewerModels = null,
+    // Null uses the default work-hour price (240 NIS).
+    double? HourlyRateNis = null);
 
 internal sealed record HaasConnectionSettings(
     string MachineId, string Host, string MacAddress, int MdcPort, int MtConnectPort, int DprntPort,
@@ -1077,9 +1082,15 @@ internal sealed record PlannerWorkstationType(
     string? Description,
     string PropertySchemaJson,
     bool IsActive,
-    int Version)
+    int Version,
+    // Work-hour price for Work Order target times (schema v122); null uses the default (100 NIS).
+    double? HourlyRateNis = null,
+    double EffectiveHourlyRateNis = 100)
 {
     public string DisplayName => IsActive ? Name : $"{Name} (inactive)";
+    public string HourlyRateText => HourlyRateNis is { } rate
+        ? rate.ToString("0.##", System.Globalization.CultureInfo.CurrentCulture)
+        : $"{EffectiveHourlyRateNis.ToString("0.##", System.Globalization.CultureInfo.CurrentCulture)} (default)";
 }
 
 internal sealed record PlannerWorkstation(
@@ -1109,8 +1120,8 @@ internal sealed record PlannerEmployeeSkills(string EmployeeId, IReadOnlyList<st
 
 internal sealed record SkillCreate(string Name, string? Description);
 internal sealed record SkillUpdate(string Name,string? Description,bool IsActive,int ExpectedVersion);
-internal sealed record WorkstationTypeCreate(string Name, string? Description, string PropertySchemaJson);
-internal sealed record WorkstationTypeUpdate(string Name,string? Description,string PropertySchemaJson,bool IsActive,int ExpectedVersion);
+internal sealed record WorkstationTypeCreate(string Name, string? Description, string PropertySchemaJson, double? HourlyRateNis = null);
+internal sealed record WorkstationTypeUpdate(string Name,string? Description,string PropertySchemaJson,bool IsActive,int ExpectedVersion,double? HourlyRateNis = null);
 internal sealed record WorkstationCreate(string Name, string WorkstationTypeId, string WorkingCalendarId,
     int Capacity, IReadOnlyList<string> Capabilities, string PropertiesJson);
 internal sealed record WorkstationUpdate(string Name,string WorkstationTypeId,string WorkingCalendarId,int Capacity,IReadOnlyList<string> Capabilities,string PropertiesJson,bool IsActive,int ExpectedVersion);

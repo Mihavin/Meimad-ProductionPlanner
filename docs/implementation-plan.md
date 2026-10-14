@@ -1,5 +1,24 @@
 # Implementation Plan
 
+## Work Order target time (2026-10-14, schema v122)
+
+Owner request 2026-10-14: a calculator for the target time of a Work Order from the part price, the material price and
+the work-hour price of the resource, with an hourly price on Machines and stations (default 240 NIS for a Machine, 100
+NIS for others). Owner answers: each resource is shown on its own (the whole margin at that resource's price), the
+material is one total per Work Order, the result is saved on the Work Order, and the station price is per Workstation
+Type.
+
+- *Server.* Schema v122 (`machines.hourly_rate_nis`, `workstation_types.hourly_rate_nis`, `work_order_target_times`);
+  `WorkOrderTargetTimeService` (calculation), `SqliteWorkOrderTargetTimeRepository`, `/api/v1/batches/{id}/target-time`
+  (GET, POST calculate, PUT, DELETE with entity tags). Tests: `WorkOrderTargetTimeApiTests`,
+  `WorkOrderTargetTimeMigrationTests`; the v114 test now pins its comparison to v114.
+- *Client.* Setup fields for both hourly prices; the Work Orders tab's *Target time* panel
+  (`WorkOrderTargetTimeViewModel`). Tests: `WorkOrderTargetTimeViewModelTests`.
+- *Choices recorded (reversible).* An operation not assigned to a Machine uses the Machine default price under its
+  Machine type name. Employees and external resources have no price and are not listed. The suggested part price is the
+  allocated Orders' price weighted by allocated quantity. Material is not suggested from Kitaron purchase lines (a line's
+  total is per purchase, not per Work Order). Currency is NIS only.
+
 ## Cimatron files in the AI document index (2026-10-14, schema v121)
 
 Owner request 2026-10-14 ("AI - add indexing for Cimatron files"). Survey of the share (read-only, one part folder):

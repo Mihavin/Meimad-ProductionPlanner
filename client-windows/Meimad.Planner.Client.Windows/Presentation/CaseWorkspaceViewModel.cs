@@ -375,6 +375,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     /// <summary>Candidate and verified Kitaron material orders of the selected Work Order.</summary>
     public WorkOrderMaterialOrdersViewModel WorkOrderMaterialOrders { get; } = new();
 
+    /// <summary>Target time of the selected Work Order from its part price, material total and the route's hourly prices.</summary>
+    public WorkOrderTargetTimeViewModel WorkOrderTargetTime { get; } = new();
+
     public AsyncCommand UnreleaseBatchCommand { get; }
 
     /// <summary>"Refresh from Case": reloads the selected Work Order's operations, released or pending.</summary>
@@ -649,6 +652,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanCancelBatchProduction));
                 OnPropertyChanged(nameof(CanDeleteSelectedBatch));
                 _ = WorkOrderMaterialOrders.LoadAsync(value);
+                _ = WorkOrderTargetTime.LoadAsync(value);
                 BeginEditBatchCommand.RaiseCanExecuteChanged();
                 ReleaseBatchCommand.RaiseCanExecuteChanged();
                 UnreleaseBatchCommand.RaiseCanExecuteChanged();
@@ -1135,6 +1139,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         CamSetup.ToolTableChosen ??= path => ToolTableFilePath = path;
         CamSetup.PackageImported ??= UseImportedPackageForRelease;
         WorkOrderMaterialOrders.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
+        WorkOrderTargetTime.AttachSession(newApiClient, nextIsEditor);
         if (newApiClient is not null && (apiChanged || networkRootPath is null)) _ = LoadNetworkRootAsync(newApiClient);
         if (!apiChanged
             && string.Equals(clientId, newClientId, StringComparison.Ordinal)

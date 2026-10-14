@@ -4,7 +4,12 @@ namespace Meimad.Planner.Server.Application.ResourcePlanning;
 
 internal sealed record SkillRecord(string Id, string Name, string? Description, bool IsActive, int Version);
 internal sealed record EmployeeSkillsRecord(string EmployeeId, IReadOnlyList<string> SkillIds);
-internal sealed record WorkstationTypeRecord(string Id, string Name, string? Description, string PropertySchemaJson, bool IsActive, int Version);
+/// <summary>A Workstation Type; <see cref="HourlyRateNis"/> is its work-hour price for Work Order target times (null: the default).</summary>
+internal sealed record WorkstationTypeRecord(string Id, string Name, string? Description, string PropertySchemaJson, bool IsActive, int Version,
+    double? HourlyRateNis = null)
+{
+    public double EffectiveHourlyRateNis => HourlyRateNis ?? Domain.Machines.ResourceHourlyRates.WorkstationDefaultNis;
+}
 internal sealed record WorkstationRecord(string Id, string Name, string WorkstationTypeId, string WorkingCalendarId,
     int Capacity, IReadOnlyList<string> Capabilities, string PropertiesJson, bool IsActive, int Version);
 internal sealed record ExternalResourceRecord(string Id, string Name, string? SupplierName, int PromisedLeadTimeMinutes,
@@ -63,12 +68,18 @@ internal sealed class ResourceMasterDataService(IResourceMasterDataRepository re
     internal Task DeleteSkillAsync(string id,int version,EditAuthority authority,CancellationToken token=default)=>repository.DeleteSkillAsync(Required(id,"id",200),version,authority,token);
 
     internal Task<WorkstationTypeRecord> CreateWorkstationTypeAsync(string? name, string? description,
-        string? propertySchemaJson, EditAuthority authority, CancellationToken token = default) =>
+        string? propertySchemaJson, EditAuthority authority, CancellationToken token = default, double? hourlyRateNis = null) =>
         repository.CreateWorkstationTypeAsync(new(Guid.NewGuid().ToString("N"), Required(name, "name", 120),
-            Optional(description, 1000), JsonObject(propertySchemaJson, "propertySchema"), true, 1), authority, token);
+            Optional(description, 1000), JsonObject(propertySchemaJson, "propertySchema"), true, 1, HourlyRate(hourlyRateNis)), authority, token);
 
-    internal Task<WorkstationTypeRecord> UpdateWorkstationTypeAsync(string id,string? name,string? description,string? schema,bool active,int version,EditAuthority authority,CancellationToken token=default)=>
-        repository.UpdateWorkstationTypeAsync(new(Required(id,"id",200),Required(name,"name",120),Optional(description,1000),JsonObject(schema,"propertySchema"),active,version+1),version,authority,token);
+    internal Task<WorkstationTypeRecord> UpdateWorkstationTypeAsync(string id,string? name,string? description,string? schema,bool active,int version,EditAuthority authority,CancellationToken token=default,double? hourlyRateNis=null)=>
+        repository.UpdateWorkstationTypeAsync(new(Required(id,"id",200),Required(name,"name",120),Optional(description,1000),JsonObject(schema,"propertySchema"),active,version+1,HourlyRate(hourlyRateNis)),version,authority,token);
+
+    /// <summary>A work-hour price from 0 to 100000 NIS, or null for the default.</summary>
+    private static double? HourlyRate(double? value) =>
+        value is null || (double.IsFinite(value.Value) && value.Value >= 0 && value.Value <= Domain.Machines.ResourceHourlyRates.MaximumNis)
+            ? value
+            : throw Invalid("hourlyRateNis", $"The hourly price must be from 0 to {Domain.Machines.ResourceHourlyRates.MaximumNis:0} NIS, or empty for the default {Domain.Machines.ResourceHourlyRates.WorkstationDefaultNis:0} NIS.");
     internal Task DeleteWorkstationTypeAsync(string id,int version,EditAuthority authority,CancellationToken token=default)=>repository.DeleteWorkstationTypeAsync(Required(id,"id",200),version,authority,token);
 
     internal Task<WorkstationRecord> CreateWorkstationAsync(string? name, string? typeId, string? calendarId,

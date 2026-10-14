@@ -30,11 +30,14 @@ public sealed class MachineSimulationDefinitionMigrationTests
         var machinesBefore = await RowsAsync(fixture, "SELECT * FROM machines ORDER BY id;");
         SqliteConnection.ClearAllPools();
 
+        // Version 114 itself leaves the machines untouched (later versions may add columns, such as v122's hourly price).
+        await migrator.MigrateAsync(114);
+        Assert.Equal(machinesBefore, await RowsAsync(fixture, "SELECT * FROM machines ORDER BY id;"));
+        SqliteConnection.ClearAllPools();
         await migrator.MigrateAsync();
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
         Assert.Equal("machine_simulation_definitions", await ScalarAsync(connection, "SELECT name FROM schema_migrations WHERE version = 114;"));
-        Assert.Equal(machinesBefore, await RowsAsync(fixture, "SELECT * FROM machines ORDER BY id;"));
         Assert.Equal(3L, await ScalarAsync(connection,
             "SELECT COUNT(*) FROM machine_simulation_definitions WHERE draft_json = published_json AND draft_version = 1 AND published_version = 1;"));
 

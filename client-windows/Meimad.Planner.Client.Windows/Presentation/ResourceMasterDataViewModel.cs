@@ -20,6 +20,7 @@ internal sealed class ResourceMasterDataViewModel : INotifyPropertyChanged
     private string workstationTypeName = string.Empty;
     private string workstationTypeDescription = string.Empty;
     private string workstationTypeSchema = "{}";
+    private string workstationTypeHourlyRate = string.Empty;
     private string workstationName = string.Empty;
     private PlannerWorkstationType? selectedType;
     private WorkingCalendar? selectedCalendar;
@@ -85,7 +86,9 @@ internal sealed class ResourceMasterDataViewModel : INotifyPropertyChanged
     public string WorkstationTypeDescription { get => workstationTypeDescription; set => SetField(ref workstationTypeDescription, value); }
     public string WorkstationTypeSchema { get => workstationTypeSchema; set => SetField(ref workstationTypeSchema, value); }
     public bool WorkstationTypeIsActive {get=>workstationTypeIsActive;set=>SetField(ref workstationTypeIsActive,value);}
-    public PlannerWorkstationType? SelectedWorkstationType {get=>selectedWorkstationType;set{if(!SetField(ref selectedWorkstationType,value))return;if(value is not null){WorkstationTypeName=value.Name;WorkstationTypeDescription=value.Description??"";WorkstationTypeSchema=value.PropertySchemaJson;WorkstationTypeIsActive=value.IsActive;}RaiseCommands();}}
+    /// <summary>Work-hour price in NIS for Work Order target times; empty uses the default 100 NIS.</summary>
+    public string WorkstationTypeHourlyRate { get => workstationTypeHourlyRate; set => SetField(ref workstationTypeHourlyRate, value); }
+    public PlannerWorkstationType? SelectedWorkstationType {get=>selectedWorkstationType;set{if(!SetField(ref selectedWorkstationType,value))return;if(value is not null){WorkstationTypeName=value.Name;WorkstationTypeDescription=value.Description??"";WorkstationTypeSchema=value.PropertySchemaJson;WorkstationTypeIsActive=value.IsActive;WorkstationTypeHourlyRate=value.HourlyRateNis?.ToString("0.##",CultureInfo.CurrentCulture)??string.Empty;}RaiseCommands();}}
     public string WorkstationName { get => workstationName; set => SetField(ref workstationName, value); }
     public PlannerWorkstationType? SelectedType { get => selectedType; set { if (SetField(ref selectedType, value)) RaiseCommands(); } }
     public WorkingCalendar? SelectedCalendar { get => selectedCalendar; set { if (SetField(ref selectedCalendar, value)) RaiseCommands(); } }
@@ -170,12 +173,17 @@ internal sealed class ResourceMasterDataViewModel : INotifyPropertyChanged
     private async Task AddWorkstationTypeAsync()
     {
         if (string.IsNullOrWhiteSpace(WorkstationTypeName)) { StatusMessage = "Workstation type name is required."; return; }
+        if (!SetupViewModel.TryParseHourlyRate(WorkstationTypeHourlyRate, out var hourlyRate))
+        {
+            StatusMessage = "Hourly price must be a number from 0 to 100000 NIS, or empty for the default 100 NIS.";
+            return;
+        }
         await MutateAsync(async () =>
         {
-            if(SelectedWorkstationType is null) await apiClient!.CreateWorkstationTypeAsync(new(WorkstationTypeName.Trim(), Blank(WorkstationTypeDescription),JsonOrEmpty(WorkstationTypeSchema)), clientId, editGeneration);
-            else await apiClient!.UpdateWorkstationTypeAsync(SelectedWorkstationType.Id,new(WorkstationTypeName.Trim(),Blank(WorkstationTypeDescription),JsonOrEmpty(WorkstationTypeSchema),WorkstationTypeIsActive,SelectedWorkstationType.Version),clientId,editGeneration);
+            if(SelectedWorkstationType is null) await apiClient!.CreateWorkstationTypeAsync(new(WorkstationTypeName.Trim(), Blank(WorkstationTypeDescription),JsonOrEmpty(WorkstationTypeSchema),hourlyRate), clientId, editGeneration);
+            else await apiClient!.UpdateWorkstationTypeAsync(SelectedWorkstationType.Id,new(WorkstationTypeName.Trim(),Blank(WorkstationTypeDescription),JsonOrEmpty(WorkstationTypeSchema),WorkstationTypeIsActive,SelectedWorkstationType.Version,hourlyRate),clientId,editGeneration);
             SelectedWorkstationType=null;
-            WorkstationTypeName = WorkstationTypeDescription = string.Empty;
+            WorkstationTypeName = WorkstationTypeDescription = WorkstationTypeHourlyRate = string.Empty;
             WorkstationTypeSchema = "{}";
         }, "Workstation type saved.");
     }

@@ -23,7 +23,8 @@ internal sealed record CreateMachineCommand(
     string? NcDialect = null,
     string? NcViewerMachine = null,
     string? ToolDiameterOffsetKind = null,
-    IReadOnlyList<MachineNcViewerModelInput?>? NcViewerModels = null);
+    IReadOnlyList<MachineNcViewerModelInput?>? NcViewerModels = null,
+    double? HourlyRateNis = null);
 
 internal readonly record struct MachineField<T>(bool IsSpecified, T Value)
 {
@@ -53,4 +54,5 @@ internal sealed record UpdateMachineCommand(
     MachineField<string?> NcDialect = default,
     MachineField<string?> NcViewerMachine = default,
     MachineField<string?> ToolDiameterOffsetKind = default,
-    MachineField<IReadOnlyList<MachineNcViewerModelInput?>?> NcViewerModels = default);
+    MachineField<IReadOnlyList<MachineNcViewerModelInput?>?> NcViewerModels = default,
+    MachineField<double?> HourlyRateNis = default);

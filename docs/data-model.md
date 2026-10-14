@@ -84,6 +84,17 @@ Cimatron id), `postprocessor`, `client_import_id` (the client's import id from t
 (the import row), `source_host` (the CAM PC), `imported_at`, `imported_by`, `version` (+1 per new import). Not a planning
 input: its triggers advance the all-input and non-planning revisions only.
 
+## Work Order target times and hourly prices (schema v122, 2026-10-14)
+
+Owner request 2026-10-14. `machines.hourly_rate_nis` and `workstation_types.hourly_rate_nis` (REAL, null or 0–100000)
+hold the work-hour price in NIS; null means the default, 240 NIS for a Machine and 100 NIS for a Workstation Type.
+`work_order_target_times` holds at most one target time per Work Order (`production_batch_id` primary key, cascade with
+the Production Batch): `part_price_nis` (one part), `material_total_nis` (the whole Work Order), `quantity` (the planned
+quantity at save time), `margin_nis` = price × quantity − material, `resources_json` (array of `{kind, resourceId, name,
+hourlyRateNis, defaultRate, targetHours, targetMinutesPerPart, plannedHours, operationNumbers}`, a snapshot of the
+calculation at save time), `notes` (≤ 500), `version`, `created_at`, `updated_at`, `updated_by`. Not a planning input:
+its triggers advance the all-input and non-planning revisions only.
+
 ## Case Operation work offsets in the NC viewer (schema v120, 2026-10-13)
 
 `case_operation_viewer_work_offsets` holds the absolute machine coordinates of a Case Operation's work offsets per NC

@@ -36,11 +36,13 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
     public Task DeleteSkillAsync(string id,int expected,EditAuthority a,CancellationToken t)=>DeleteAsync("skills",id,expected,a,t);
     public async Task<WorkstationTypeRecord> CreateWorkstationTypeAsync(WorkstationTypeRecord value, EditAuthority authority, CancellationToken token)
     {
-        await ExecuteCreateAsync("INSERT INTO workstation_types(id,name,description,property_schema_json,is_active,version,created_at,updated_at) " +
-            "VALUES($id,$name,$description,$extra,1,1,$at,$at);", value.Id, value.Name, value.Description, authority, token, value.PropertySchemaJson);
+        await ExecuteCreateAsync("INSERT INTO workstation_types(id,name,description,property_schema_json,is_active,version,created_at,updated_at,hourly_rate_nis) " +
+            "VALUES($id,$name,$description,$extra,1,1,$at,$at,$rate);", value.Id, value.Name, value.Description, authority, token, value.PropertySchemaJson,
+            command => command.Parameters.AddWithValue("$rate", value.HourlyRateNis.HasValue ? value.HourlyRateNis.Value : DBNull.Value));
         return value;
     }
-    public async Task<WorkstationTypeRecord> UpdateWorkstationTypeAsync(WorkstationTypeRecord v,int expected,EditAuthority a,CancellationToken t){await UpdateAsync("workstation_types","name=$name,description=$description,property_schema_json=$extra,is_active=$active",v.Id,expected,v.Name,v.Description,v.IsActive,v.PropertySchemaJson,a,t);return v;}
+    public async Task<WorkstationTypeRecord> UpdateWorkstationTypeAsync(WorkstationTypeRecord v,int expected,EditAuthority a,CancellationToken t){await UpdateAsync("workstation_types","name=$name,description=$description,property_schema_json=$extra,is_active=$active,hourly_rate_nis=$rate",v.Id,expected,v.Name,v.Description,v.IsActive,v.PropertySchemaJson,a,t,
+        q=>q.Parameters.AddWithValue("$rate",v.HourlyRateNis.HasValue?v.HourlyRateNis.Value:DBNull.Value));return v;}
     public Task DeleteWorkstationTypeAsync(string id,int expected,EditAuthority a,CancellationToken t)=>DeleteAsync("workstation_types",id,expected,a,t);
     public async Task<WorkstationRecord> CreateWorkstationAsync(WorkstationRecord value, EditAuthority authority, CancellationToken token)
     {
@@ -194,20 +196,21 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
     }
 
     private async Task ExecuteCreateAsync(string sql, string id, string name, string? description, EditAuthority authority,
-        CancellationToken token, string? extra = null)
+        CancellationToken token, string? extra = null, Action<SqliteCommand>? parameters = null)
     {
         await using var connection = await database.OpenConnectionAsync(token); await using var transaction = connection.BeginTransaction(deferred: false);
         await EnsureEditAuthorityAsync(connection, transaction, authority, token); await using var command = connection.CreateCommand(); command.Transaction = transaction;
         command.CommandText = sql; command.Parameters.AddWithValue("$id", id); command.Parameters.AddWithValue("$name", name);
         command.Parameters.AddWithValue("$description", Db(description)); command.Parameters.AddWithValue("$at", Now());
         if (extra is not null) command.Parameters.AddWithValue("$extra", extra);
+        parameters?.Invoke(command);
         await ExecuteMappedAsync(command, token); await transaction.CommitAsync(token);
     }
 
-    private async Task UpdateAsync(string table,string sets,string id,int expected,string name,string? description,bool active,string? extra,EditAuthority authority,CancellationToken token)
+    private async Task UpdateAsync(string table,string sets,string id,int expected,string name,string? description,bool active,string? extra,EditAuthority authority,CancellationToken token,Action<SqliteCommand>? parameters=null)
     {
         await using var c=await database.OpenConnectionAsync(token);await using var t=c.BeginTransaction(deferred:false);await EnsureEditAuthorityAsync(c,t,authority,token);
-        await using var q=c.CreateCommand();q.Transaction=t;q.CommandText=$"UPDATE {table} SET {sets},version=version+1,updated_at=$at WHERE id=$id AND version=$version;";q.Parameters.AddWithValue("$id",id);q.Parameters.AddWithValue("$version",expected);q.Parameters.AddWithValue("$name",name);q.Parameters.AddWithValue("$description",Db(description));q.Parameters.AddWithValue("$active",active);q.Parameters.AddWithValue("$at",Now());if(extra is not null)q.Parameters.AddWithValue("$extra",extra);await ExecuteChangedAsync(q,token);await t.CommitAsync(token);
+        await using var q=c.CreateCommand();q.Transaction=t;q.CommandText=$"UPDATE {table} SET {sets},version=version+1,updated_at=$at WHERE id=$id AND version=$version;";q.Parameters.AddWithValue("$id",id);q.Parameters.AddWithValue("$version",expected);q.Parameters.AddWithValue("$name",name);q.Parameters.AddWithValue("$description",Db(description));q.Parameters.AddWithValue("$active",active);q.Parameters.AddWithValue("$at",Now());if(extra is not null)q.Parameters.AddWithValue("$extra",extra);parameters?.Invoke(q);await ExecuteChangedAsync(q,token);await t.CommitAsync(token);
     }
     private async Task DeleteAsync(string table,string id,int expected,EditAuthority authority,CancellationToken token)
     {
@@ -226,8 +229,8 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
     }
     private async Task<IReadOnlyList<WorkstationTypeRecord>> ReadTypesAsync(CancellationToken token)
     {
-        await using var c = await database.OpenConnectionAsync(token); await using var q = c.CreateCommand(); q.CommandText = "SELECT id,name,description,property_schema_json,is_active,version FROM workstation_types ORDER BY name COLLATE NOCASE,id;";
-        var values = new List<WorkstationTypeRecord>(); await using var r = await q.ExecuteReaderAsync(token); while (await r.ReadAsync(token)) values.Add(new(r.GetString(0),r.GetString(1),Nullable(r,2),r.GetString(3),r.GetBoolean(4),r.GetInt32(5))); return values;
+        await using var c = await database.OpenConnectionAsync(token); await using var q = c.CreateCommand(); q.CommandText = "SELECT id,name,description,property_schema_json,is_active,version,hourly_rate_nis FROM workstation_types ORDER BY name COLLATE NOCASE,id;";
+        var values = new List<WorkstationTypeRecord>(); await using var r = await q.ExecuteReaderAsync(token); while (await r.ReadAsync(token)) values.Add(new(r.GetString(0),r.GetString(1),Nullable(r,2),r.GetString(3),r.GetBoolean(4),r.GetInt32(5),r.IsDBNull(6)?null:r.GetDouble(6))); return values;
     }
     private async Task<IReadOnlyList<WorkstationRecord>> ReadWorkstationsAsync(CancellationToken token)
     {
