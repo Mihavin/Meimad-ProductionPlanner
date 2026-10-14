@@ -11,10 +11,24 @@ internal interface IProductionRunExecutionRepository
     Task<ProductionRun> SuspendAsync(string runId, int expectedVersion, string reason, EditAuthority authority, CancellationToken token);
     Task<ProductionRun> ResumeAsync(string runId, int expectedVersion, EditAuthority authority, CancellationToken token);
     Task<ProductionRun> ResetAsync(string runId, int expectedVersion, string reason, EditAuthority authority, CancellationToken token);
+    Task<UncountedCncCycles> ListUncountedCncCyclesAsync(string runId, CancellationToken token);
+    Task<UncountedCncCyclesCountResult> CountUncountedCncCyclesAsync(string runId, int expectedVersion, IReadOnlyList<string> workflowEventIds, EditAuthority authority, CancellationToken token);
 }
 
 internal sealed record RecordProductionRunCycleCommand(string Source, string SourceEventId, DateTimeOffset ObservedAt);
 internal sealed record ProductionRunCycleResult(ProductionRun Run, bool WasDuplicate, int CompletedCycleCount);
+
+/// <summary>
+/// A CNC <c>CYCLE_END</c> the Server retained as a workflow anomaly instead of counting (no matching
+/// START). It stays immutable Machine evidence; a planner may count it explicitly (owner decision
+/// 2026-10-14) but nothing counts it automatically.
+/// </summary>
+internal sealed record UncountedCncCycle(string WorkflowEventId, string ProductionRunProgramId, string Source,
+    string SourceEventId, long? SourceSequence, DateTimeOffset ServerReceivedAt, DateTimeOffset? MachineTimestamp,
+    string AnomalyType);
+internal sealed record UncountedCncCycles(string ProductionRunId, string RunStatus, int RunVersion,
+    IReadOnlyList<UncountedCncCycle> Items);
+internal sealed record UncountedCncCyclesCountResult(ProductionRun Run, int CountedCycles);
 
 internal sealed class ProductionRunExecutionService(
     IProductionRunExecutionRepository repository,
@@ -40,6 +54,16 @@ internal sealed class ProductionRunExecutionService(
         repository.ResumeAsync(Clean(id), version, authority, token);
     internal Task<ProductionRun> ResetAsync(string id, int version, string reason, EditAuthority authority, CancellationToken token) =>
         repository.ResetAsync(Clean(id), version, Clean(reason), authority, token);
+    internal Task<UncountedCncCycles> ListUncountedCncCyclesAsync(string id, CancellationToken token) =>
+        repository.ListUncountedCncCyclesAsync(Clean(id), token);
+    internal Task<UncountedCncCyclesCountResult> CountUncountedCncCyclesAsync(string id, int version, IReadOnlyList<string>? workflowEventIds, EditAuthority authority, CancellationToken token)
+    {
+        var ids = (workflowEventIds ?? []).Select(x => x?.Trim() ?? "").ToArray();
+        if (ids.Length is 0 or > 500 || ids.Any(x => x.Length is 0 or > 200) || ids.Distinct(StringComparer.Ordinal).Count() != ids.Length)
+            throw new ProductionRunValidationException("workflowEventIds", "invalid",
+                "Select 1 to 500 different uncounted cycle ends.");
+        return repository.CountUncountedCncCyclesAsync(Clean(id), version, ids, authority, token);
+    }
     private static string Clean(string? value) => !string.IsNullOrWhiteSpace(value) && value.Trim().Length <= 2000
         ? value.Trim() : throw new ProductionRunValidationException("value", "required", "A non-empty value is required.");
 }

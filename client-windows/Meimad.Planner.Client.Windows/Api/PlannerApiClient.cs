@@ -23,6 +23,8 @@ internal partial interface IPlannerApiClient : IDisposable
     Task<LocalAiSettings> GetLocalAiSettingsAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<LocalAiSettings> UpdateLocalAiSettingsAsync(int version, bool enabled, string modelId, string modelDigest, string runtimeVersion, int cpuThreads, int keepAliveSeconds, int maxModelMemoryMb, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<LocalAiRuntimeProbe> ProbeLocalAiRuntimeAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<UncountedCncCycleResource> GetUncountedCncCyclesAsync(string productionRunId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<UncountedCncCyclesCounted> CountUncountedCncCyclesAsync(string productionRunId, IReadOnlyList<string> workflowEventIds, string entityTag, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<LocalAiFeedback> SaveLocalAiFeedbackAsync(string id, int version, bool useful, string correction, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<AiChatStatus> AskAiAsync(IReadOnlyList<AiChatTurn> messages, AiChatContext? context, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<AiChatStatus> GetAiChatAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -4379,6 +4381,27 @@ internal sealed partial class PlannerApiClient : IPlannerApiClient
             importHttpClient.Dispose();
         }
         httpClient.Dispose();
+    }
+
+    public async Task<UncountedCncCycleResource> GetUncountedCncCyclesAsync(
+        string productionRunId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/production-runs/{Uri.EscapeDataString(productionRunId)}/uncounted-cnc-cycles", cancellationToken);
+        var value = await ReadSuccessAsync<UncountedCncCycleList>(response, cancellationToken);
+        return new(value, RequiredEntityTag(response));
+    }
+
+    public async Task<UncountedCncCyclesCounted> CountUncountedCncCyclesAsync(
+        string productionRunId, IReadOnlyList<string> workflowEventIds, string entityTag,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            $"api/v1/production-runs/{Uri.EscapeDataString(productionRunId)}/uncounted-cnc-cycles/count")
+        { Content = JsonContent.Create(new { workflowEventIds }) };
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<UncountedCncCyclesCounted>(response, cancellationToken);
     }
 
     private static HttpRequestMessage CreateRequest(

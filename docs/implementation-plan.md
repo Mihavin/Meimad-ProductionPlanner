@@ -2763,3 +2763,27 @@ Open points:
 - Mazak calls by program name (`M98 <NAME>`, `G65 <NAME>`) are not run: the vendored mill interpreter requires a `P` number.
 
 **Tests:** `NcEngineRuntimeTests` (`.EIA` subprograms from the program folder by name and from a memory subfolder by declared number), `NcSubprogramCallsTests` (`FindInFolder` by `.EIA` name and number). The factory's `9013.EIA` was run through the engine with Node: unresolved before, found from the memory folder after. Not verified: the WebView2 page inside the running client.
+
+## Counting continues for a Run in production; planner counts retained cycle ends (2026-10-14)
+
+**Owner report:** Machine 15 made about 20 parts of 30P450172000-502 (Operation 40, Run 255170, 22 parts) but the TV showed 11.
+
+**Cause:** on 2026-10-12 newer local releases (r4, r5, then r6 on 2026-10-13) were published for the operation's process revision while the Machine kept running r3 (NC 784093). Under the v90 decision, readiness then reports the running release as outdated until the Work Order is refreshed and the operation set up again. The Work Order was not refreshed, so every following CNC `CYCLE_START` was refused with `production_not_ready`, and each matching `CYCLE_END` was retained only as a `CYCLE_END_WITHOUT_START` anomaly. Ten cycles were not counted, and nothing in the client or on the TV showed it.
+
+**Owner decision (2026-10-14):** the Server still counts each cycle of a Run already in production and raises a visible warning. A planner can count the retained cycle ends.
+
+**Implemented:**
+- `SqliteProductionRunCncObservationRepository`: readiness still gates the first START of a `PLANNED` Run. For an `IN_PROGRESS` Run, a valid START whose readiness is blocked is retained with `readinessBlockedCode` in its metadata, writes a `production_cycle_started_while_not_ready` structured event, and returns `accepted_while_not_ready`; the ingestion service logs a warning. Its END is counted as usual.
+- `GET /api/v1/production-runs/{runId}/uncounted-cnc-cycles` lists retained CNC ends with no cycle record. `POST .../uncounted-cnc-cycles/count` (Machine-planning permission, Run `If-Match`) counts the selected ones oldest first through `SqliteProductionRunCycleAccounting`, all or nothing, with audit category `PLANNER_COUNTED_CNC_EVIDENCE`. Events and anomalies stay immutable; readiness is not re-checked.
+- Windows client: Shop overview → "Uncounted CNC cycles of the selected Run" loads the selected output's Run, lets the planner tick ends and count them (he/ru).
+- No schema change.
+
+**Tests:**
+- `CncVerificationFoundationTests`: a planned Run's first START is still refused; a Run in production keeps counting after readiness is lost and records the warning; planner counting is atomic, ordered, version-checked, never past the target and not repeatable.
+- `ProductionRunExecutionApiTests.Planner_lists_and_counts_a_retained_CNC_cycle_end_with_permission_and_version`: ETag, view-only 403, 428 without `If-Match`, 422 for an empty selection, count.
+- Client: `ShopUncountedCyclesTests`.
+
+**Not covered:**
+- The TV dashboard does not show the not-ready warning or uncounted ends.
+- Counting a retained END does not create a cycle attempt, so it does not feed the measured cycle-time mean.
+- An identical republish (same G-code, Tool Table and subprograms) still makes running work outdated. It was considered and dropped because it was not this case's cause; it remains a possible later rule.

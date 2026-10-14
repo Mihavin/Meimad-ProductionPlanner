@@ -114,6 +114,95 @@ internal sealed class SqliteProductionRunExecutionRepository(
                 await ExecuteAsync(c,t,"UPDATE production_run_programs SET status='PLANNED',production_process_revision_id=NULL,production_gcode_release_id=NULL,production_tool_table_release_id=NULL,production_gcode_file_hash=NULL,production_tool_table_file_hash=NULL,version=version+1,updated_at=$at WHERE production_run_id=$id;",runId,now,token);
             }, token);
 
+    public async Task<UncountedCncCycles> ListUncountedCncCyclesAsync(string runId, CancellationToken token)
+    {
+        await using var connection = await database.OpenConnectionAsync(token);
+        await using var transaction = connection.BeginTransaction(deferred: true);
+        var (status, version) = await ReadRunStateAsync(connection, transaction, runId, token);
+        var items = await ReadUncountedCncCyclesAsync(connection, transaction, runId, token);
+        await transaction.CommitAsync(token);
+        return new(runId, status, version, items.Select(x => x.Cycle).ToArray());
+    }
+
+    /// <summary>
+    /// Counts retained CNC cycle ends a planner selected (owner decision 2026-10-14), oldest first,
+    /// through the shared cycle-accounting engine: all or nothing, never past a program's target.
+    /// The immutable END events and their anomalies stay unchanged; readiness is not re-checked
+    /// because the parts were already made.
+    /// </summary>
+    public async Task<UncountedCncCyclesCountResult> CountUncountedCncCyclesAsync(string runId, int expectedVersion,
+        IReadOnlyList<string> workflowEventIds, EditAuthority authority, CancellationToken token)
+    {
+        await using var connection = await database.OpenConnectionAsync(token);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        var actor = await EnsureEditAsync(connection, transaction, authority, token);
+        await EnsureRunAsync(connection, transaction, runId, expectedVersion, ["IN_PROGRESS"], token);
+        var available = (await ReadUncountedCncCyclesAsync(connection, transaction, runId, token))
+            .ToDictionary(x => x.Cycle.WorkflowEventId, StringComparer.Ordinal);
+        var missing = workflowEventIds.FirstOrDefault(id => !available.ContainsKey(id));
+        if (missing is not null)
+            throw new ProductionRunStateException("cycle_end_not_countable",
+                $"Cycle end {missing} is not an uncounted CNC cycle end of this Run. Refresh the list.");
+        var selected = workflowEventIds.Select(id => available[id])
+            .OrderBy(x => x.Cycle.ServerReceivedAt).ThenBy(x => x.Cycle.WorkflowEventId, StringComparer.Ordinal).ToArray();
+        var now = timeProvider.GetUtcNow();
+        foreach (var item in selected)
+            await SqliteProductionRunCycleAccounting.RecordAsync(connection, transaction, new(
+                runId, item.Cycle.ProductionRunProgramId, item.Cycle.Source, item.Cycle.SourceEventId,
+                item.Cycle.ServerReceivedAt, now, actor, "PLANNER_COUNTED_CNC_EVIDENCE", item.MachineId), token);
+        await AuditAsync(connection, transaction, "uncounted_cnc_cycles_counted", actor, runId, null,
+            new { workflowEventIds = selected.Select(x => x.Cycle.WorkflowEventId).ToArray(), countedCycles = selected.Length }, now, token);
+        await transaction.CommitAsync(token);
+        return new((await runs.GetAsync(runId, token))!, selected.Length);
+    }
+
+    private static async Task<(string Status, int Version)> ReadRunStateAsync(SqliteConnection c, SqliteTransaction t, string id, CancellationToken token)
+    {
+        await using var q = c.CreateCommand(); q.Transaction = t;
+        q.CommandText = "SELECT status,version FROM production_runs WHERE id=$id;";
+        q.Parameters.AddWithValue("$id", id);
+        await using var r = await q.ExecuteReaderAsync(token);
+        if (!await r.ReadAsync(token)) throw new ProductionRunNotFoundException(id);
+        return (r.GetString(0), r.GetInt32(1));
+    }
+
+    private static async Task<List<(UncountedCncCycle Cycle, string? MachineId)>> ReadUncountedCncCyclesAsync(
+        SqliteConnection c, SqliteTransaction t, string runId, CancellationToken token)
+    {
+        await using var q = c.CreateCommand(); q.Transaction = t;
+        q.CommandText = """
+            SELECT event.id,json_extract(event.metadata_json,'$.productionRunProgramId'),event.source,
+                   event.source_event_id,event.source_sequence,event.server_received_at,event.machine_timestamp,
+                   (SELECT anomaly.anomaly_type FROM production_run_workflow_anomalies anomaly
+                    WHERE anomaly.workflow_event_id=event.id
+                      AND anomaly.anomaly_type IN ('CYCLE_END_WITHOUT_START','CYCLE_END_SEQUENCE_MISMATCH')
+                    ORDER BY anomaly.id LIMIT 1),
+                   event.machine_id
+            FROM production_run_workflow_events event
+            WHERE event.production_run_id=$runId AND event.event_type='CYCLE_END'
+              AND event.source_event_id IS NOT NULL
+              AND json_extract(event.metadata_json,'$.productionRunProgramId') IS NOT NULL
+              AND EXISTS (SELECT 1 FROM production_run_workflow_anomalies anomaly
+                          WHERE anomaly.workflow_event_id=event.id
+                            AND anomaly.anomaly_type IN ('CYCLE_END_WITHOUT_START','CYCLE_END_SEQUENCE_MISMATCH'))
+              AND NOT EXISTS (SELECT 1 FROM production_run_cycle_events cycle
+                              WHERE cycle.source=event.source AND cycle.source_event_id=event.source_event_id)
+            ORDER BY event.server_received_at,event.id;
+            """;
+        q.Parameters.AddWithValue("$runId", runId);
+        var items = new List<(UncountedCncCycle, string?)>();
+        await using var r = await q.ExecuteReaderAsync(token);
+        while (await r.ReadAsync(token))
+            items.Add((new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3),
+                r.IsDBNull(4) ? null : r.GetInt64(4), Parse(r.GetString(5)),
+                r.IsDBNull(6) ? null : Parse(r.GetString(6)), r.GetString(7)),
+                r.IsDBNull(8) ? null : r.GetString(8)));
+        return items;
+    }
+
+    private static DateTimeOffset Parse(string value) =>
+        DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToUniversalTime();
+
     private async Task<ProductionRun> ChangeRunAsync(string id,int version,string[] allowed,string next,string eventName,EditAuthority authority,string? reason,
         Func<SqliteConnection,SqliteTransaction,DateTimeOffset,Task>? extra,CancellationToken token)
     {

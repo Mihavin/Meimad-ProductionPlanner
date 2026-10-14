@@ -124,12 +124,20 @@ internal sealed class SqliteProductionRunCncObservationRepository(
             return new(false, false, false, "cycle_start_requires_qc_pass_or_completed_cycle",
                 target.RunId, target.ProgramId);
         }
+        string? notReadyCode = null;
         if (validStart)
         {
             try
             {
                 await SqliteProductionRunReadinessRepository.EnsureAsync(connection, transaction,
                     target.RunId, token, physicalProduction: true);
+            }
+            catch (ProductionRunStateException blocked) when (target.RunStatus == "IN_PROGRESS")
+            {
+                // A Run already in production keeps counting the parts the Machine makes (owner
+                // decision 2026-10-14): the START is retained with the blocking readiness code and
+                // a structured warning, so lost prerequisites never silently stop the count.
+                notReadyCode = blocked.Code;
             }
             catch (ProductionRunStateException blocked)
             {
@@ -196,14 +204,24 @@ internal sealed class SqliteProductionRunCncObservationRepository(
             receivedAt = interruptedAt.AddTicks(1);
         }
         var workflowEventId = Guid.NewGuid().ToString("N");
-        var metadata = JsonSerializer.Serialize(new
-        {
-            productionRunProgramId = target.ProgramId,
-            suppliedRunIdentity = observation.ProductionRunIdentity,
-            suppliedProgramIdentity = observation.ProgramIdentity,
-            macroVersion = observation.MacroVersion,
-            rawLine = observation.RawLine
-        });
+        var metadata = notReadyCode is null
+            ? JsonSerializer.Serialize(new
+            {
+                productionRunProgramId = target.ProgramId,
+                suppliedRunIdentity = observation.ProductionRunIdentity,
+                suppliedProgramIdentity = observation.ProgramIdentity,
+                macroVersion = observation.MacroVersion,
+                rawLine = observation.RawLine
+            })
+            : JsonSerializer.Serialize(new
+            {
+                productionRunProgramId = target.ProgramId,
+                suppliedRunIdentity = observation.ProductionRunIdentity,
+                suppliedProgramIdentity = observation.ProgramIdentity,
+                macroVersion = observation.MacroVersion,
+                rawLine = observation.RawLine,
+                readinessBlockedCode = notReadyCode
+            });
         await using (var insert = connection.CreateCommand())
         {
             insert.Transaction = transaction;
@@ -274,13 +292,26 @@ internal sealed class SqliteProductionRunCncObservationRepository(
                 target.ProgramId);
         }
 
+        if (notReadyCode is not null)
+            await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction,
+                new("production_cycle_started_while_not_ready", receivedAt, "cnc-system",
+                    new Dictionary<string, string>
+                    {
+                        ["productionRunId"] = target.RunId,
+                        ["productionRunProgramId"] = target.ProgramId,
+                        ["machineId"] = observation.MachineId
+                    },
+                    "CNC_OBSERVATION", null, null,
+                    new { observation.SourceEventId, workflowEventId, readinessBlockedCode = notReadyCode }), token);
+
         var completed = default(int?);
         if (validEnd)
             completed = await RecordResolvedCycleAsync(connection, transaction, target,
                 source, observation.SourceEventId, receivedAt, observation.MachineId, token);
 
         await transaction.CommitAsync(token);
-        return new(true, false, completed.HasValue, "accepted", target.RunId,
+        return new(true, false, completed.HasValue,
+            notReadyCode is null ? "accepted" : "accepted_while_not_ready", target.RunId,
             target.ProgramId, completed);
     }
 

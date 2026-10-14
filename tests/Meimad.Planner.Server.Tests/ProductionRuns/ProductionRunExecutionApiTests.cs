@@ -32,6 +32,59 @@ public sealed class ProductionRunExecutionApiTests
         });
     }
 
+    [Fact]
+    public async Task Planner_lists_and_counts_a_retained_CNC_cycle_end_with_permission_and_version()
+    {
+        await RunAsync(async (app, client) =>
+        {
+            await SeedAsync(app.Services);
+            await using var connection = await app.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync();
+            await using var seed = connection.CreateCommand();
+            seed.CommandText = """
+                INSERT INTO production_run_workflow_events(id,production_run_id,machine_id,event_type,source,source_event_id,source_sequence,server_received_at,metadata_json)
+                VALUES('orphan-end','run-1','machine','CYCLE_END','HAAS_DPRINT:MACHINE','NC-1-E-1',7,'2026-08-23T11:00:00Z','{"productionRunProgramId":"program-1"}');
+                INSERT INTO production_run_workflow_anomalies(id,production_run_id,machine_id,source,source_event_id,anomaly_type,received_sequence,workflow_event_id,detected_at,details_json)
+                VALUES('orphan-anomaly','run-1','machine','HAAS_DPRINT:MACHINE','NC-1-E-1','CYCLE_END_WITHOUT_START',7,'orphan-end','2026-08-23T11:00:00Z','{}');
+                """;
+            await seed.ExecuteNonQueryAsync();
+
+            using var listed = await client.GetAsync("/api/v1/production-runs/run-1/uncounted-cnc-cycles");
+            listed.EnsureSuccessStatusCode();
+            var tag = listed.Headers.ETag!.Tag;
+            using (var json = JsonDocument.Parse(await listed.Content.ReadAsStringAsync()))
+            {
+                var item = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray());
+                Assert.Equal("orphan-end", item.GetProperty("workflowEventId").GetString());
+                Assert.Equal("CYCLE_END_WITHOUT_START", item.GetProperty("anomalyType").GetString());
+            }
+            HttpRequestMessage Count(string? ifMatch, params string[] ids)
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/production-runs/run-1/uncounted-cnc-cycles/count")
+                { Content = JsonContent.Create(new { workflowEventIds = ids }) };
+                if (ifMatch is not null) request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                return request;
+            }
+            using (client.SignedInWithOnly())
+            {
+                using var viewer = await client.SendAsync(Count(tag, "orphan-end"));
+                Assert.Equal(HttpStatusCode.Forbidden, viewer.StatusCode);
+            }
+            using (var missing = await client.SendAsync(Count(null, "orphan-end")))
+                Assert.Equal((HttpStatusCode)428, missing.StatusCode);
+            using (var empty = await client.SendAsync(Count(tag)))
+                Assert.Equal((HttpStatusCode)422, empty.StatusCode);
+            using var counted = await client.SendAsync(Count(tag, "orphan-end"));
+            counted.EnsureSuccessStatusCode();
+            using (var json = JsonDocument.Parse(await counted.Content.ReadAsStringAsync()))
+                Assert.Equal(1, json.RootElement.GetProperty("countedCycles").GetInt32());
+            seed.CommandText = "SELECT completed_cycle_count FROM production_run_programs WHERE id='program-1';";
+            Assert.Equal(1L, await seed.ExecuteScalarAsync());
+            using var again = await client.GetAsync("/api/v1/production-runs/run-1/uncounted-cnc-cycles");
+            using (var json = JsonDocument.Parse(await again.Content.ReadAsStringAsync()))
+                Assert.Empty(json.RootElement.GetProperty("items").EnumerateArray());
+        });
+    }
+
     [Theory]
     [InlineData("missing-run", "program-1", "2026-08-23T12:00:00Z")]
     [InlineData("run-1", "missing-program", "2026-08-23T12:00:00Z")]

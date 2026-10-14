@@ -62,6 +62,7 @@ internal sealed record AssignProductionRunRequest(
 internal sealed record CancelProductionRunRequest(string? Reason);
 internal sealed record ProductionRunReasonRequest(string? Reason);
 internal sealed record RecordProductionRunCycleRequest(string? Source, string? SourceEventId, DateTimeOffset? ObservedAt);
+internal sealed record CountUncountedCncCyclesRequest(IReadOnlyList<string>? WorkflowEventIds);
 
 internal sealed record ProductionRunListResponse(IReadOnlyList<ProductionRunResponse> Items);
 

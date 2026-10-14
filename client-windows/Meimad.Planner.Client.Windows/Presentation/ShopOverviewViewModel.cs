@@ -7,8 +7,22 @@ internal sealed record ShopOutput(string RunId, string ProgramId, ProductionRunP
 internal sealed record ShopMachineRow(string MachineId, string Number, string Name, string Connection,
     string Freshness, string Observation, DateTimeOffset? ObservedAt, int BacklogRuns,
     string NextCommittedRun, IReadOnlyList<ShopOutput> Outputs);
+/// <summary>One retained CNC cycle end of the selected Run that the planner may tick to count.</summary>
+internal sealed class UncountedCycleRow(UncountedCncCycle cycle) : INotifyPropertyChanged
+{
+    private bool isSelected;
+    public UncountedCncCycle Cycle => cycle;
+    public string Reason => cycle.AnomalyType == "CYCLE_END_SEQUENCE_MISMATCH" ? "End did not follow its start" : "End without a start";
+    public bool IsSelected { get => isSelected; set { isSelected = value; PropertyChanged?.Invoke(this, new(nameof(IsSelected))); } }
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
+
 internal sealed class ShopOverviewViewModel : INotifyPropertyChanged
 {
+    private const string UncountedHint = "Select a Run output, then load the CNC cycle ends the Server kept without counting.";
+    private ShopOutput? selectedOutput;
+    private string? uncountedRunId;
+    private string? uncountedTag;
     private IPlannerApiClient? api;
     private int generation;
     private bool busy;
@@ -20,7 +34,15 @@ internal sealed class ShopOverviewViewModel : INotifyPropertyChanged
         get => selected;
         set { if (selected?.MachineId != value?.MachineId) Ai.SelectMachineScope(value?.MachineId); selected = value; SelectedOutput = null; Changed(); }
     }
-    public ShopOutput? SelectedOutput { get; set; }
+    public ShopOutput? SelectedOutput
+    {
+        get => selectedOutput;
+        set { selectedOutput = value; Changed(); }
+    }
+    public ObservableCollection<UncountedCycleRow> UncountedCycles { get; } = [];
+    public string UncountedStatus { get; private set; } = UncountedHint;
+    public AsyncCommand LoadUncountedCommand { get; }
+    public AsyncCommand CountUncountedCommand { get; }
     public string Status { get; private set; } = "Refresh to inspect Machines, recorded counts and committed backlog.";
     public AsyncCommand RefreshCommand { get; }
     public AsyncCommand OpenCommand { get; }
@@ -30,9 +52,11 @@ internal sealed class ShopOverviewViewModel : INotifyPropertyChanged
     {
         RefreshCommand = new(RefreshAsync, () => api is not null && !busy);
         OpenCommand = new(OpenAsync, () => api is not null && selected is not null && !busy);
+        LoadUncountedCommand = new(LoadUncountedAsync, () => api is not null && selectedOutput is not null && !busy);
+        CountUncountedCommand = new(CountUncountedAsync, () => api is not null && uncountedTag is not null && !busy);
     }
     internal void AttachSession(IPlannerApiClient? client)
-    { generation++; api = client; Ai.AttachSession(client); busy = false; Machines.Clear(); selected = null; SelectedOutput = null; Status = "Refresh to inspect Machines, recorded counts and committed backlog."; Changed(); }
+    { generation++; api = client; Ai.AttachSession(client); busy = false; Machines.Clear(); selected = null; SelectedOutput = null; ClearUncounted(); Status = "Refresh to inspect Machines, recorded counts and committed backlog."; Changed(); }
     internal async Task RefreshAsync()
     {
         if (api is not { } client || busy) return;
@@ -84,5 +108,49 @@ internal sealed class ShopOverviewViewModel : INotifyPropertyChanged
         }
         catch (Exception exception) { if (current == generation) { Status = exception.Message; Changed(); } }
     }
-    private void Changed() { PropertyChanged?.Invoke(this, new(null)); RefreshCommand.RaiseCanExecuteChanged(); OpenCommand.RaiseCanExecuteChanged(); }
+    internal async Task LoadUncountedAsync()
+    {
+        if (api is not { } client || selectedOutput is not { } output || busy) return;
+        var current = generation; busy = true; Changed();
+        try
+        {
+            var list = await client.GetUncountedCncCyclesAsync(output.RunId);
+            if (current != generation) return;
+            UncountedCycles.Clear();
+            foreach (var cycle in list.Value.Items) UncountedCycles.Add(new(cycle));
+            uncountedRunId = output.RunId;
+            uncountedTag = list.Value.Items.Count == 0 ? null : list.EntityTag;
+            var count = list.Value.Items.Count;
+            UncountedStatus = count == 0
+                ? $"Run {output.RunId}: no uncounted CNC cycle ends."
+                : $"Run {output.RunId}: {count} CNC cycle ends were kept without counting. Tick the ones that made a good part and count them.";
+        }
+        catch (Exception exception) { if (current == generation) UncountedStatus = exception.Message; }
+        finally { if (current == generation) { busy = false; Changed(); } }
+    }
+
+    internal async Task CountUncountedAsync()
+    {
+        if (api is not { } client || uncountedRunId is not { } runId || uncountedTag is not { } tag || busy) return;
+        var ids = UncountedCycles.Where(x => x.IsSelected).Select(x => x.Cycle.WorkflowEventId).ToArray();
+        if (ids.Length == 0) { UncountedStatus = "Tick at least one cycle end to count."; Changed(); return; }
+        var current = generation; busy = true; Changed();
+        try
+        {
+            var counted = (await client.CountUncountedCncCyclesAsync(runId, ids, tag)).CountedCycles;
+            if (current != generation) return;
+            ClearUncounted();
+            UncountedStatus = $"Counted {counted} cycles on Run {runId}. Refresh to see the new counts.";
+        }
+        catch (Exception exception) { if (current == generation) UncountedStatus = exception.Message; }
+        finally { if (current == generation) { busy = false; Changed(); } }
+    }
+
+    private void ClearUncounted() { UncountedCycles.Clear(); uncountedRunId = null; uncountedTag = null; UncountedStatus = UncountedHint; }
+
+    private void Changed()
+    {
+        PropertyChanged?.Invoke(this, new(null)); RefreshCommand.RaiseCanExecuteChanged(); OpenCommand.RaiseCanExecuteChanged();
+        LoadUncountedCommand.RaiseCanExecuteChanged(); CountUncountedCommand.RaiseCanExecuteChanged();
+    }
 }

@@ -1984,6 +1984,12 @@ internal sealed record ProductionRunProgramCreate(
     string ManufacturingProgramId,string ProcessRevisionId,string? GCodeReleaseId,
     int SequencePosition,decimal CycleSeconds,IReadOnlyList<ProductionRunOutputCreate> Outputs);
 internal sealed record ProductionRunOutputCreate(string RevisionOutputId,string BatchOperationId,long TargetQuantity);
+/// <summary>A CNC cycle end the Server kept without counting it (no matching START); a planner may count it.</summary>
+internal sealed record UncountedCncCycle(string WorkflowEventId,string ProductionRunProgramId,string Source,string SourceEventId,
+    long? SourceSequence,DateTimeOffset ServerReceivedAt,DateTimeOffset? MachineTimestamp,string AnomalyType);
+internal sealed record UncountedCncCycleList(string ProductionRunId,string RunStatus,int RunVersion,IReadOnlyList<UncountedCncCycle> Items);
+internal sealed record UncountedCncCycleResource(UncountedCncCycleList Value,string EntityTag);
+internal sealed record UncountedCncCyclesCounted(int CountedCycles);
 internal sealed record ProductionRunAssignmentCreate(string MachineId,int BacklogPosition,string PlanningMode,bool ConfirmCompatibilityOverride=false,string? OverrideReason=null);
 internal sealed record ProductionRunResource(string ProductionRunId,string Status,int SharedSetupSeconds,int Version,
     IReadOnlyList<ProductionRunProgramResource> Programs,ProductionRunAssignmentResource? Assignment);

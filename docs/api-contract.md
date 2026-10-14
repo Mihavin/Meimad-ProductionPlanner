@@ -2227,6 +2227,39 @@ GET /api/v1/machines/{machineId}/production-runs/{runId}/debug-timeline?limit=20
 }
 ```
 
+### Uncounted CNC cycle ends (owner decision 2026-10-14)
+
+```http
+GET  /api/v1/production-runs/{runId}/uncounted-cnc-cycles
+POST /api/v1/production-runs/{runId}/uncounted-cnc-cycles/count
+```
+
+`GET` needs only a signed-in account and returns the Run's CNC `CYCLE_END` events that were retained with a `CYCLE_END_WITHOUT_START` or `CYCLE_END_SEQUENCE_MISMATCH` anomaly and have no cycle record yet, oldest first. The `ETag` is the Run's `production-run:{runId}:v{version}` tag.
+
+```json
+{
+  "productionRunId": "run-74",
+  "runStatus": "IN_PROGRESS",
+  "runVersion": 13,
+  "items": [
+    {
+      "workflowEventId": "8c1f...",
+      "productionRunProgramId": "run-program-74",
+      "source": "HAAS_DPRINT:MACHINE-15",
+      "sourceEventId": "NC-784093-E-189510",
+      "sourceSequence": 23,
+      "serverReceivedAt": "2026-10-12T15:55:49.7273293Z",
+      "machineTimestamp": null,
+      "anomalyType": "CYCLE_END_WITHOUT_START"
+    }
+  ]
+}
+```
+
+`POST` requires `plan_machines` permission and the Run `If-Match` tag (428 without it, 412 when stale). The body is `{ "workflowEventIds": ["..."] }` with 1-500 different IDs (422 otherwise). The Run must be `IN_PROGRESS` (409 `invalid_run_transition`). Every ID must still be an uncounted cycle end of that Run (409 `cycle_end_not_countable`). The Server counts the selected ends oldest first through the shared cycle accounting, with `observedAt` = the END's Server receipt time and audit category `PLANNER_COUNTED_CNC_EVIDENCE`. Readiness is not re-checked. The request is all or nothing: a cycle past a program's target (409 `program_cycle_overrun` or `program_not_active`) or an output's target (409 `output_overproduction`) commits nothing. The response is `{ "countedCycles": n, "run": <Production Run> }` with the new `ETag`. The END events and anomalies are not changed.
+
+A valid CNC `CYCLE_START` of a Run already `IN_PROGRESS` whose readiness is blocked is accepted (result code `accepted_while_not_ready`). Its workflow metadata carries `readinessBlockedCode`, and a `production_cycle_started_while_not_ready` structured event is written. The first START of a `PLANNED` Run is still refused with the readiness code.
+
 ## 7.6 Official job package generation
 
 `POST /api/v1/job-packages` is implemented for an active Windows editor. It is an official publication command, not a tablet endpoint. It requires `X-Meimad-Client-Id` and `X-Meimad-Edit-Generation`; the Server checks authority before reading source files and again in the publication transaction.

@@ -82,6 +82,10 @@ internal sealed class CncDprintEventIngestionService(
                     logger.LogWarning(
                         "Retained unmatched CNC CYCLE_END as workflow anomaly. MachineId={MachineId} EventId={EventId} Sequence={Sequence}",
                         machineId, parsed.SourceEventId, parsed.Sequence);
+                else if (result.Code == "accepted_while_not_ready")
+                    logger.LogWarning(
+                        "Counting CNC CYCLE_START of a Run in production whose readiness is blocked. MachineId={MachineId} RunId={RunId} EventId={EventId}",
+                        machineId, result.ProductionRunId, parsed.SourceEventId);
                 continue;
             }
             if (parsed.EventType == "SETUP_VERIFICATION_REQUESTED")

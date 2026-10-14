@@ -5,6 +5,7 @@ using Meimad.Planner.Server.Application.EInk;
 using Meimad.Planner.Server.Application.ProductionRuns;
 using Meimad.Planner.Server.Application.Qc;
 using Meimad.Planner.Server.Domain.Cnc;
+using Meimad.Planner.Server.Domain.ProductionRuns;
 using Meimad.Planner.Server.Infrastructure.Haas;
 using Meimad.Planner.Server.Persistence;
 using Meimad.Planner.Server.Tests.Persistence;
@@ -1345,7 +1346,18 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
             command.CommandText = "DELETE FROM batch_material_reservations;";
             await command.ExecuteNonQueryAsync();
         }
-        if (loseBeforeStart) await RemoveMaterial();
+        if (loseBeforeStart)
+        {
+            await RemoveMaterial();
+            // Only the first START of a planned Run is gated; a Run already in production keeps counting.
+            await using var connection = await fixture.Database.OpenConnectionAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE production_runs SET status='PLANNED',structure_locked_at=NULL WHERE id='run-verification';
+                UPDATE production_run_programs SET status='PLANNED' WHERE id='run-program-verification';
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
         var repository = new SqliteProductionRunCncObservationRepository(fixture.Database, new FixedTimeProvider(Now));
         var start = await repository.ConsumeCycleEventAsync(new("machine-verification", "CYCLE_START", "readiness-start",
             401, 10, "run-verification", "654321", "test"), default);
@@ -1362,6 +1374,121 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
                 402, 10, "run-verification", "654321", "test"), default);
             Assert.True(end.CycleCompleted, end.Code);
         }
+    }
+
+    [Fact]
+    public async Task Run_in_production_keeps_counting_after_readiness_is_lost_and_records_the_warning()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        await PrepareProductionApprovalAsync(fixture.Database);
+        await SetTargetAsync(fixture.Database, 2);
+        var repository = new SqliteProductionRunCncObservationRepository(fixture.Database, new FixedTimeProvider(Now));
+        Assert.Equal("accepted", (await repository.ConsumeCycleEventAsync(new("machine-verification", "CYCLE_START",
+            "lost-start-1", 501, 10, "run-verification", "654321", "test"), default)).Code);
+        Assert.True((await repository.ConsumeCycleEventAsync(new("machine-verification", "CYCLE_END",
+            "lost-end-1", 502, 10, "run-verification", "654321", "test"), default)).CycleCompleted);
+
+        await ExecuteAsync(fixture.Database, "DELETE FROM batch_material_reservations;");
+        var start = await repository.ConsumeCycleEventAsync(new("machine-verification", "CYCLE_START",
+            "lost-start-2", 503, 10, "run-verification", "654321", "test"), default);
+        var end = await repository.ConsumeCycleEventAsync(new("machine-verification", "CYCLE_END",
+            "lost-end-2", 504, 10, "run-verification", "654321", "test"), default);
+
+        Assert.True(start.Accepted);
+        Assert.Equal("accepted_while_not_ready", start.Code);
+        Assert.True(end.CycleCompleted, end.Code);
+        Assert.Equal(2, end.CompletedCycleCount);
+        Assert.Equal("production_not_ready", await ScalarAsync(fixture.Database, """
+            SELECT json_extract(metadata_json,'$.readinessBlockedCode') FROM production_run_workflow_events
+            WHERE source_event_id='lost-start-2';
+            """));
+        Assert.Equal(1L, await ScalarAsync(fixture.Database, """
+            SELECT COUNT(*) FROM structured_event_log
+            WHERE event_type='production_cycle_started_while_not_ready'
+              AND json_extract(after_data_json,'$.sourceEventId')='lost-start-2';
+            """));
+        Assert.Null(await ScalarAsync(fixture.Database, """
+            SELECT json_extract(metadata_json,'$.readinessBlockedCode') FROM production_run_workflow_events
+            WHERE source_event_id='lost-start-1';
+            """));
+    }
+
+    [Fact]
+    public async Task Planner_counts_retained_cycle_ends_once_atomically_and_never_past_the_target()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        await PrepareProductionApprovalAsync(fixture.Database);
+        await SetTargetAsync(fixture.Database, 2);
+        var time = new FixedTimeProvider(Now);
+        var observations = new SqliteProductionRunCncObservationRepository(fixture.Database, time);
+        foreach (var (id, sequence) in new[] { ("orphan-1", 601L), ("orphan-2", 603L), ("orphan-3", 605L) })
+            Assert.Equal("cycle_end_unmatched", (await observations.ConsumeCycleEventAsync(new("machine-verification",
+                "CYCLE_END", id, sequence, 10, "run-verification", "654321", "test"), default)).Code);
+        var runs = new SqliteProductionRunRepository(fixture.Database, time, new ProductionRunCyclePlanner());
+        var repository = new SqliteProductionRunExecutionRepository(fixture.Database, time, runs);
+        var authority = new EditAuthority("planner-client", 0, "planner");
+
+        var listed = await repository.ListUncountedCncCyclesAsync("run-verification", default);
+        Assert.Equal(["orphan-1", "orphan-2", "orphan-3"], listed.Items.Select(x => x.SourceEventId));
+        Assert.All(listed.Items, x => Assert.Equal("run-program-verification", x.ProductionRunProgramId));
+        var ids = listed.Items.Select(x => x.WorkflowEventId).ToArray();
+
+        await Assert.ThrowsAsync<ProductionRunVersionConflictException>(() => repository.CountUncountedCncCyclesAsync(
+            "run-verification", listed.RunVersion - 1, [ids[0]], authority, default));
+        // The third END would pass the 2-cycle target: the program is complete by then, so nothing commits.
+        Assert.Equal("program_not_active", (await Assert.ThrowsAsync<ProductionRunStateException>(() =>
+            repository.CountUncountedCncCyclesAsync("run-verification", listed.RunVersion, ids, authority, default))).Code);
+        Assert.Equal(0L, await ScalarAsync(fixture.Database,
+            "SELECT completed_cycle_count FROM production_run_programs WHERE id='run-program-verification';"));
+
+        // Counting never re-checks readiness: the parts were already made.
+        await ExecuteAsync(fixture.Database, "DELETE FROM batch_material_reservations;");
+        await SetTargetAsync(fixture.Database, 3);
+        var counted = await repository.CountUncountedCncCyclesAsync(
+            "run-verification", listed.RunVersion, [ids[1], ids[0]], authority, default);
+
+        Assert.Equal(2, counted.CountedCycles);
+        Assert.Equal(2L, await ScalarAsync(fixture.Database,
+            "SELECT produced_quantity FROM production_run_outputs WHERE id='output-verification';"));
+        Assert.Equal("orphan-1", await ScalarAsync(fixture.Database,
+            "SELECT source_event_id FROM production_run_cycle_events WHERE completed_cycle_count=1;"));
+        Assert.Equal(2L, await ScalarAsync(fixture.Database, """
+            SELECT COUNT(*) FROM structured_event_log
+            WHERE event_type='production_run_program_cycle_completed' AND user_id='planner'
+              AND reason_code='PLANNER_COUNTED_CNC_EVIDENCE';
+            """));
+        Assert.Equal(3L, await ScalarAsync(fixture.Database,
+            "SELECT COUNT(*) FROM production_run_workflow_anomalies WHERE anomaly_type='CYCLE_END_WITHOUT_START';"));
+        Assert.Equal("cycle_end_not_countable", (await Assert.ThrowsAsync<ProductionRunStateException>(() =>
+            repository.CountUncountedCncCyclesAsync("run-verification", counted.Run.Version, [ids[0]], authority, default))).Code);
+        Assert.Equal(["orphan-3"], (await repository.ListUncountedCncCyclesAsync("run-verification", default))
+            .Items.Select(x => x.SourceEventId));
+    }
+
+    private static Task SetTargetAsync(SqliteDatabase database, int cycles) => ExecuteAsync(database, $"""
+        UPDATE production_runs SET structure_locked_at=NULL WHERE id='run-verification';
+        UPDATE production_run_programs SET target_cycle_count={cycles} WHERE id='run-program-verification';
+        UPDATE production_run_outputs SET target_quantity={cycles} WHERE id='output-verification';
+        UPDATE production_runs SET structure_locked_at='{Now:O}' WHERE id='run-verification';
+        """);
+
+    private static async Task ExecuteAsync(SqliteDatabase database, string sql)
+    {
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<object?> ScalarAsync(SqliteDatabase database, string sql)
+    {
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        var value = await command.ExecuteScalarAsync();
+        return value is DBNull ? null : value;
     }
 
     private static async Task PrepareProductionApprovalAsync(

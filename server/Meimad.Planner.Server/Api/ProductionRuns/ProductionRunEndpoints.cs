@@ -28,6 +28,8 @@ internal static class ProductionRunEndpoints
         runs.MapPost("/{runId}/suspend", SuspendAsync);
         runs.MapPost("/{runId}/resume", ResumeAsync);
         runs.MapPost("/{runId}/reset", ResetAsync);
+        runs.MapGet("/{runId}/uncounted-cnc-cycles", ListUncountedCncCyclesAsync);
+        runs.MapPost("/{runId}/uncounted-cnc-cycles/count", CountUncountedCncCyclesAsync);
         endpoints.MapGet("/api/v1/batch-operations/unallocated", ListUnallocatedAsync);
     }
 
@@ -193,6 +195,28 @@ internal static class ProductionRunEndpoints
                 new(request.Source ?? "WINDOWS", request.SourceEventId ?? string.Empty, request.ObservedAt ?? DateTimeOffset.UtcNow), authority!, token);
             SetTag(context.Response, result.Run);
             return Results.Ok(new { result.WasDuplicate, result.CompletedCycleCount, run = ProductionRunResponse.FromDomain(result.Run) });
+        }
+        catch (Exception exception) when (TryMap(exception, context, out var mapped)) { return mapped!; }
+    }
+    private static async Task<IResult> ListUncountedCncCyclesAsync(string runId, HttpContext context, ProductionRunExecutionService service, CancellationToken token)
+    {
+        try
+        {
+            var value = await service.ListUncountedCncCyclesAsync(runId, token);
+            context.Response.Headers.ETag = $"\"production-run:{value.ProductionRunId}:v{value.RunVersion}\"";
+            return Results.Ok(value);
+        }
+        catch (Exception exception) when (TryMap(exception, context, out var mapped)) { return mapped!; }
+    }
+    private static async Task<IResult> CountUncountedCncCyclesAsync(string runId, CountUncountedCncCyclesRequest request, HttpContext context, ProductionRunExecutionService service, CancellationToken token)
+    {
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error)) return error!;
+        if (!TryVersion(context, runId, out var version, out error)) return error!;
+        try
+        {
+            var result = await service.CountUncountedCncCyclesAsync(runId, version, request.WorkflowEventIds, authority!, token);
+            SetTag(context.Response, result.Run);
+            return Results.Ok(new { result.CountedCycles, run = ProductionRunResponse.FromDomain(result.Run) });
         }
         catch (Exception exception) when (TryMap(exception, context, out var mapped)) { return mapped!; }
     }
