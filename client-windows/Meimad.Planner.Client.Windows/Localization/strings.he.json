@@ -1,4 +1,5 @@
 {
+  "Work Orders come from Kitaron, which also changes and cancels them. Release a pending Work Order to production; allocations follow Kitaron.": "פקודות העבודה מגיעות מ-Kitaron, שגם משנה ומבטלת אותן. יש לשחרר פקודת עבודה ממתינה לייצור; ההקצאות נקבעות לפי Kitaron.",
   "Uncounted CNC cycles of the selected Run": "מחזורי CNC שלא נספרו בהרצה הנבחרת",
   "A cycle end with no matching start is kept as Machine evidence but not counted. Count only cycles that produced a good part.": "סיום מחזור ללא התחלה תואמת נשמר כראיה מהמכונה אך אינו נספר. יש לספור רק מחזורים שייצרו חלק תקין.",
   "Load uncounted cycles": "טעינת מחזורים שלא נספרו",

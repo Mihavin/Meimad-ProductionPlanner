@@ -3344,7 +3344,8 @@ Windows Setup exposes these master-data routes in **Resource Types & Skills**, w
   - While a restart is open, readiness reads the operation in its pinned process revision but chooses the release again. The G-code component is `OUTDATED` and blocking ("replaced by … Create a new Production Package …"), and `effectiveGCodeReleaseId` names the new release.
   - `POST /api/v1/batch-operations/{id}/production-package` accepts that state. Its activation pins the package's release on the Batch Operation, its Production Run program and the assignment, and resolves the restart (`NEW_PACKAGE`). Finishing or resetting the operation resolves an open restart as `OPERATION_FINISHED` / `OPERATION_RESET`.
   - A started operation whose pinned release has a newer local version but has not been refreshed reports G-code `OUTDATED` with "Refresh the Work Order from its Case".
-- `POST /api/v1/batches` returns 409 `kitaron_managed_read_only` while the Kitaron connector is enabled; `PATCH` and `DELETE` of a Kitaron-imported batch return the same.
+- `POST /api/v1/batches` returns 409 `kitaron_managed_read_only` while the Kitaron connector is enabled, and for a Kitaron-managed Case even while it is off; `PATCH` and `DELETE` of a Kitaron-imported batch return the same.
+- `POST /api/v1/batches/{batchId}/cancel-production` and `POST /api/v1/batches/{batchId}/unrelease` of a Kitaron-imported batch return 409 `kitaron_managed_read_only`: only Kitaron cancels its Work Orders, and Meimad moves one only from pending to released (owner decision 2026-10-15).
 - `GET /api/v1/kitaron/material-orders` items add `unitPrice`, `lineTotal`, `customerOrderReference` and `workOrders: [ { workOrderNumber, partNumber, customerOrderNumber, customer, quantity, supplyDate, hasBatch } ]`.
 
 ### Network folder (schema v83)

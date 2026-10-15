@@ -826,14 +826,19 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public bool CanReleaseBatch => CanManageBatches && SelectedBatch is { IsReleased: false, BatchOperationCount: > 0 }
         && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase);
 
-    public bool CanUnreleaseBatch => CanManageBatches && SelectedBatch is { IsReleased: true };
+    public bool CanUnreleaseBatch => CanManageBatches && SelectedBatch is { IsReleased: true, IsKitaronManaged: false };
+
+    /// <summary>Add, Edit, Delete, Cancel production and Return to pending are hidden for a Case
+    /// Kitaron manages: Kitaron creates, changes and cancels its Work Orders, and Meimad only
+    /// releases a pending one (owner decision 2026-10-15). The Server refuses them as well.</summary>
+    public bool ShowPlannerWorkOrderActions => !isKitaronManagedCase;
 
     public bool CanRefreshBatchOperations => CanManageBatches && SelectedBatch is not null
         && !string.Equals(SelectedBatch.Status, "complete", StringComparison.OrdinalIgnoreCase)
         && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase);
 
     public string BatchListAuthorityText => isKitaronManagedCase
-        ? "Work Orders come from Kitaron. Release a pending Work Order to production; allocations follow Kitaron."
+        ? "Work Orders come from Kitaron, which also changes and cancels them. Release a pending Work Order to production; allocations follow Kitaron."
         : "Standalone and child production launches use direct or parent-derived demand, stock, and scrap allocations.";
 
     public bool CanBeginEditBatch => CanManageBatches
@@ -842,7 +847,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         && !IsCreatingBatch;
 
     public bool CanCancelBatchProduction => CanManageBatches
-        && SelectedBatch is not null
+        && SelectedBatch is { IsKitaronManaged: false }
         && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase)
         && !IsCreatingBatch;
 
@@ -3434,6 +3439,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private void RaiseStateProperties()
     {
         OnPropertyChanged(nameof(HasSelection));
+        OnPropertyChanged(nameof(ShowPlannerWorkOrderActions));
         OnPropertyChanged(nameof(CanManageModelFiles));
         OnPropertyChanged(nameof(HasForm));
         OnPropertyChanged(nameof(IsCreating));

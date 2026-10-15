@@ -101,11 +101,15 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         }
 
         // While the Kitaron connector is enabled, Production Batches come only from Kitaron work
-        // orders; a planner cannot create one in Meimad Planner.
+        // orders; a planner cannot create one in Meimad Planner. A Case Kitaron manages gets its
+        // Work Orders only from Kitaron even while the connector is off (owner decision 2026-10-15).
         if (await ExistsAsync(
                 connection, transaction,
-                "SELECT EXISTS(SELECT 1 FROM kitaron_connection_settings WHERE enabled = 1 AND $unused IS NOT NULL);",
-                "$unused", batch.CaseId, cancellationToken))
+                """
+                SELECT EXISTS(SELECT 1 FROM kitaron_connection_settings WHERE enabled = 1 AND $caseId IS NOT NULL)
+                    OR EXISTS(SELECT 1 FROM kitaron_sync_links WHERE source_entity = 'case' AND target_id = $caseId);
+                """,
+                "$caseId", batch.CaseId, cancellationToken))
         {
             throw new Meimad.Planner.Server.Application.Kitaron.KitaronManagedResourceException(
                 "Production Batch creation (batches come from Kitaron work orders)", batch.CaseId);
@@ -283,6 +287,8 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         var actor = await EnsureEditAuthorityAsync(
             connection, transaction, editAuthority, cancellationToken);
 
+        // Only Kitaron cancels or closes a Kitaron Work Order (owner decision 2026-10-15).
+        await ThrowIfKitaronWorkOrderAsync(connection, transaction, batchId, cancellationToken);
         string status;
         await using (var read = connection.CreateCommand())
         {
@@ -1002,6 +1008,16 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
     /// the list one last time and going back to pending refreshes it again; a Work Order whose
     /// production has started stays released.
     /// </summary>
+    private static async Task ThrowIfKitaronWorkOrderAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string batchId, CancellationToken cancellationToken)
+    {
+        if (await ExistsAsync(
+                connection, transaction,
+                "SELECT EXISTS(SELECT 1 FROM kitaron_sync_links WHERE source_entity = 'production_batch' AND target_id = $id);",
+                "$id", batchId, cancellationToken))
+            throw new Meimad.Planner.Server.Application.Kitaron.KitaronManagedResourceException("Work Order", batchId);
+    }
+
     public async Task<ProductionBatch?> SetReleaseStateAsync(
         string batchId,
         bool released,
@@ -1013,6 +1029,9 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         await using (var transaction = connection.BeginTransaction(deferred: false))
         {
             var actor = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+            // Meimad moves a Kitaron Work Order only from pending to released (owner decision 2026-10-15).
+            if (!released)
+                await ThrowIfKitaronWorkOrderAsync(connection, transaction, batchId, cancellationToken);
             if (released)
             {
                 await SqliteWorkOrderRouteRefresh.RefreshWorkOrderAsync(

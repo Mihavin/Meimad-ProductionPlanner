@@ -1,4 +1,5 @@
 {
+  "Work Orders come from Kitaron, which also changes and cancels them. Release a pending Work Order to production; allocations follow Kitaron.": "Заказ-наряды поступают из Kitaron, который также изменяет и отменяет их. Выпустите ожидающий заказ-наряд в производство; распределение следует Kitaron.",
   "Uncounted CNC cycles of the selected Run": "Неучтённые циклы ЧПУ выбранного запуска",
   "A cycle end with no matching start is kept as Machine evidence but not counted. Count only cycles that produced a good part.": "Окончание цикла без соответствующего начала сохраняется как данные станка, но не учитывается. Учитывайте только циклы, в которых изготовлена годная деталь.",
   "Load uncounted cycles": "Загрузить неучтённые циклы",

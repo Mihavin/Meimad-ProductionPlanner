@@ -342,15 +342,44 @@ public sealed class KitaronBatchSyncTests
                 Assert.Equal("released", document.RootElement.GetProperty("releaseState").GetString());
                 Assert.Equal("planner", document.RootElement.GetProperty("releasedBy").GetString());
             }
+            // Meimad moves a Kitaron Work Order only from pending to released; only Kitaron cancels it.
             using (var pending = await client.PostAsync($"/api/v1/batches/{batchId}/unrelease", null))
             {
-                using var document = JsonDocument.Parse(await pending.Content.ReadAsStringAsync());
-                Assert.Equal("pending", document.RootElement.GetProperty("releaseState").GetString());
+                Assert.Equal(HttpStatusCode.Conflict, pending.StatusCode);
+                Assert.Contains("kitaron_managed_read_only", await pending.Content.ReadAsStringAsync());
             }
+            using (var read = await client.GetAsync($"/api/v1/batches/{batchId}"))
+            {
+                using var document = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
+                Assert.Equal("released", document.RootElement.GetProperty("releaseState").GetString());
+                var cancel = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/batches/{batchId}/cancel-production")
+                { Content = JsonContent.Create(new { reason = "test" }) };
+                cancel.Headers.TryAddWithoutValidation("If-Match", read.Headers.ETag?.ToString()
+                    ?? $"\"batch:{batchId}:v{document.RootElement.GetProperty("version").GetInt32()}\"");
+                using var cancelled = await client.SendAsync(cancel);
+                Assert.Equal(HttpStatusCode.Conflict, cancelled.StatusCode);
+                Assert.Contains("kitaron_managed_read_only", await cancelled.Content.ReadAsStringAsync());
+            }
+            await using (var connection = await database.OpenConnectionAsync())
+                Assert.Equal("waiting", await ScalarAsync(connection, $"SELECT status FROM production_batches WHERE id = '{batchId}';"));
 
             // Kitaron owns the batch: it cannot be deleted by hand.
             using var deleted = await client.DeleteAsync($"/api/v1/batches/{batchId}");
             Assert.Equal(HttpStatusCode.Conflict, deleted.StatusCode);
+
+            // A Kitaron-managed Case gets Work Orders only from Kitaron, even with the connector off.
+            string managedCaseId;
+            await using (var connection = await database.OpenConnectionAsync())
+                managedCaseId = (string)(await ScalarAsync(connection, "SELECT id FROM cases;"))!;
+            using (var refused = await client.PostAsJsonAsync("/api/v1/batches", new
+            {
+                caseId = managedCaseId, batchNumber = "M-4", status = "waiting", plannedQuantity = 2,
+                allocations = new[] { new { allocationType = "stock", quantity = 2 } }
+            }))
+            {
+                Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+                Assert.Contains("kitaron_managed_read_only", await refused.Content.ReadAsStringAsync());
+            }
 
             // With the connector enabled, a planner cannot create a batch.
             await ExecuteAsync(database, "UPDATE kitaron_connection_settings SET enabled = 1;");

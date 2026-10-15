@@ -112,6 +112,10 @@ internal static class ProductionBatchEndpoints
         {
             return Error(StatusCodes.Status422UnprocessableEntity, exception.Code, exception.Message, httpContext);
         }
+        catch (Meimad.Planner.Server.Application.Kitaron.KitaronManagedResourceException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, "kitaron_managed_read_only", exception.Message, httpContext);
+        }
         catch (ProductionBatchNotFoundException)
         {
             return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Production Batch was not found.", httpContext);
@@ -158,6 +162,10 @@ internal static class ProductionBatchEndpoints
         catch (ProductionBatchCancellationException exception)
         {
             return Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, httpContext);
+        }
+        catch (Meimad.Planner.Server.Application.Kitaron.KitaronManagedResourceException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, "kitaron_managed_read_only", exception.Message, httpContext);
         }
         catch (EditModeMutationException exception)
         {

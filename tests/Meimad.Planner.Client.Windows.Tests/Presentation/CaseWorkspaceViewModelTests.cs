@@ -948,6 +948,44 @@ public sealed class CaseWorkspaceViewModelTests
         Assert.False(viewModel.IsCreatingOperation);
     }
 
+    [Theory]
+    [InlineData("pending")]
+    [InlineData("released")]
+    public async Task Kitaron_case_hides_planner_Work_Order_actions_and_keeps_only_release(string releaseState)
+    {
+        var api = new FakeApiClient(CreateCase() with { IsKitaronManaged = true })
+        {
+            KitaronWorkOrderState = releaseState
+        };
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(27));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedBatch = viewModel.Batches.Single();
+
+        // Owner decision 2026-10-15: Kitaron creates, changes and cancels its Work Orders.
+        Assert.False(viewModel.ShowPlannerWorkOrderActions);
+        Assert.False(viewModel.BeginCreateBatchCommand.CanExecute(null));
+        Assert.False(viewModel.BeginEditBatchCommand.CanExecute(null));
+        Assert.False(viewModel.CanDeleteSelectedBatch);
+        Assert.False(viewModel.CanCancelBatchProduction);
+        Assert.False(viewModel.UnreleaseBatchCommand.CanExecute(null));
+        Assert.Equal(releaseState == "pending", viewModel.ReleaseBatchCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Planner_case_keeps_its_Work_Order_actions()
+    {
+        var api = new FakeApiClient(CreateCase());
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(28));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedBatch = viewModel.Batches.Single();
+
+        Assert.True(viewModel.ShowPlannerWorkOrderActions);
+        Assert.True(viewModel.BeginEditBatchCommand.CanExecute(null));
+        Assert.True(viewModel.CanCancelBatchProduction);
+    }
+
     [Fact]
     public async Task Kitaron_route_locked_case_keeps_operation_data_editable_but_closes_adding()
     {
@@ -1356,8 +1394,13 @@ public sealed class CaseWorkspaceViewModelTests
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<ProductionBatch>>([
                 new("batch-1", caseId, "B-1", "waiting", 5, null, 1, 1,
-                    [new("allocation-1", "order", "order-1", 5)])
+                    [new("allocation-1", "order", "order-1", 5)],
+                    IsKitaronManaged: KitaronWorkOrderState is not null,
+                    ReleaseState: KitaronWorkOrderState ?? "pending")
             ]);
+
+        /// <summary>When set, the listed Work Order is a Kitaron one in this release state.</summary>
+        internal string? KitaronWorkOrderState { get; init; }
 
         public Task<ProductionBatch> CreateBatchAsync(
             ProductionBatchCreate create,

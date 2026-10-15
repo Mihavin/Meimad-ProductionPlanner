@@ -2787,3 +2787,17 @@ Open points:
 - The TV dashboard does not show the not-ready warning or uncounted ends.
 - Counting a retained END does not create a cycle attempt, so it does not feed the measured cycle-time mean.
 - An identical republish (same G-code, Tool Table and subprograms) still makes running work outdated. It was considered and dropped because it was not this case's cause; it remains a possible later rule.
+
+## Kitaron owns its Work Orders' lifecycle (2026-10-15)
+
+**Owner decision:** "Cancellation of a work order can come only from Kitaron. Meimad can only change from pending to released. Remove the delete, edit, cancel and add from Kitaron-managed Cases' Work Orders."
+
+**Trigger:** Work Order 41508 of Case 16W1120-13 was cancelled by hand in the Windows client on 2026-09-28 (`production_batch_cancelled`, `PLANNER_CANCELLED`); its Kitaron order L000240682/35391 is still active.
+
+**Implemented:**
+- `SqliteProductionBatchRepository` refuses with `KitaronManagedResourceException` (409 `kitaron_managed_read_only`): `cancel-production` and `unrelease` of a Kitaron-linked Work Order, and creating a Work Order on a Kitaron-managed Case even while the connector is off. Edit and delete were already refused. Kitaron's own synchronization does not use these paths and keeps removing or keeping Work Orders it closes.
+- Windows client: Add Work Order, Edit Selected, Delete Selected, Cancel production and Return to pending are hidden for a Kitaron-managed Case (`ShowPlannerWorkOrderActions`); cancel and return to pending are also disabled for a Kitaron Work Order. Release and Refresh from Case stay. The list explanation says Kitaron also changes and cancels them (he/ru).
+
+**Tests:** `KitaronBatchSyncTests` (unrelease and cancel refused, Work Order stays released and waiting, creation refused with the connector off), `ProductionBatchPersistenceTests.Kitaron_case_refuses_new_Work_Orders_and_keeps_only_current_linked_Order_allocations_on_update`, client `CaseWorkspaceViewModelTests.Kitaron_case_hides_planner_Work_Order_actions_and_keeps_only_release` and `Planner_case_keeps_its_Work_Order_actions`.
+
+**Not changed:** Work Order 41508 stays cancelled; no un-cancel path exists, and repairing it is an explicit owner choice.

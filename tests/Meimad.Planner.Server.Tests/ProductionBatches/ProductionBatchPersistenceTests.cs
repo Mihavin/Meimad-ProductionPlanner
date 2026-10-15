@@ -175,23 +175,23 @@ public sealed class ProductionBatchPersistenceTests
     }
 
     [Fact]
-    public async Task Kitaron_case_accepts_only_current_linked_Order_allocations_on_create_and_update()
+    public async Task Kitaron_case_refuses_new_Work_Orders_and_keeps_only_current_linked_Order_allocations_on_update()
     {
         await using var fixture = await Persistence.TemporaryDatabase.CreateAsync();
         await SeedPlanningDataAsync(fixture.Database);
-        await MarkCaseAsKitaronManagedAsync(fixture.Database);
         var authority = await GrantEditModeAsync(fixture.Database);
         var service = CreateService(fixture.Database);
-
-        var createException = await Assert.ThrowsAsync<ProductionBatchValidationException>(() =>
-            service.CreateAsync(
-                Command("case-1", "B-STALE-CREATE", 5, Allocation("order", "order-1", 5)),
-                authority));
-        Assert.Contains(createException.Issues, issue => issue.Code == "noncurrent_kitaron_order");
-
+        // A Work Order created before Kitaron took the Case over.
         var created = await service.CreateAsync(
             Command("case-1", "B-CURRENT", 5, Allocation("order", "order-2", 5)),
             authority);
+        await MarkCaseAsKitaronManagedAsync(fixture.Database);
+
+        // Owner decision 2026-10-15: a Kitaron-managed Case gets Work Orders only from Kitaron.
+        await Assert.ThrowsAsync<Meimad.Planner.Server.Application.Kitaron.KitaronManagedResourceException>(() =>
+            service.CreateAsync(
+                Command("case-1", "B-NEW", 5, Allocation("order", "order-2", 5)),
+                authority));
 
         var updateException = await Assert.ThrowsAsync<ProductionBatchValidationException>(() =>
             service.UpdateAsync(
@@ -207,6 +207,7 @@ public sealed class ProductionBatchPersistenceTests
         var retained = await service.GetByIdAsync(created.BatchId);
         Assert.NotNull(retained);
         Assert.Equal("order-2", Assert.Single(retained.Allocations).OrderId);
+        await AssertTableCountAsync(fixture.Database, "production_batches", 1);
     }
 
     [Fact]
