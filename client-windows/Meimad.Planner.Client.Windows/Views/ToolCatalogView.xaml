@@ -35,13 +35,16 @@
           <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <DockPanel Margin="0,0,0,8">
-          <Button DockPanel.Dock="Right" Content="New" Command="{Binding NewCommand}" Margin="8,0,0,0" />
-          <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}" Margin="8,0,0,0" />
-          <Button DockPanel.Dock="Right" Content="Export to Cimatron…" Click="ExportCimatron_Click" IsEnabled="{Binding IsConnected}" Margin="8,0,0,0"
-                  ToolTip="Save the catalog as a Cimatron cutter workbook (NC-Process &gt; Cutters, Menu &gt; Import)" />
-          <Button DockPanel.Dock="Right" Content="Import from Cimatron…" Click="ImportCimatron_Click" IsEnabled="{Binding IsConnected}" Margin="8,0,0,0"
-                  ToolTip="Read a cutter workbook exported from Cimatron (NC-Process &gt; Cutters, Menu &gt; Export, XLS)" />
-          <TextBlock Text="TOOL CATALOG" FontWeight="Bold" VerticalAlignment="Center" />
+          <TextBlock Text="TOOL CATALOG" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,8,0" />
+          <!-- Wraps to a second line in a narrow window instead of squeezing a button. -->
+          <WrapPanel HorizontalAlignment="Right">
+            <Button Content="Import from Cimatron…" Click="ImportCimatron_Click" IsEnabled="{Binding IsConnected}" Margin="8,0,0,4"
+                    ToolTip="Read a cutter workbook exported from Cimatron (NC-Process &gt; Cutters, Menu &gt; Export, XLS)" />
+            <Button Content="Export to Cimatron…" Click="ExportCimatron_Click" IsEnabled="{Binding IsConnected}" Margin="8,0,0,4"
+                    ToolTip="Save the catalog as a Cimatron cutter workbook (NC-Process &gt; Cutters, Menu &gt; Import)" />
+            <Button Content="Refresh" Command="{Binding RefreshCommand}" Margin="8,0,0,4" />
+            <Button Content="New" Command="{Binding NewCommand}" Margin="8,0,0,4" />
+          </WrapPanel>
         </DockPanel>
         <Grid Grid.Row="1" Margin="0,0,0,8">
           <Grid.ColumnDefinitions>

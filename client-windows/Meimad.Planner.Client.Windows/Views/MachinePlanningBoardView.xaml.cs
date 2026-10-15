@@ -311,9 +311,11 @@ public partial class MachinePlanningBoardView : UserControl
             return;
         }
 
+        var board = (MachinePlanningBoardViewModel)DataContext;
         try
         {
             dragInProgress = true;
+            board.BeginDrag();
             DragDrop.DoDragDrop(item, new BoardDragPayload(operation), DragDropEffects.Move);
         }
         catch (Exception exception)
@@ -326,6 +328,7 @@ public partial class MachinePlanningBoardView : UserControl
         finally
         {
             dragInProgress = false;
+            board.EndDrag();
             dragStart = e.GetPosition(this);
         }
     }

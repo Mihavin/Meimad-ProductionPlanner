@@ -1040,9 +1040,9 @@
                             <DockPanel>
                                 <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                                     <TextBlock Text="Recent pushes" FontWeight="SemiBold" Margin="0,0,0,4"/>
-                                    <Button Content="Inspect ERP values" Command="{Binding ReconcileCommand}"/>
+                                    <Button Content="Inspect ERP values" HorizontalAlignment="Left" Command="{Binding ReconcileCommand}"/>
                                     <CheckBox Content="I reviewed the uncertain outcome" IsChecked="{Binding ReviewConfirmed}" Margin="0,6"/>
-                                    <Button Content="Acknowledge review" Command="{Binding AcknowledgeCommand}" ToolTip="Allow future fresh pushes without claiming this run succeeded or retrying it"/>
+                                    <Button Content="Acknowledge review" HorizontalAlignment="Left" Command="{Binding AcknowledgeCommand}" ToolTip="Allow future fresh pushes without claiming this run succeeded or retrying it"/>
                                 </StackPanel>
                                 <DataGrid ItemsSource="{Binding Runs}" SelectedItem="{Binding SelectedRun}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" AutomationProperties.Name="Recent Kitaron pushes">
                                     <DataGrid.Columns>

@@ -229,16 +229,9 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <DockPanel Margin="0,0,0,8">
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                    <Button Content="Open in 3D window" Click="OpenModelWindow_Click"
-                                            ToolTip="Open the linked models in a separate, larger window with the full measurement toolbox" />
-                                    <Button Content="Preview file…" Click="OpenStep_Click"
-                                            ToolTip="Preview any STEP or STL file without linking it to the Case" />
-                                    <Button x:Name="SnapshotStepButton" Content="Snapshot and use as Case image"
-                                            Click="SnapshotStep_Click" IsEnabled="False" Margin="0" />
-                                </StackPanel>
-                                <WrapPanel Orientation="Horizontal">
+                            <!-- One wrapping row: in a narrow window the action buttons move to the next line instead of squeezing the view controls. -->
+                            <WrapPanel Margin="0,0,0,8">
+                                <WrapPanel Orientation="Horizontal" Margin="0,0,12,4">
                                     <Button Content="Isometric" Click="StepIsometric_Click" />
                                     <Button Content="Front" Click="StepFront_Click" />
                                     <Button Content="Top" Click="StepTop_Click" />
@@ -265,7 +258,15 @@
                                               Checked="StepBoundingBox_Changed" Unchecked="StepBoundingBox_Changed"
                                               ToolTip="Show the model-coordinate bounding box only when requested" />
                                 </WrapPanel>
-                            </DockPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,12,4">
+                                    <Button Content="Open in 3D window" Click="OpenModelWindow_Click"
+                                            ToolTip="Open the linked models in a separate, larger window with the full measurement toolbox" />
+                                    <Button Content="Preview file…" Click="OpenStep_Click"
+                                            ToolTip="Preview any STEP or STL file without linking it to the Case" />
+                                    <Button x:Name="SnapshotStepButton" Content="Snapshot and use as Case image"
+                                            Click="SnapshotStep_Click" IsEnabled="False" Margin="0" />
+                                </StackPanel>
+                            </WrapPanel>
                             <Grid Grid.Row="1">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />

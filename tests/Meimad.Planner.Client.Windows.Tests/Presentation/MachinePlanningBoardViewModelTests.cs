@@ -40,6 +40,30 @@ public sealed class MachinePlanningBoardViewModelTests
     }
 
     [Fact]
+    public async Task A_board_reload_waits_for_the_drag_to_end_so_the_dragged_card_stays()
+    {
+        var api = new FakeApiClient(BoardBefore());
+        var viewModel = new MachinePlanningBoardViewModel();
+        viewModel.AttachSession(api, "windows-1", EditorStatus(5));
+        await viewModel.EnsureLoadedAsync();
+        var dragged = Assert.Single(viewModel.Pool);
+        api.Snapshot = BoardAfterAssignment();
+
+        viewModel.BeginDrag();
+        var refresh = viewModel.RefreshAsync();
+        for (var wait = 0; wait < 100 && api.BoardReadCount < 2; wait++) await Task.Delay(10);
+        await Task.Delay(50);
+
+        Assert.Equal(2, api.BoardReadCount);
+        Assert.False(refresh.IsCompleted);
+        Assert.Same(dragged, Assert.Single(viewModel.Pool));
+        viewModel.EndDrag();
+        await refresh;
+        Assert.Empty(viewModel.Pool);
+        Assert.Single(viewModel.Machines[0].Backlog);
+    }
+
+    [Fact]
     public void Nc_planning_estimate_is_labelled_with_confidence_and_warnings()
     {
         var operation = new PlanningOperationViewModel(new PlanningBoardOperation(
@@ -797,6 +821,7 @@ public sealed class MachinePlanningBoardViewModelTests
         }
 
         internal PlanningBoardSnapshot? SnapshotAfterAssignment { get; init; }
+        internal PlanningBoardSnapshot Snapshot { set => snapshot = value; }
         internal bool RejectAsIncompatible { get; init; }
         internal string? OverrideRequiredMachineType { get; init; }
         internal string? OverrideSelectedMachineType { get; init; }

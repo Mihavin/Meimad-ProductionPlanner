@@ -42,6 +42,8 @@
         <Setter Property="Padding" Value="12,6" />
         <Setter Property="Margin" Value="0,0,6,0" />
         <Setter Property="MinHeight" Value="32" />
+        <!-- Keep a button's own height when its row or panel grows with the window. -->
+        <Setter Property="VerticalAlignment" Value="Center" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource WorkbenchFocus}" />
         <Setter Property="Template"><Setter.Value>

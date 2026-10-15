@@ -493,6 +493,9 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             var snapshotTask = Task.Run(() => api.GetPlanningBoardAsync());
             var calendarsTask = api.ListWorkingCalendarsAsync();
             await Task.WhenAll(snapshotTask, calendarsTask);
+            // Applying rebuilds every card list, which would remove the card being dragged and
+            // cancel the drag: hold the result until the drag ends (a drop then re-reads).
+            while (dragEnded is { } drag) await drag.Task;
             if (localChangesAtStart != localChangeVersion)
             {
                 refreshQueued = true;
@@ -513,6 +516,18 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         {
             StatusMessage = FriendlyMessage(exception);
         }
+    }
+
+    private TaskCompletionSource? dragEnded;
+
+    /// <summary>The view starts dragging a card: board reloads wait until <see cref="EndDrag"/>.</summary>
+    internal void BeginDrag() => dragEnded ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal void EndDrag()
+    {
+        var drag = dragEnded;
+        dragEnded = null;
+        drag?.TrySetResult();
     }
 
     private Task? refreshInFlight;
